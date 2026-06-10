@@ -20,7 +20,9 @@
 | [01_daemon_architecture.md](./01_daemon_architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D12 | 구현 작업 시 |
 | [02_tech_research_cost.md](./02_tech_research_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
 
-## 현재 상태 (2026.06.11)
+## 커밋 컨벤션 (Conventional Commits)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 시작 전.**
-Phase 1 범위: C
+```
+type(scope): 제목 (한국어, 50자 내)
+
+본문: 무엇을 했는지보다
