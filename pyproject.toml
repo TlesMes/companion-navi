@@ -1,0 +1,27 @@
+[project]
+name = "companion-navi"
+version = "0.1.0"
+description = "반려 AI 오케스트레이터 데몬 — Hey! Listen!"
+requires-python = ">=3.13"
+dependencies = [
+    "google-genai",
+    "anthropic",
+    "pyyaml",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["navi*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

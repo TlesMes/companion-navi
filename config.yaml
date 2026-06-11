@@ -1,0 +1,21 @@
+# 값은 튜닝 대상, 구조는 확정 (01 문서 7장)
+
+brain:
+  # 두뇌 교체는 vendor 한 줄 — 모델은 아래 맵에서 벤더에 맞는 것이 자동 선택된다.
+  #   gemini    → 기본값. 보유 키 기준 (D1은 보류 — 어댑터로 교체 자유)
+  #   anthropic → 키 확보 시 교체 검증 (Phase 1 완료 기준 2)
+  #   echo      → 키 없이 파이프라인 검증용 가짜 두뇌
+  vendor: gemini
+  models:
+    gemini: gemini-2.5-flash
+    anthropic: claude-haiku-4-5-20251001   # 잡담 티어 — 티어 분리(깊은 대화 승격)는 이후 Phase
+    echo: echo
+
+db:
+  path: navi.db
+
+memory:
+  recent_turns: 20      # 단기기억 인출 턴 수 (장기기억은 Phase 4)
+
+persona:
+  card_path: personas/navi.yaml

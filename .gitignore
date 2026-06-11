@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# 비밀 — API 키는 .env에만 (커밋 금지)
+.env
+
+# 런타임 데이터 — "그 애"의 기억. 백업은 git이 아니라 파일 복사로
+*.db
