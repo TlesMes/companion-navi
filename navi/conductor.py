@@ -7,10 +7,14 @@ relevant_facts(장기기억)는 Phase 4에서 이 사이에 끼어든다.
 
 from __future__ import annotations
 
+import logging
+
 from navi.config import Config
 from navi.memory import MemoryStore
 from navi.models import LlmRequest, Message
 from navi.persona import CharacterCard
+
+log = logging.getLogger(__name__)
 
 
 class Conductor:
@@ -28,8 +32,15 @@ class Conductor:
         turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
         messages = [Message(role=t.role, text=t.text) for t in turns]
         messages.append(Message(role="user", text=trigger_text))
-        return LlmRequest(
+        request = LlmRequest(
             system=self._card.system_prompt(intimacy),
             messages=messages,
             model=self._config.brain.model,
         )
+        log.info(
+            "요청 조립 — system %d자, 메시지 %d개(기억 %d턴 + 트리거), 친밀도 %.0f, model=%s",
+            len(request.system), len(messages), len(turns), intimacy, request.model,
+        )
+        log.debug("system 전문:\n%s", request.system)
+        log.debug("messages: %s", messages)
+        return request
