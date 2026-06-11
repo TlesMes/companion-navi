@@ -32,7 +32,8 @@ type(scope): 제목 (한국어, 50자 내)
 - **scope(선택):** 모듈명 소문자 — `ear` `turntaking` `stt` `heartbeat` `memory` `conductor` `brain` `mouth` `schedule` `core` / 문서는 `plan` `arch` `cost`
 - 예: `docs(arch): 턴테이킹 모듈 계약 추가 (D4 결정 반영)`, `feat(memory): 단기기억 SQLite 적재 구현`
 
-## 현재 상태 (2026.06.11)
+## 현재 상태 (2026.06.12)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 시작 전.**
-Phase 1 범위: C
+Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 진행 중.**
+Phase 1 범위: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
+완료 기준: ① 껐다 켜도 어제 대화를 기억(Gemini 키 설정 후 실검증) ② 벤더 교체에도 같은 말투(Anthropic 키 확보 시 실검증).
