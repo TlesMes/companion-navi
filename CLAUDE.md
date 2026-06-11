@@ -25,4 +25,14 @@
 ```
 type(scope): 제목 (한국어, 50자 내)
 
-본문: 무엇을 했는지보다
+본문: 무엇을 했는지보다 왜 했는지. 결정 사항은 D번호 참조.
+```
+
+- **type:** `feat`(기능) `fix`(버그) `docs`(문서) `refactor` `test` `chore`(설정·잡일) `research`(조사·평가·벤치마크)
+- **scope(선택):** 모듈명 소문자 — `ear` `turntaking` `stt` `heartbeat` `memory` `conductor` `brain` `mouth` `schedule` `core` / 문서는 `plan` `arch` `cost`
+- 예: `docs(arch): 턴테이킹 모듈 계약 추가 (D4 결정 반영)`, `feat(memory): 단기기억 SQLite 적재 구현`
+
+## 현재 상태 (2026.06.11)
+
+Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 시작 전.**
+Phase 1 범위: C
