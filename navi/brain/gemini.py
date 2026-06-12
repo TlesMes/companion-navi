@@ -35,7 +35,12 @@ class GeminiBrain(BrainAdapter):
         stream = await self._client.aio.models.generate_content_stream(
             model=request.model,
             contents=contents,
-            config=types.GenerateContentConfig(system_instruction=request.system),
+            config=types.GenerateContentConfig(
+                system_instruction=request.system,
+                # 잡담 티어는 즉답성 우선 — thinking이 첫 토큰을 수 초~수십 초 지연시킴
+                # (실측 2026.06.13). D1 깊은 대화 티어 도입 시 티어별로 재검토.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
         )
 
         parts: list[str] = []

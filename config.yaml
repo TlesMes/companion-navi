@@ -7,7 +7,9 @@ brain:
   #   echo      → 키 없이 파이프라인 검증용 가짜 두뇌
   vendor: gemini
   models:
-    gemini: gemini-2.5-flash
+    # 2.5-flash는 멍청하다는 실사용 피드백으로 한 세대 상향 (2026.06.13 TTFT 실측:
+    # 3-flash-preview+thinking끔 1.1초 / 3.5-flash는 무료 티어에서 4~93초라 보류)
+    gemini: gemini-3-flash-preview
     anthropic: claude-haiku-4-5-20251001   # 잡담 티어 — 티어 분리(깊은 대화 승격)는 이후 Phase
     echo: echo
 
