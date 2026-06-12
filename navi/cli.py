@@ -128,12 +128,18 @@ def main() -> None:
         default=0,
         help="-v: 진행 로그(INFO), -vv: 프롬프트 전문까지(DEBUG)",
     )
+    parser.add_argument(
+        "--db",
+        help="기억 DB 경로 덮어쓰기 — 본 기억을 오염시키지 않는 임시 DB 테스트용",
+    )
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
     config = load_config()
     if args.brain:
         config = replace(config, brain=replace(config.brain, vendor=args.brain))
+    if args.db:
+        config = replace(config, db_path=Path(args.db))
     try:
         asyncio.run(chat(config))
     except KeyboardInterrupt:
