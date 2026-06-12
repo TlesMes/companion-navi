@@ -134,7 +134,11 @@ def main() -> None:
     config = load_config()
     if args.brain:
         config = replace(config, brain=replace(config.brain, vendor=args.brain))
-    asyncio.run(chat(config))
+    try:
+        asyncio.run(chat(config))
+    except KeyboardInterrupt:
+        # 스트리밍 중 Ctrl+C — 턴은 즉시 커밋되므로 데이터는 안전, traceback만 숨긴다
+        print("\n(나비가 잠들었다)")
 
 
 if __name__ == "__main__":
