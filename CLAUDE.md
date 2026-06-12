@@ -33,6 +33,14 @@ type(scope): 제목 (한국어, 50자 내)
 - **scope(선택):** 모듈명 소문자 — `ear` `turntaking` `stt` `heartbeat` `memory` `conductor` `brain` `mouth` `schedule` `core` / 문서는 `plan` `arch` `cost`
 - 예: `docs(arch): 턴테이킹 모듈 계약 추가 (D4 결정 반영)`, `feat(memory): 단기기억 SQLite 적재 구현`
 
+## PR 규칙 (하이브리드 — 2026.06.13 합의)
+
+- **PR 1개 = 독립적으로 검증 가능한 작업 한 덩어리** — 모듈 1개 / D번호 결정 1개 / 거동을 바꾸는 튜닝 1건
+- **PR 필수:** `feat` `fix` `refactor` `research`(결정 반영) / **main 직커밋 허용:** `docs` `chore` 단독 변경
+- 크기: 커밋 1~6개, diff ~300줄 내(리뷰 10분 분량). 넘으면 쪼갠다
+- 머지 조건: 테스트 green + PR 본문에 이 단위의 **검증 방법**과 관련 D번호·완료 기준
+- 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
+
 ## 현재 상태 (2026.06.13)
 
 Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → Phase 2(음성화) 시작 전.
