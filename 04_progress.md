@@ -7,7 +7,15 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**어댑터 계약·stub 완료 (브랜치 `feat/voice-adapter-contracts`):**
+**현재 상태 — 세 부품이 각각 독립 작동, 아직 미연결:**
+- **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
+- **TTS**(Supertonic, F1) — 한국어 합성 검증(`scripts/try_tts.py`).
+- **STT**(faster-whisper turbo) — 한국어 받아쓰기 실검증(`scripts/try_stt.py`).
+
+**다음 (다른 세션에서 이어감): 셋을 파이프라인으로 연결 — `SupertonicMouth` 실어댑터부터.**
+계약·fake는 이미 있으니, fake를 실제 엔진으로 교체하는 형태. 입력단(Ear) 없이 단독 검증 가능한 Mouth가 첫 조각.
+
+**어댑터 계약·stub 완료 (PR #1 머지):**
 STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`navi/stt`·`navi/mouth`·`tests/test_voice.py`).
 벤더는 `_PENDING_D2`/`_PENDING_D3`로 보류 표시 — 결정 후 어댑터 한 장 끼우면 됨.
 
