@@ -12,8 +12,8 @@ STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`n
 벤더는 `_PENDING_D2`/`_PENDING_D3`로 보류 표시 — 결정 후 어댑터 한 장 끼우면 됨.
 
 **로컬 우선으로 방향 전환 (GPU 보유 → 비용 0·벤더 비종속).** 데스크톱 = AMD RX 6600 XT(상시기기 호스트).
-- **TTS 잠정:** Supertonic(`pip install supertonic`, 한국어 `ko`, CPU RTF 0.35) — 프리셋 10종(M1–5/F1–5) 중 **F1을 나비 잠정 목소리로** 채택(2026.06.13). "마음에 쏙"은 아님 → 추후 voice cloning(CosyVoice2/XTTS-v2/F5-TTS, 6초 레퍼런스) 재검토 여지.
-- **STT 잠정:** faster-whisper large-v3-turbo(int8) — 한국어 CER≈0 실검증(합성→받아쓰기 왕복). CPU RTF 1.24(실시간엔 못 미침).
+- **TTS 잠정:** Supertonic(`pip install supertonic`, 한국어 `ko`, CPU RTF 0.35) — 프리셋 10종(M1–5/F1–5) 중 **F1을 나비 잠정 목소리로** 채택(2026.06.13). 음색 만족도가 확정적이지 않아 추후 voice cloning(CosyVoice2/XTTS-v2/F5-TTS, 6초 레퍼런스) 재검토 여지.
+- **STT 실검증 → 잠정 확정:** faster-whisper large-v3-turbo(int8). 실제 구어체 발화(비속어·반복·외래어 16초)로 검증 — 풀 large-v3와 품질 동급이면서 빠름(CPU RTF 0.61). **동일 발화에서 RTZR(VITO) 웹 데모를 오히려 능가**('아' 누락·'오늘'→'이 우리' 오인식·반복 1회 누락을 turbo는 다 잡음). 단 잡음·전화음질은 미검증 → 폴백 유지. 튜닝: 반복 환각 대비 `vad_filter=True`.
 - **GPU 가속은 배포 숙제:** AMD라 CUDA 불가 → onnxruntime-directml 또는 whisper.cpp+Vulkan. 품질은 하드웨어 무관이라 결정엔 CPU로 충분.
 - 비교 도구: `scripts/try_tts.py`·`scripts/try_stt.py`. HF 모델 다운로드엔 `.env`의 `HF_TOKEN` 필요(비인증은 속도제한).
 - 명칭 통일: 연속 정체성 호칭 "그 애" → **"나비"** (문서·코드 전반).
