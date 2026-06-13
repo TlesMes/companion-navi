@@ -5,11 +5,20 @@
 
 ---
 
-## Phase 2 — 음성화 (시작 전)
+## Phase 2 — 음성화 (진행 중)
 
-**진입 관문 (코드보다 결정이 먼저):**
-- **D3 — TTS 음색 (최중요)**: 같은 한국어 대사로 수퍼톤 vs Cartesia(+Typecast 등) 청취 비교. 스펙이 아니라 귀로 결정.
-- **D2 — STT**: 리턴제로(VITO) vs Clova vs Deepgram을 실제 발화(혼잣말·구어체)로 비교. 기준: 한국어 CER ≫ 스트리밍 레이턴시 > 가격.
+**어댑터 계약·stub 완료 (브랜치 `feat/voice-adapter-contracts`):**
+STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`navi/stt`·`navi/mouth`·`tests/test_voice.py`).
+벤더는 `_PENDING_D2`/`_PENDING_D3`로 보류 표시 — 결정 후 어댑터 한 장 끼우면 됨.
+
+**로컬 우선으로 방향 전환 (GPU 보유 → 비용 0·벤더 비종속).** 데스크톱 = AMD RX 6600 XT(상시기기 호스트).
+- **TTS 잠정:** Supertonic(`pip install supertonic`, 한국어 `ko`, CPU RTF 0.35) — 프리셋 10종(M1–5/F1–5) 중 **F1을 나비 잠정 목소리로** 채택(2026.06.13). "마음에 쏙"은 아님 → 추후 voice cloning(CosyVoice2/XTTS-v2/F5-TTS, 6초 레퍼런스) 재검토 여지.
+- **STT 잠정:** faster-whisper large-v3-turbo(int8) — 한국어 CER≈0 실검증(합성→받아쓰기 왕복). CPU RTF 1.24(실시간엔 못 미침).
+- **GPU 가속은 배포 숙제:** AMD라 CUDA 불가 → onnxruntime-directml 또는 whisper.cpp+Vulkan. 품질은 하드웨어 무관이라 결정엔 CPU로 충분.
+- 비교 도구: `scripts/try_tts.py`·`scripts/try_stt.py`. HF 모델 다운로드엔 `.env`의 `HF_TOKEN` 필요(비인증은 속도제한).
+- 명칭 통일: 연속 정체성 호칭 "그 애" → **"나비"** (문서·코드 전반).
+
+**원 관문(클라우드 후보, 폴백):** D3 수퍼톤 Play vs Cartesia, D2 VITO vs Clova vs Deepgram — 로컬 품질 미달 시 청취 비교.
 
 **Phase 1에서 넘어온 잔여 항목:**
 - 완료 기준 ②의 실청취 비교 — Anthropic 키 확보 시 `python -m navi.cli --brain anthropic`으로 같은 대화 비교.
