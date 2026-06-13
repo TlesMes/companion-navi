@@ -55,3 +55,36 @@ class BrainResult:
 
     full_text: str
     usage: Usage
+
+
+@dataclass(frozen=True)
+class AudioChunk:
+    """PCM 오디오 한 조각 — 마이크 입력(STT로 흘림)·스피커 출력(TTS에서 나옴) 공통.
+
+    벤더 SDK의 오디오 타입이 모듈 경계를 넘지 않도록 데몬 내부 표현을 이걸로 통일한다.
+    """
+
+    pcm: bytes
+    sample_rate: int = 16000
+
+
+@dataclass(frozen=True)
+class SttResult:
+    """발화 한 건의 확정 인식 결과 (계약 4.3 finalize 반환)."""
+
+    text: str
+    confidence: float  # 0.0~1.0
+    lang: str
+
+
+@dataclass(frozen=True)
+class VoiceProfile:
+    """나비의 단일 목소리 (설계 원칙 2 — voice_profile 단일 고정).
+
+    벤더 중립 핸들: 정체성은 name이 소유하고, vendor_voice_id만 TTS 벤더 교체 시 갈아끼운다.
+    두뇌·TTS 벤더가 바뀌어도 name이 같으면 "같은 목소리"로 취급한다.
+    """
+
+    name: str  # 논리적 정체성 (로깅·식별)
+    vendor_voice_id: str  # 현재 TTS 벤더의 음색 id
+    speed: float = 1.0
