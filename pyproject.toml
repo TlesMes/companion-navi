@@ -11,6 +11,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# 음성 부품(STT/TTS)은 무거운 로컬 엔진 — 텍스트 뼈대를 가볍게 두려고 별도 extra로 분리.
+# 설치: pip install -e ".[voice]"
+voice = [
+    "supertonic",      # 로컬 TTS (Mouth, 잠정 D3)
+    "sounddevice",     # 스피커 재생
+    "faster-whisper",  # 로컬 STT (Ear, 잠정 D2)
+]
 dev = [
     "pytest",
     "pytest-asyncio",
