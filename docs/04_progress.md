@@ -7,15 +7,31 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**현재 상태 — D3 보이스 클로닝 전환 착수 (2026.06.15):**
-Stage 0~2 검증 스크립트 4개 + 3개 후보 어댑터 구현 완료. 실측 전 상태.
-- `scripts/bench_rocm.py` — Stage 0: WSL2 + ROCm 환경 안정성 검증
-- `scripts/prep_reference.py` — Stage 1.5: 캐릭터 대사 → 3~10초 레퍼런스 WAV 전처리
-- `scripts/try_clone.py` — Stage 1: F5-TTS·CosyVoice2·GPT-SoVITS V2 음색 비교 샘플 생성
-- `scripts/bench_tts_latency.py` — Stage 2: TTFA·RTF·VRAM 정량 측정 (10회 반복, p95)
-- `navi/mouth/f5tts.py`, `cosyvoice.py`, `gptsovits.py` — 3개 후보 어댑터 (Mouth 계약 동일)
-- `create_mouth("f5tts", ref_text="...")` 형태로 팩토리 등록 완료
-- **다음 실행 순서:** WSL2 + ROCm 셋업 → `bench_rocm.py` (Stage 0 게이트) → 레퍼런스 오디오 준비 → `try_clone.py` → `bench_tts_latency.py` → D3 결정
+**현재 상태 — D3 Stage 0~1 실측 완료, CosyVoice2 zero-shot 청취 (2026.06.16):**
+스크립트 4개 + 후보 어댑터 3개 구현 후 WSL에서 CosyVoice2 zero-shot까지 실청취. 다음은 GPT-SoVITS fine-tune 검토.
+
+**Stage 0 — WSL2 + ROCm 실패 → CPU로 음색 검증 선회 (게이트 결과):**
+- 데스크톱 = AMD RX 6600 XT(gfx1032). **WSL2에서 ROCm 미인식** — `/dev/dxg`는 있으나 `/dev/kfd`(ROCm 커널 인터페이스) 부재로 `torch.cuda.is_available()==False`.
+- 원인: WSL2의 AMD ROCm은 별도 WSL 전용 빌드가 필요하고 지원 카드가 RX 7900·Radeon Pro급뿐. gfx1032는 네이티브에서도 비공식 → WSL은 이중으로 불리.
+- **결정: 음색 품질(Stage 1)은 GPU 불필요(속도 무시) → CPU로 먼저 검증.** GPU 환경 싸움(네이티브 Ubuntu 듀얼부팅 등)은 음색 합격 후로 미룸. 이로써 **계획서 가정 A(WSL2+ROCm+gfx1032) 깨짐 확정.**
+- 환경: WSL Ubuntu, **Python 3.11**(deadsnakes — CosyVoice 생태계가 3.12 미지원, matcha-tts/piper_phonemize가 `<3.12`), CPU torch. CosyVoice repo는 `~/CosyVoice`(navi repo와 별도 clone, `/dev/kfd` 무관하게 동작).
+- CosyVoice 설치 함정: requirements가 NVIDIA 전제(tensorrt·onnxruntime-gpu) → GPU 라인 제외하고 추론 필수만. 최신 setuptools(82)가 pkg_resources 제거 → `setuptools<81` + `--no-build-isolation`. matcha-tts는 pip 대신 PYTHONPATH로. 모델은 HF(`FunAudioLLM/CosyVoice2-0.5B`, ModelScope는 41kB/s로 느림).
+
+**Stage 1 — CosyVoice2 zero-shot 청취 (레퍼런스: 블루아카이브 아리스 일본어 보이스):**
+- **CosyVoice2 기준 한국어 출력(cross-lingual) = 불가.** 일본어 레퍼런스→한국어 발화는 깨진 소리. → 이 모델에서는 동일 언어 출력만 유효.
+- **언어 방향은 미확정.** 현재 테스트가 일본어 레퍼런스(아리스)를 쓰고 있어 일본어 출력을 먼저 검증한 것. 한국어 레퍼런스 음원 탐색 중이며 일/한 양방 지원도 검토 중. GPT-SoVITS가 교차언어를 더 잘 처리한다는 보고 있음 — fine-tune 비교 시 함께 확인 예정.
+- **일본어 출력 = "아주 그럴듯함".** 존댓말 캐릭터 어투가 새 문장에서도 잘 유지됨. zero-shot치고 충분히 좋음.
+- **한계 두 가지(실청취):**
+  - **캐릭터성 평탄화** — 원본의 활기참·강아지 같은 인상이 다소 눌려 "차분한 아리스" 톤. (단 레퍼런스 톤을 따라가므로 차분한 Lobby 레퍼런스 탓일 여지 있음 — 활기찬 레퍼런스로 재시도 중.)
+  - **음질 저하 + 간헐 노이즈** — 출력 24kHz 고정이라 스튜디오 원본(무손실)보다 선명도 손실(neural vocoder 구조적 천장, 모델 무관). 노이즈는 zero-shot hallucination·ref-text 정렬 실패(긴 레퍼런스일수록↑).
+- **평가:** CosyVoice2는 일반 음성(뉴스·오디오북) 학습이라 서브컬처 캐릭터 억양을 평탄화하는 경향이 실제로 있음. 단 "캐릭터성 완전 소멸"은 과장 — 일본어·존댓말은 충분히 살아있음.
+
+**다음 — GPT-SoVITS fine-tune 검토 (미착수):**
+- 가설: zero-shot의 평탄화·노이즈·24k 천장을 **fine-tune이 완화**. GPT-SoVITS는 32kHz + 짧은 레퍼런스 운율 복제율↑ + 애니/게임 캐릭터 fine-tune 생태계. **아리스 음성 300개(5~20초)는 fine-tune에 충분한 양.**
+- 주의: 설치가 셋 중 가장 무거움(repo + 다중 ckpt). 코드 `try_clone.py`의 `prompt_language="ko"` 하드코딩을 일본어 레퍼런스에 맞게 수정 필요.
+- 음질 절대 천장은 GPT-SoVITS에서도 원본 녹음 아래(neural TTS 공통). 목표는 "원본 복제"가 아니라 "자연스럽고 안정적인 캐릭터 음성"(실시간 대화 용도엔 24~32k로 충분).
+
+**미실행:** Stage 2(TTFA·RTF·VRAM 정량) — GPU 환경 확보 후. 현재 CPU는 속도 측정 무의미.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.

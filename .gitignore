@@ -18,3 +18,4 @@ notes/
 # 음성 실험 입출력 (개인 녹음·합성 wav·받아쓰기 결과 — 커밋 대상 아님)
 scripts/in/
 scripts/out/
+voice_ref/
