@@ -2,7 +2,7 @@
 name = "companion-navi"
 version = "0.1.0"
 description = "반려 AI 오케스트레이터 데몬 — Hey! Listen!"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "google-genai",
     "anthropic",
