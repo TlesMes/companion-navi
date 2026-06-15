@@ -16,10 +16,12 @@
 
 | 문서 | 내용 | 언제 읽나 |
 | :-- | :-- | :-- |
-| [03_master_plan.md](./03_master_plan.md) | 로드맵(Phase 0–5)·원칙 전체·기술 스택과 선정 이유 | **전체 진행 상황·방향을 파악해야 할 때** |
-| [01_daemon_architecture.md](./01_daemon_architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D12 | 구현 작업 시 |
-| [02_tech_research_cost.md](./02_tech_research_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
-| [04_progress.md](./04_progress.md) | Phase별 진행 기록·구현 중 결정·운영 메모(환경 상태) | **새 세션 시작 시 맥락 복원** |
+| [03_master_plan.md](./docs/03_master_plan.md) | 로드맵(Phase 0–5)·원칙 전체·기술 스택과 선정 이유 | **전체 진행 상황·방향을 파악해야 할 때** |
+| [01_daemon_architecture.md](./docs/01_daemon_architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D12 | 구현 작업 시 |
+| [02_tech_research_cost.md](./docs/02_tech_research_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
+| [04_progress.md](./docs/04_progress.md) | Phase별 진행 기록·구현 중 결정·운영 메모(환경 상태) | **새 세션 시작 시 맥락 복원** |
+
+> **TTS 피벗 검토**: [docs/TTS_전환.md](./docs/TTS_전환.md) — Supertonic→Zero-shot 보이스 클로닝 전환 및 바지인 아키텍처 검토.
 
 ## 커밋 컨벤션 (Conventional Commits)
 
