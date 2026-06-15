@@ -1,13 +1,13 @@
-"""로컬 TTS 청취 비교용 — 한국어 대사를 합성해 wav로 저장하고 소요시간을 잰다 (D3 결정 도구).
+﻿"""로컬 TTS 청취 비교용 — 한국어 대사를 합성해 wav로 저장하고 소요시간을 잰다 (D3 결정 도구).
 
 벤더 결정 전 실험 스크립트라 navi 패키지에 넣지 않는다. 음질·음색은 귀로 정한다(원칙).
 
 사용 예:
-  python scripts/try_tts.py                         # 기본 대사·기본 음색
-  python scripts/try_tts.py --voice F1 --text "오늘 좀 피곤하네, 일찍 잘래"
-  python scripts/try_tts.py --voices M1 M2 F1 F2     # 여러 음색을 한 번에 비교
+  python scripts/try/try_tts.py                         # 기본 대사·기본 음색
+  python scripts/try/try_tts.py --voice F1 --text "오늘 좀 피곤하네, 일찍 잘래"
+  python scripts/try/try_tts.py --voices M1 M2 F1 F2     # 여러 음색을 한 번에 비교
 
-생성물은 scripts/out/ 아래 voice별 wav. 직접 들어보고 나비의 목소리 후보를 고른다.
+생성물은 scripts/try/out/ 아래 voice별 wav. 직접 들어보고 나비의 목소리 후보를 고른다.
 """
 
 from __future__ import annotations

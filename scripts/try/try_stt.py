@@ -1,13 +1,13 @@
-"""로컬 STT 받아쓰기 검증용 — 음성 파일을 텍스트로 옮기고 한국어 정확도·소요시간을 본다 (D2 도구).
+﻿"""로컬 STT 받아쓰기 검증용 — 음성 파일을 텍스트로 옮기고 한국어 정확도·소요시간을 본다 (D2 도구).
 
 faster-whisper(CTranslate2) 기반. 같은 모델 가중치면 받아쓴 텍스트는 런타임·하드웨어와
 무관하게 동일하다 — 그래서 품질(CER) 판단은 여기 CPU에서 해도 데스크톱 배포와 같은 결과다.
 GPU 가속(AMD=Vulkan/DirectML, NVIDIA=CUDA)은 레이턴시만 바꾼다 → 배포 단계 과제.
 
 사용 예:
-  python scripts/try_stt.py 발화.wav                              # 기본 large-v3-turbo
-  python scripts/try_stt.py 발화.wav --models large-v3-turbo large-v3   # 두 모델 품질 비교
-  python scripts/try_stt.py 발화.wav --device cuda                # 1050 Ti 노트북이면 CUDA
+  python scripts/try/try_stt.py 발화.wav                              # 기본 large-v3-turbo
+  python scripts/try/try_stt.py 발화.wav --models large-v3-turbo large-v3   # 두 모델 품질 비교
+  python scripts/try/try_stt.py 발화.wav --device cuda                # 1050 Ti 노트북이면 CUDA
 
 품질 위주 비교라 여러 모델을 한 번에 돌려 받아쓴 텍스트를 나란히 본다. 정답(실제 발화)과
 대조해 어느 모델이 한국어를 잘 받아쓰는지 눈으로 판단한다. CER은 직접 세거나 VITO 웹 데모

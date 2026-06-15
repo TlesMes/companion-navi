@@ -1,4 +1,4 @@
-"""SupertonicMouth 실청취 — 대사를 토큰 스트림처럼 흘려 합성·재생하고 첫 오디오 지연을 잰다.
+﻿"""SupertonicMouth 실청취 — 대사를 토큰 스트림처럼 흘려 합성·재생하고 첫 오디오 지연을 잰다.
 
 try_tts.py가 '음색'을 고르는 도구라면, 이건 '스트리밍 파이프라인'을 검증하는 도구다:
 토큰이 들어오는 대로 문장 경계에서 끊어 첫 문장부터 말하기 시작하는지, 첫 오디오가
@@ -7,9 +7,9 @@ try_tts.py가 '음색'을 고르는 도구라면, 이건 '스트리밍 파이프
 스피커가 필요하다. 음성 의존성 설치: pip install -e ".[voice]"
 
 사용 예:
-  python scripts/try_mouth.py
-  python scripts/try_mouth.py --voice F1 --text "오늘 좀 피곤하네. 일찍 잘까? 내일 보자."
-  python scripts/try_mouth.py --barge-in 1.5   # 1.5초 뒤 stop() — 말 끊기 확인
+  python scripts/try/try_mouth.py
+  python scripts/try/try_mouth.py --voice F1 --text "오늘 좀 피곤하네. 일찍 잘까? 내일 보자."
+  python scripts/try/try_mouth.py --barge-in 1.5   # 1.5초 뒤 stop() — 말 끊기 확인
 """
 
 from __future__ import annotations
