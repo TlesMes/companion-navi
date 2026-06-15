@@ -7,7 +7,24 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**어댑터 계약·stub 완료 (브랜치 `feat/voice-adapter-contracts`):**
+**현재 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
+- **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
+- **TTS**(Supertonic, F1) — 한국어 합성 검증(`scripts/try_tts.py`) → **`SupertonicMouth` 실어댑터 구현 완료.**
+- **STT**(faster-whisper turbo) — 한국어 받아쓰기 실검증(`scripts/try_stt.py`).
+
+**`SupertonicMouth` 실어댑터 (feat/mouth-supertonic):**
+fake를 실엔진으로 교체 — Mouth 계약(4.8) 세 메서드를 Supertonic으로 채움(`navi/mouth/supertonic.py`).
+- **문장청크 스트리밍**: Supertonic은 배치 엔진이라 토큰을 문장 경계(`.!?。…\n`)로 끊어 청크별 합성→순차 재생. 첫 문장이 나오는 즉시 말하기 시작(첫 오디오 ~1초 목표). 합성(N+1)이 재생(N)과 겹쳐 끊김 최소화(asyncio.Queue + to_thread 파이프라인).
+- **barge-in**: `stop()`이 `sd.stop()`으로 재생 즉시 중단 + 합성 워커는 다음 문장 경계에서 협조 중단.
+- 재생은 `sounddevice`, 목소리는 `VoiceProfile.vendor_voice_id`(→Supertonic 음색 F1)·`.speed` 매핑.
+- 팩토리 `create_mouth("supertonic")` 연결. 음성 의존성은 `[voice]` extra로 분리(`pip install -e ".[voice]"`) — 텍스트 뼈대는 가볍게 유지.
+- 검증: 단위 테스트 5개(가짜 엔진 주입, 실모델·실오디오 없이 청크/꼬리말/음색매핑/barge-in 고정) + 실청취 도구 `scripts/try_mouth.py`(첫 오디오 지연 측정·`--barge-in`). 전체 28 passed.
+- **실측 완료 (2026.06.14, 데스크톱 CPU·F1):** 첫 오디오 **0.6초**(웜)/1.4초(콜드 첫 발화 — ONNX 워밍업), 목표 ~1초 충족. barge-in stop() 후 ~0.2초 내 종료. **배치 대기 없음을 직접 증명** — 텍스트를 30배로 늘려도 첫 오디오 0.64s→0.62s로 길이와 무관(배치였다면 ~18초로 밀렸을 것). 합성(N+1)이 재생(N)과 겹쳐 도는 게 실측으로 확인됨.
+- 콜드 첫 발화 1.4초는 데몬 기동 시 더미 합성으로 ONNX를 미리 달궈 0.6초대로 낮출 수 있음(향후 튜닝 후보, 미구현).
+
+**다음: Conductor↔Mouth 배선 — 답변 토큰 스트림을 SupertonicMouth로 연결(질의-응답생성-TTS 중 '응답생성→TTS' 연결).** 또는 입력단(Ear) 마이크→STT. 현재 세 부품은 각각 독립 작동만 하고 서로 미연결 — `try_mouth.py`는 Brain 응답이 아닌 정해진 텍스트를 토큰처럼 흉내 내 먹인 Mouth 단독 검증.
+
+**어댑터 계약·stub 완료 (PR #1 머지):**
 STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`navi/stt`·`navi/mouth`·`tests/test_voice.py`).
 벤더는 `_PENDING_D2`/`_PENDING_D3`로 보류 표시 — 결정 후 어댑터 한 장 끼우면 됨.
 

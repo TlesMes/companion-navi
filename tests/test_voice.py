@@ -68,6 +68,74 @@ async def test_mouth_stop_interrupts_mid_stream():
     assert not mouth.is_playing()
 
 
+# --- SupertonicMouth: 문장청크 스트리밍 (가짜 엔진 주입, 실오디오·실모델 없이) ---
+
+
+class _FakeEngine:
+    """Supertonic TTS 흉내 — 합성 호출을 기록만 한다(무거운 모델·numpy 불필요)."""
+
+    sample_rate = 24000
+
+    def __init__(self) -> None:
+        self.synthesized: list[str] = []
+
+    def get_voice_style(self, voice_name: str):
+        return f"style:{voice_name}"
+
+    def synthesize(self, *, text, voice_style, total_steps, speed, lang):
+        self.synthesized.append(text)
+        return (f"wav:{text}", None)  # 재생은 _play를 가로채 무시하므로 마커면 충분
+
+
+def _build_supertonic():
+    """가짜 엔진을 주입하고 _play를 재생 기록으로 가로챈 SupertonicMouth."""
+    from navi.mouth.supertonic import SupertonicMouth
+
+    engine = _FakeEngine()
+    mouth = SupertonicMouth(tts=engine)
+    played: list = []
+    mouth._play = lambda wav: played.append(wav)  # 실스피커 대신 기록
+    return mouth, engine, played
+
+
+async def test_supertonic_chunks_stream_into_sentences():
+    mouth, engine, played = _build_supertonic()
+    await mouth.speak_stream(_stream("안녕", ". 잘 ", "잤어?"), VOICE)
+    assert engine.synthesized == ["안녕.", "잘 잤어?"]  # 문장 경계마다 합성
+    assert played == ["wav:안녕.", "wav:잘 잤어?"]  # 합성 즉시 순차 재생
+    assert not mouth.is_playing()
+
+
+async def test_supertonic_tail_without_terminator_is_spoken():
+    mouth, engine, played = _build_supertonic()
+    await mouth.speak_stream(_stream("종결 ", "부호 ", "없음"), VOICE)
+    assert engine.synthesized == ["종결 부호 없음"]  # 꼬리말도 마지막에 합성
+    assert len(played) == 1
+
+
+async def test_supertonic_uses_voice_id_as_supertonic_style():
+    mouth, engine, _ = _build_supertonic()
+    voice = VoiceProfile(name="navi", vendor_voice_id="F1", speed=1.05)
+    await mouth.speak_stream(_stream("하나."), voice)
+    assert mouth._style("F1") == "style:F1"  # vendor_voice_id → Supertonic 음색
+
+
+async def test_supertonic_stop_halts_synthesis_mid_stream():
+    mouth, engine, _ = _build_supertonic()
+
+    async def slow_stream():
+        for token in ["하나. ", "둘. ", "셋. ", "넷. "]:
+            yield token
+            await asyncio.sleep(0.01)
+
+    task = asyncio.create_task(mouth.speak_stream(slow_stream(), VOICE))
+    await asyncio.sleep(0.015)  # 첫 문장쯤 흐른 뒤
+    mouth.stop()  # barge-in
+    await task
+    assert len(engine.synthesized) < 4  # 전부 합성됐다면 중단 실패
+    assert not mouth.is_playing()
+
+
 # --- 팩토리: 벤더 종속 금지 + 보류 결정 안내 ---
 
 
@@ -76,11 +144,18 @@ def test_factories_build_fake_by_default():
     assert isinstance(create_mouth(), FakeMouth)
 
 
+def test_supertonic_vendor_builds_real_adapter():
+    from navi.mouth.supertonic import SupertonicMouth
+
+    # 엔진은 첫 발화 때 지연 로드 — 생성만으로 supertonic 미설치여도 동작
+    assert isinstance(create_mouth("supertonic"), SupertonicMouth)
+
+
 def test_pending_vendors_raise_with_decision_pointer():
     with pytest.raises(NotImplementedError, match="D2"):
         create_stt("vito")
-    with pytest.raises(NotImplementedError, match="D3"):
-        create_mouth("supertone")
+    with pytest.raises(NotImplementedError, match="폴백"):
+        create_mouth("cartesia")
 
 
 def test_unknown_vendor_raises_value_error():
