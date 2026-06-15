@@ -7,7 +7,17 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**현재 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
+**현재 상태 — D3 보이스 클로닝 전환 착수 (2026.06.15):**
+Stage 0~2 검증 스크립트 4개 + 3개 후보 어댑터 구현 완료. 실측 전 상태.
+- `scripts/bench_rocm.py` — Stage 0: WSL2 + ROCm 환경 안정성 검증
+- `scripts/prep_reference.py` — Stage 1.5: 캐릭터 대사 → 3~10초 레퍼런스 WAV 전처리
+- `scripts/try_clone.py` — Stage 1: F5-TTS·CosyVoice2·GPT-SoVITS V2 음색 비교 샘플 생성
+- `scripts/bench_tts_latency.py` — Stage 2: TTFA·RTF·VRAM 정량 측정 (10회 반복, p95)
+- `navi/mouth/f5tts.py`, `cosyvoice.py`, `gptsovits.py` — 3개 후보 어댑터 (Mouth 계약 동일)
+- `create_mouth("f5tts", ref_text="...")` 형태로 팩토리 등록 완료
+- **다음 실행 순서:** WSL2 + ROCm 셋업 → `bench_rocm.py` (Stage 0 게이트) → 레퍼런스 오디오 준비 → `try_clone.py` → `bench_tts_latency.py` → D3 결정
+
+**이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
 - **TTS**(Supertonic, F1) — 한국어 합성 검증(`scripts/try_tts.py`) → **`SupertonicMouth` 실어댑터 구현 완료.**
 - **STT**(faster-whisper turbo) — 한국어 받아쓰기 실검증(`scripts/try_stt.py`).

@@ -18,6 +18,16 @@ voice = [
     "sounddevice",     # 스피커 재생
     "faster-whisper",  # 로컬 STT (Ear, 잠정 D2)
 ]
+# D3 보이스 클로닝 후보 — WSL2 + ROCm 환경에서 설치
+# ROCm PyTorch: pip install torch --index-url https://download.pytorch.org/whl/rocm6.1
+voice-clone = [
+    "f5-tts",      # F5-TTS (pip installable)
+    "sounddevice", # 스피커 재생
+    "soundfile",   # 오디오 파일 I/O (prep_reference.py)
+    "librosa",     # 오디오 전처리 (prep_reference.py)
+    # CosyVoice2: git clone https://github.com/FunAudioLLM/CosyVoice
+    # GPT-SoVITS:  git clone https://github.com/RVC-Boss/GPT-SoVITS
+]
 dev = [
     "pytest",
     "pytest-asyncio",
