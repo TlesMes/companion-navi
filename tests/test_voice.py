@@ -136,6 +136,82 @@ async def test_supertonic_stop_halts_synthesis_mid_stream():
     assert not mouth.is_playing()
 
 
+# --- GPTSoVITSMouth: 문장청크 스트리밍 (가짜 tts_fn 주입, 실모델·실오디오 없이) ---
+
+
+class _FakeGptSovits:
+    """get_tts_wav 흉내 — 합성 호출 인자를 기록하고 (sr, int16) 청크를 yield."""
+
+    def __init__(self) -> None:
+        # (text, prompt_language, text_language, how_to_cut)
+        self.calls: list[tuple] = []
+
+    def __call__(self, *, ref_wav_path, prompt_text, prompt_language, text,
+                 text_language, how_to_cut):
+        import numpy as np
+
+        self.calls.append((text, prompt_language, text_language, how_to_cut))
+        yield (32000, np.zeros(8, dtype=np.int16))
+
+
+def _build_gptsovits(**kw):
+    """가짜 tts_fn을 주입하고 _play를 재생 기록으로 가로챈 GPTSoVITSMouth."""
+    from navi.mouth.gptsovits import GPTSoVITSMouth
+
+    fake = _FakeGptSovits()
+    mouth = GPTSoVITSMouth(ref_text="れいてきすと", tts_fn=fake, **kw)
+    played: list = []
+    mouth._play = lambda wav: played.append(wav)  # 실스피커 대신 기록
+    return mouth, fake, played
+
+
+async def test_gptsovits_chunks_stream_into_sentences():
+    mouth, fake, played = _build_gptsovits()
+    await mouth.speak_stream(_stream("こんにちは", "。 げん", "き?"), VOICE)
+    assert [c[0] for c in fake.calls] == ["こんにちは。", "げんき?"]  # 문장 경계마다
+    assert len(played) == 2  # 합성 즉시 순차 재생
+    assert not mouth.is_playing()
+
+
+async def test_gptsovits_tail_without_terminator_is_spoken():
+    mouth, fake, played = _build_gptsovits()
+    await mouth.speak_stream(_stream("しゅうけつ ", "ふごう ", "なし"), VOICE)
+    assert [c[0] for c in fake.calls] == ["しゅうけつ ふごう なし"]  # 꼬리말도 합성
+    assert len(played) == 1
+
+
+async def test_gptsovits_passes_language_and_cut_args():
+    # tts_fn 주입 시 i18n이 없으므로 소스 문자열을 그대로 전달한다.
+    mouth, fake, _ = _build_gptsovits(ref_lang="ja", gen_lang="ko")
+    await mouth.speak_stream(_stream("ひとつ."), VOICE)
+    assert fake.calls[0][1] == "日文"  # prompt_language (ref=ja)
+    assert fake.calls[0][2] == "韩文"  # text_language (gen=ko)
+    assert fake.calls[0][3] == "不切"  # how_to_cut — 청킹은 우리가 함
+
+
+async def test_gptsovits_stop_halts_synthesis_mid_stream():
+    mouth, fake, _ = _build_gptsovits()
+
+    async def slow_stream():
+        for token in ["いち. ", "に. ", "さん. ", "し. "]:
+            yield token
+            await asyncio.sleep(0.01)
+
+    task = asyncio.create_task(mouth.speak_stream(slow_stream(), VOICE))
+    await asyncio.sleep(0.015)  # 첫 문장쯤 흐른 뒤
+    mouth.stop()  # barge-in
+    await task
+    assert len(fake.calls) < 4  # 전부 합성됐다면 중단 실패
+    assert not mouth.is_playing()
+
+
+def test_gptsovits_invalid_lang_raises():
+    from navi.mouth.gptsovits import GPTSoVITSMouth
+
+    with pytest.raises(ValueError, match="지원 언어"):
+        GPTSoVITSMouth(gen_lang="fr")
+
+
 # --- 팩토리: 벤더 종속 금지 + 보류 결정 안내 ---
 
 

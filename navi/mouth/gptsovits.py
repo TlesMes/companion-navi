@@ -1,26 +1,39 @@
-"""GPT-SoVITS V2 실어댑터 — 두뇌 토큰 스트림을 로컬에서 합성·재생한다 (D3 후보).
+"""GPT-SoVITS V2 실어댑터 — 두뇌 토큰 스트림을 로컬에서 합성·재생한다 (D3 유력안).
 
-GPT-SoVITS는 Web UI 중심 설계라 라이브러리로 직접 쓰려면 repo가 PYTHONPATH에 있어야 한다.
-음색 복제율이 3개 후보 중 최상으로 평가받지만(특히 한·일 교차언어), 잡음 아티팩트 보고가
-있으므로 Stage 1 청취 비교에서 이 항목을 집중 확인한다.
+음색은 fine-tune 가중치(.pth/.ckpt)가 안정적으로 담당하고, 톤·억양은 레퍼런스 오디오로
+제어한다(D3 결론 — 메모리 gptsovits-d3-prosody). GPT-SoVITS는 Web UI 중심 설계라 라이브러리로
+직접 쓰려면 repo가 PYTHONPATH에 있어야 하고, inference_webui가 import 시점에 가중치를 즉시
+로드하므로 베이스/가중치 경로를 env로 못박아야 한다.
 
-설치 (WSL2 + ROCm):
-  git clone https://github.com/RVC-Boss/GPT-SoVITS /opt/gptsovits
-  cd /opt/gptsovits && pip install -r requirements.txt
-  pip install sounddevice
+WSL이 아니라 **Windows native 단일 프로세스**에서 in-process로 돈다(ROCm 불가 확정 → CPU torch는
+Windows에서 동일 동작 → WSL 유지 이유 없음). GPU 백엔드(CUDA/DirectML)는 device 인자로 추후 교체.
 
-  # 환경변수 (.bashrc)
-  export PYTHONPATH=$PYTHONPATH:/opt/gptsovits
+환경 셋업 (Windows, 전용 3.12 venv):
+  git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS C:\\gptsovits   # ASCII 경로
+  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu  # torchcodec 제외
+  pip install -r C:\\gptsovits\\requirements.win-cpu.txt   # onnxruntime(CPU)·opencc wheel
+  # 베이스 모델: huggingface_hub.snapshot_download("lj1995/GPT-SoVITS",
+  #   allow_patterns=["chinese-hubert-base/*","chinese-roberta-wwm-ext-large/*"],
+  #   local_dir="C:\\gptsovits\\GPT_SoVITS\\pretrained_models")
+  # mkdir C:\\gptsovits\\GPT_SoVITS\\pretrained_models\\fast_langdetect  (lid.176.bin 다운로드 대비)
 
-레퍼런스 설정:
-  vendor_voice_id = "/path/to/reference.wav"
-  create_mouth("gptsovits", ref_text="레퍼런스 내용", repo_path="/opt/gptsovits")
+사용:
+  create_mouth(
+      "gptsovits",
+      repo_path=r"C:\\gptsovits",
+      gpt_ckpt=r"...\\voice_ref\\arisu-e15.ckpt",
+      sovits_ckpt=r"...\\voice_ref\\arisu_e8_s352.pth",
+      ref_text="레퍼런스 오디오 전사",  # ref_lang 언어로
+      ref_lang="ja", gen_lang="ja",
+  )
+  # VoiceProfile.vendor_voice_id = 레퍼런스 wav 경로
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys
 from collections.abc import AsyncIterator
@@ -31,8 +44,11 @@ from navi.mouth.base import MouthAdapter
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_END = re.compile(r".*?[.!?。…\n]+[""\')\]]*(?=\s|$)", re.DOTALL)
+_SENTENCE_END = re.compile(r".*?[.!?。…\n]+[\"'”’)\]]*(?=\s|$)", re.DOTALL)
 _OUTPUT_SR = 32_000  # GPT-SoVITS 기본 출력 샘플레이트
+
+# 언어 코드 → i18n 소스 문자열 (dict_language 키와 일치)
+_GPTSOVITS_LANG = {"ja": "日文", "ko": "韩文", "zh": "中文", "en": "英文"}
 
 
 class GPTSoVITSMouth(MouthAdapter):
@@ -42,35 +58,101 @@ class GPTSoVITSMouth(MouthAdapter):
         ref_text: str = "",
         repo_path: str | None = None,
         gpt_ckpt: str | None = None,
-        tts_fn: Any = None,  # 테스트 주입용
+        sovits_ckpt: str | None = None,
+        ref_lang: str = "ja",
+        gen_lang: str = "ja",
+        device: str = "cpu",  # 백엔드 추상화 자리 — 추후 cuda/dml로 교체
+        tts_fn: Any = None,  # 테스트 주입용 (실모델·실오디오 없이 고정)
     ) -> None:
+        if ref_lang not in _GPTSOVITS_LANG or gen_lang not in _GPTSOVITS_LANG:
+            raise ValueError(
+                f"지원 언어: {sorted(_GPTSOVITS_LANG)} (ref={ref_lang}, gen={gen_lang})"
+            )
         self._ref_text = ref_text
         self._repo_path = repo_path
         self._gpt_ckpt = gpt_ckpt
+        self._sovits_ckpt = sovits_ckpt
+        self._ref_lang = ref_lang
+        self._gen_lang = gen_lang
+        self._device = device
         self._tts_fn = tts_fn
+        # i18n으로 래핑된 인자 — _ensure_engine에서 채운다. 테스트 주입 시엔
+        # i18n이 없으므로 소스 문자열을 그대로 쓴다.
+        self._prompt_lang = _GPTSOVITS_LANG[ref_lang]
+        self._text_lang = _GPTSOVITS_LANG[gen_lang]
+        self._how_to_cut = "不切"  # 자르지 않음 — 청킹은 우리가 문장 경계로 함
         self._playing = False
         self._stopped = False
 
     def _ensure_engine(self) -> Any:
-        if self._tts_fn is None:
-            if self._repo_path:
-                sys.path.insert(0, self._repo_path)
-            try:
-                from GPT_SoVITS.inference_webui import (  # type: ignore[import]
-                    change_gpt_weights,
-                    get_tts_wav,
-                )
-            except ImportError as exc:
-                raise ImportError(
-                    "GPT-SoVITS를 찾을 수 없습니다.\n"
-                    "  git clone https://github.com/RVC-Boss/GPT-SoVITS /opt/gptsovits\n"
-                    "  create_mouth('gptsovits', repo_path='/opt/gptsovits') 또는 PYTHONPATH 설정"
-                ) from exc
+        if self._tts_fn is not None:
+            return self._tts_fn
 
-            if self._gpt_ckpt:
-                change_gpt_weights(self._gpt_ckpt)
-            self._tts_fn = get_tts_wav
-            logger.info("GPT-SoVITS 준비 완료.")
+        # repo 루트(= `from GPT_SoVITS.x`, `import config`)와 GPT_SoVITS/ 하위(= 내부
+        # `from text.x`, `from feature_extractor import cnhubert` 상대 import) 둘 다 필요.
+        if self._repo_path:
+            sys.path.insert(0, os.path.join(self._repo_path, "GPT_SoVITS"))
+            sys.path.insert(0, self._repo_path)
+
+            # inference_webui는 import 시점에 베이스/가중치를 즉시 로드한다(모듈 레벨).
+            # CWD가 repo 밖이면 상대경로가 안 풀리므로 env로 절대경로를 못박는다.
+            pre = os.path.join(self._repo_path, "GPT_SoVITS", "pretrained_models")
+            os.environ.setdefault(
+                "cnhubert_base_path", os.path.join(pre, "chinese-hubert-base")
+            )
+            os.environ.setdefault(
+                "bert_path", os.path.join(pre, "chinese-roberta-wwm-ext-large")
+            )
+        if self._gpt_ckpt:
+            os.environ.setdefault("gpt_path", str(self._gpt_ckpt))
+        if self._sovits_ckpt:
+            os.environ.setdefault("sovits_path", str(self._sovits_ckpt))
+
+        # torchcodec(GLIBCXX/ffmpeg 의존)를 피하려고 torchaudio.load를 soundfile로 교체.
+        # OGG/Vorbis도 libsndfile이 직접 읽는다. 반드시 inference_webui import 전에 적용.
+        import soundfile as sf
+        import torch as _torch
+        import torchaudio as _ta
+
+        def _sf_load(filename: Any, *_a: Any, **_k: Any) -> Any:
+            data, sr0 = sf.read(str(filename), dtype="float32", always_2d=True)
+            return _torch.from_numpy(data.T), sr0
+
+        _ta.load = _sf_load
+
+        try:
+            from GPT_SoVITS.inference_webui import (  # type: ignore[import]
+                change_gpt_weights,
+                change_sovits_weights,
+                get_tts_wav,
+                i18n,
+            )
+        except ImportError as exc:
+            raise ImportError(
+                "GPT-SoVITS를 찾을 수 없습니다.\n"
+                "  git clone https://github.com/RVC-Boss/GPT-SoVITS C:\\gptsovits\n"
+                "  create_mouth('gptsovits', repo_path=r'C:\\gptsovits', ...)"
+            ) from exc
+
+        # i18n으로 언어 인자 래핑 (webui 내부 dict_language 키와 일치시켜야 함).
+        self._prompt_lang = i18n(_GPTSOVITS_LANG[self._ref_lang])
+        self._text_lang = i18n(_GPTSOVITS_LANG[self._gen_lang])
+        self._how_to_cut = i18n("不切")
+
+        # SoVITS 가중치 로드 — 제너레이터라 소진해야 적용됨. prompt/text_language를
+        # 넘겨야 마지막 yield가 미설정 prompt_text_update를 참조해 죽지 않는다.
+        if self._sovits_ckpt:
+            for _ in change_sovits_weights(
+                self._sovits_ckpt,
+                prompt_language=self._prompt_lang,
+                text_language=self._text_lang,
+            ):
+                pass
+        if self._gpt_ckpt:
+            change_gpt_weights(self._gpt_ckpt)
+
+        self._tts_fn = get_tts_wav
+        logger.info("GPT-SoVITS 준비 완료 (device=%s).", self._device)
         return self._tts_fn
 
     # --- 계약 ---------------------------------------------------------
@@ -78,13 +160,19 @@ class GPTSoVITSMouth(MouthAdapter):
     async def speak_stream(
         self, tokens: AsyncIterator[str], voice: VoiceProfile
     ) -> None:
-        get_tts_wav = await asyncio.to_thread(self._ensure_engine)
+        tts_fn = await asyncio.to_thread(self._ensure_engine)
         ref_path = voice.vendor_voice_id
 
         self._stopped = False
         self._playing = True
         audio_q: asyncio.Queue[Any] = asyncio.Queue()
         _DONE = object()
+
+        def _synth(text: str) -> Any:
+            return _synth_one(
+                tts_fn, ref_path, self._ref_text, text,
+                self._prompt_lang, self._text_lang, self._how_to_cut,
+            )
 
         async def _synth_worker() -> None:
             buf = ""
@@ -98,32 +186,25 @@ class GPTSoVITSMouth(MouthAdapter):
                         break
                     chunk_text = m.group(0)
                     buf = buf[m.end():]
-                    wav = await asyncio.to_thread(
-                        _synth_one, get_tts_wav, ref_path, self._ref_text, chunk_text
-                    )
+                    wav = await asyncio.to_thread(_synth, chunk_text)
                     if wav is not None:
                         await audio_q.put(wav)
                     if self._stopped:
                         break
             if buf.strip() and not self._stopped:
-                wav = await asyncio.to_thread(
-                    _synth_one, get_tts_wav, ref_path, self._ref_text, buf.strip()
-                )
+                wav = await asyncio.to_thread(_synth, buf.strip())
                 if wav is not None:
                     await audio_q.put(wav)
             await audio_q.put(_DONE)
 
         async def _play_loop() -> None:
-            import sounddevice as sd
-
             while True:
                 item = await audio_q.get()
                 if item is _DONE:
                     break
                 if self._stopped:
                     continue
-                await asyncio.to_thread(sd.play, item, _OUTPUT_SR)
-                await asyncio.to_thread(sd.wait)
+                await asyncio.to_thread(self._play, item)
 
         try:
             await asyncio.gather(
@@ -133,34 +214,55 @@ class GPTSoVITSMouth(MouthAdapter):
         finally:
             self._playing = False
 
-    def stop(self) -> None:
+    def _play(self, wav: Any) -> None:
         import sounddevice as sd
 
+        sd.play(wav, _OUTPUT_SR)
+        sd.wait()  # stop()이 sd.stop()을 부르면 즉시 반환된다
+
+    def stop(self) -> None:
         self._stopped = True
         self._playing = False
-        sd.stop()
+        try:
+            import sounddevice as sd
+
+            sd.stop()  # 재생 중인 sd.wait()를 즉시 풀어 barge-in
+        except Exception:  # 장치 문제로 중단 실패해도 플래그는 이미 내려둠
+            logger.debug("sd.stop() 실패(무시)", exc_info=True)
 
     def is_playing(self) -> bool:
         return self._playing
 
 
-def _synth_one(get_tts_wav: Any, ref_path: str, ref_text: str, text: str) -> Any:
+def _synth_one(
+    tts_fn: Any,
+    ref_path: str,
+    ref_text: str,
+    text: str,
+    prompt_lang: Any,
+    text_lang: Any,
+    how_to_cut: Any,
+) -> Any:
+    """한 청크를 합성해 float32 ndarray로 반환. get_tts_wav는 (sr, int16) 튜플을 yield."""
     import numpy as np
 
     try:
-        raw_chunks = list(
-            get_tts_wav(
+        raw = list(
+            tts_fn(
                 ref_wav_path=ref_path,
                 prompt_text=ref_text,
-                prompt_language="ko",
+                prompt_language=prompt_lang,
                 text=text,
-                text_language="ko",
+                text_language=text_lang,
+                how_to_cut=how_to_cut,  # 청킹은 우리가 문장 경계로 이미 함
             )
         )
-        if not raw_chunks:
+        if not raw:
             return None
-        wav_i16 = np.concatenate([np.frombuffer(c, dtype=np.int16) for c in raw_chunks])
-        return (wav_i16.astype(np.float32) / 32768.0)
+        # yield 형식: (sample_rate, int16 ndarray) 튜플들.
+        chunks = [audio for _sr, audio in raw]
+        wav_i16 = np.concatenate(chunks)
+        return wav_i16.astype(np.float32) / 32768.0
     except Exception:
         logger.exception("GPT-SoVITS 합성 오류: %r", text[:40])
         return None
