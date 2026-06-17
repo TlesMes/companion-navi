@@ -18,6 +18,7 @@ notes/
 # 음성 실험 입출력 (개인 녹음·합성 wav·받아쓰기 결과 — 커밋 대상 아님)
 scripts/in/
 scripts/out/
+out/
 voice_ref/
 
 # fine-tune 데이터셋 (voice_ref 음원 파생물 — 대용량·저작권, 로컬 보관)
