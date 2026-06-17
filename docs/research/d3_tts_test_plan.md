@@ -1,8 +1,8 @@
 # [테스트 계획] Zero-shot TTS 전환 검증 (D3)
 
-> [TTS_전환.md](./TTS_전환.md)에서 결정한 **Supertonic → zero-shot voice cloning** 피벗을 코드로 옮기기 전, 가정을 단계별 관문으로 검증하는 계획. 각 단계는 게이트 — 통과해야 다음으로 간다.
+> [tts_pivot.md](./tts_pivot.md)에서 결정한 **Supertonic → zero-shot voice cloning** 피벗을 코드로 옮기기 전, 가정을 단계별 관문으로 검증하는 계획. 각 단계는 게이트 — 통과해야 다음으로 간다.
 > 호스트: AMD RX 6600 XT(RDNA2, VRAM 8GB) / ROCm. 한국어 퍼스트.
-> 관련 D번호: **D3(TTS 음색)**. 결과는 04_progress.md와 커밋 본문에 D3 근거로 적재.
+> 관련 D번호: **D3(TTS 음색)**. 결과는 `docs/progress.md`와 커밋 본문에 D3 근거로 적재.
 
 ---
 

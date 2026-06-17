@@ -7,8 +7,8 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**현재 상태 — D3 Stage 0~1 실측 완료, CosyVoice2 zero-shot 청취 (2026.06.16):**
-스크립트 4개 + 후보 어댑터 3개 구현 후 WSL에서 CosyVoice2 zero-shot까지 실청취. 다음은 GPT-SoVITS fine-tune 검토.
+**현재 상태 — D3 GPT-SoVITS fine-tune 청취 완료, 유력 후보 확정 (2026.06.17):**
+CosyVoice2 zero-shot(Stage 1) 후 GPT-SoVITS를 아리스 168클립으로 fine-tune(Colab T4)해 청취. **음색은 가중치가 안정적으로 담당, 톤·억양은 레퍼런스로 제어 가능 → GPT-SoVITS fine-tune을 D3 유력안으로.** 상세는 아래 Stage 2.
 
 **Stage 0 — WSL2 + ROCm 실패 → CPU로 음색 검증 선회 (게이트 결과):**
 - 데스크톱 = AMD RX 6600 XT(gfx1032). **WSL2에서 ROCm 미인식** — `/dev/dxg`는 있으나 `/dev/kfd`(ROCm 커널 인터페이스) 부재로 `torch.cuda.is_available()==False`.
@@ -26,12 +26,27 @@
   - **음질 저하 + 간헐 노이즈** — 출력 24kHz 고정이라 스튜디오 원본(무손실)보다 선명도 손실(neural vocoder 구조적 천장, 모델 무관). 노이즈는 zero-shot hallucination·ref-text 정렬 실패(긴 레퍼런스일수록↑).
 - **평가:** CosyVoice2는 일반 음성(뉴스·오디오북) 학습이라 서브컬처 캐릭터 억양을 평탄화하는 경향이 실제로 있음. 단 "캐릭터성 완전 소멸"은 과장 — 일본어·존댓말은 충분히 살아있음.
 
-**다음 — GPT-SoVITS fine-tune 검토 (미착수):**
-- 가설: zero-shot의 평탄화·노이즈·24k 천장을 **fine-tune이 완화**. GPT-SoVITS는 32kHz + 짧은 레퍼런스 운율 복제율↑ + 애니/게임 캐릭터 fine-tune 생태계. **아리스 음성 300개(5~20초)는 fine-tune에 충분한 양.**
-- 주의: 설치가 셋 중 가장 무거움(repo + 다중 ckpt). 코드 `try_clone.py`의 `prompt_language="ko"` 하드코딩을 일본어 레퍼런스에 맞게 수정 필요.
-- 음질 절대 천장은 GPT-SoVITS에서도 원본 녹음 아래(neural TTS 공통). 목표는 "원본 복제"가 아니라 "자연스럽고 안정적인 캐릭터 음성"(실시간 대화 용도엔 24~32k로 충분).
+**Stage 2 — GPT-SoVITS fine-tune 청취 (Colab T4, 2026.06.17):**
+- **데이터셋:** 아리스 메이드+기본 스킨 168클립(~14분), 전사 검증 후 ogg→wav→`.list` 패키징(`scripts/prep/build_sovits_dataset.py`). 톤이 같은 캐릭터라 두 스킨 합본.
+- **학습:** GPT-SoVITS **v2**(한국어 보류 대비 — 한국어는 v2 전용), SoVITS 8ep / GPT 15ep, batch 4, text_low_lr 0.4. 1A 포맷팅 → 1B 학습 → 1C 추론. 산출물 `arisu_e8_s352.pth`(SoVITS) + `arisu-e15.ckpt`(GPT), 로컬 다운로드 완료.
+- **검증 언어:** 일본어 ref(메이드 Lobby_2)→일본어 출력. (한국어 ref→출력은 보류 — 한국어 레퍼런스 음원 미확보. v2로 학습해 재학습 없이 추후 가능.)
+- **청취 결과 — 음색과 운율의 역할 분리(핵심 발견):**
+  - **음색(timbre) = fine-tune 가중치가 담당 ✅** — 어떤 레퍼런스를 넣어도 "그냥 아리스"라 할 만큼 음색 안정. zero-shot처럼 레퍼런스에 음색이 휘둘리지 않음.
+  - **운율(prosody — 톤·억양·에너지) = 레퍼런스가 지배.** 차분→하이톤으로 가는 8초 레퍼런스를 넣으면 출력도 동일하게 차분→하이톤으로 따라감. 4초 하이톤 레퍼런스를 넣으면 출력도 하이톤. → fine-tune이 캐릭터성을 죽인 게 아니라, **레퍼런스 선택으로 톤을 제어**하는 것.
+  - (정정) 첫 청취에서 "차분/평탄"하게 들린 건 차분한 레퍼런스(Lobby_2)를 골랐기 때문 — 톤 수렴이 아님.
+- **D3 결론(잠정):** GPT-SoVITS fine-tune = **음색 안정(가중치) + 톤 제어 가능(레퍼런스)** → **나비 목소리 유력안.** CosyVoice2 zero-shot 대비 음색 안정성에서 우위, 운율은 레퍼런스로 조절.
+- **운영 함의:** 나비 데몬에서 무드별 레퍼런스 클립 풀을 두고 상황(차분한 밤 인사 / 신난 아침 등)에 맞춰 레퍼런스를 골라 끼우면 톤 제어 파이프라인 구성 가능.
 
-**미실행:** Stage 2(TTFA·RTF·VRAM 정량) — GPU 환경 확보 후. 현재 CPU는 속도 측정 무의미.
+**Stage 3 — 로컬 WSL CPU 추론 재현 + RTF 측정 (2026.06.17):**
+- **환경:** WSL Ubuntu 24.04, Python 3.12, 12코어/15GB. venv + torch CPU(2.12+cpu/torchaudio 2.11+cpu, **torchcodec 제외**) + `requirements.cpu.txt`. 베이스 모델 cnhubert+roberta는 `lj1995/GPT-SoVITS`에서 다운로드. `arisu` ckpt 2종으로 JA→JA 추론.
+- **측정 RTF (CPU, v2):** 첫 문장 ~25s(모델 로드 + numba JIT 웜업, 데몬 상주 시 시작 1회 비용) / **웜 상태 RTF ≈ 1.4**(t01 7.2s÷5.1s, t02 6.9s÷4.8s). → 5s 발화당 ~7s 합성.
+- **함의:** 비스트리밍 CPU RTF 1.4는 "첫 오디오 ~1초" 목표엔 빠듯. 배포는 ① GPU 가속(Windows 네이티브 DirectML/onnxruntime-directml은 ONNX export 비용 큼 — 별도 과제) 또는 ② 청크 스트리밍(get_tts_wav가 청크 yield)으로 TTFA 단축 필요. CPU도 데몬 상주 + 짧은 발화 위주면 사용 불가 수준은 아님.
+- **`try_clone.py` gptsovits 분기 정본화 완료** — 실 API 반영(sys.path 2개, env 절대경로, change_sovits_weights 인자, torchaudio→soundfile 패치). 환경 복원 절차는 메모리 `gptsovits-wsl-local`.
+
+**남은 일:**
+- 청크 스트리밍 TTFA 측정(get_tts_wav 청크 단위) — 실시간성 판단.
+- (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
+- (선택) GPU 가속 경로 — CPU RTF/TTFA가 부족하다고 판정되면 DirectML/ONNX 착수.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
