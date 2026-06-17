@@ -1,7 +1,7 @@
 # companion-navi — 마스터 플랜
 
 > 최초 작성: 2026.06.11. 프로젝트의 로드맵·원칙·기술 스택과 그 선정 이유의 단일 출처.
-> 상세 설계는 [01_daemon_architecture.md](./01_daemon_architecture.md), 벤더 조사·원가는 [02_tech_research_cost.md](./02_tech_research_cost.md) 참조.
+> 상세 설계는 [architecture.md](./architecture.md), 벤더 조사·원가는 [vendor-cost.md](./vendor-cost.md) 참조.
 
 ---
 

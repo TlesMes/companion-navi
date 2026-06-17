@@ -16,12 +16,11 @@
 
 | 문서 | 내용 | 언제 읽나 |
 | :-- | :-- | :-- |
-| [03_master_plan.md](./docs/03_master_plan.md) | 로드맵(Phase 0–5)·원칙 전체·기술 스택과 선정 이유 | **전체 진행 상황·방향을 파악해야 할 때** |
-| [01_daemon_architecture.md](./docs/01_daemon_architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D12 | 구현 작업 시 |
-| [02_tech_research_cost.md](./docs/02_tech_research_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
-| [04_progress.md](./docs/04_progress.md) | Phase별 진행 기록·구현 중 결정·운영 메모(환경 상태) | **새 세션 시작 시 맥락 복원** |
-
-> **TTS 피벗 검토**: [docs/TTS_전환.md](./docs/TTS_전환.md) — Supertonic→Zero-shot 보이스 클로닝 전환 및 바지인 아키텍처 검토.
+| [docs/progress.md](./docs/progress.md) | Phase별 진행 기록·구현 중 결정·운영 메모(환경 상태) | **새 세션 시작 시 맥락 복원** |
+| [docs/design/plan.md](./docs/design/plan.md) | 로드맵(Phase 0–5)·원칙 전체·기술 스택과 선정 이유 | **전체 진행 상황·방향을 파악해야 할 때** |
+| [docs/design/architecture.md](./docs/design/architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D12 | 구현 작업 시 |
+| [docs/design/vendor-cost.md](./docs/design/vendor-cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
+| [docs/research/tts-pivot.md](./docs/research/tts-pivot.md) | Supertonic→Zero-shot 보이스 클로닝 전환 및 아키텍처 검토 | D3 배경 파악 시 |
 
 ## 커밋 컨벤션 (Conventional Commits)
 
@@ -43,9 +42,8 @@ type(scope): 제목 (한국어, 50자 내)
 - 머지 조건: 테스트 green + PR 본문에 이 단위의 **검증 방법**과 관련 D번호·완료 기준
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 
-## 현재 상태 (2026.06.13)
+## 현재 상태 (2026.06.17)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → Phase 2(음성화) 시작 전.
+Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화) D3 진행 중.**
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
-완료 기준: ① 껐다 켜도 어제 대화를 기억 — ✅ 실검증(2026.06.13, Gemini + 실사용) ② 벤더 교체에도 같은 말투 — ✅ 구조 검증(동일 카드·메시지 조립을 테스트로 고정). 잔여: ②의 실청취 비교는 Anthropic 키 확보 시.
-Phase 2 관문: D3(TTS 음색) 청취 비교 — 수퍼톤 vs Cartesia, D2(STT) 한국어 3사 비교.
+D3(TTS 음색): GPT-SoVITS fine-tune(아리스 168클립, Colab T4, v2) 청취 완료 → **유력안 확정**. 음색=가중치 안정, 톤=레퍼런스 제어. WSL CPU 로컬 추론 재현 완료(RTF~1.4). 상세 → [docs/progress.md](./docs/progress.md).

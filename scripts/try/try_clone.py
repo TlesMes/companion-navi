@@ -92,6 +92,10 @@ def _infer_cosyvoice(
     return wav, int(model.sample_rate)
 
 
+# GPT-SoVITS 언어 코드 → i18n 소스 문자열 (dict_language 키와 일치)
+_GPTSOVITS_LANG = {"ja": "日文", "ko": "韩文", "zh": "中文", "en": "英文"}
+
+
 def _infer_gptsovits(
     ref_path: Path,
     ref_text: str,
@@ -99,17 +103,57 @@ def _infer_gptsovits(
     device: str,
     repo_path: str | None = None,
     gpt_ckpt: str | None = None,
+    sovits_ckpt: str | None = None,
+    ref_lang: str = "ja",
+    gen_lang: str = "ja",
 ) -> tuple[np.ndarray, int]:
-    """GPT-SoVITS repo가 PYTHONPATH에 있거나 repo_path로 지정돼야 함."""
+    """fine-tune된 GPT(.ckpt) + SoVITS(.pth)로 추론.
+
+    repo가 PYTHONPATH에 있거나 repo_path로 지정돼야 함. device는 inference_webui가
+    import 시점에 자동 판정(cuda 없으면 cpu) — AMD 로컬은 자연히 CPU 추론.
+    """
+    import os
     import sys
 
+    # repo 루트(= `from GPT_SoVITS.x`, `import config`)와 GPT_SoVITS/ 하위(= 내부
+    # `from text.x`, `from feature_extractor import cnhubert` 상대 import) 둘 다 필요.
     if repo_path:
+        sys.path.insert(0, os.path.join(repo_path, "GPT_SoVITS"))
         sys.path.insert(0, repo_path)
+
+    # inference_webui는 import 시점에 베이스/가중치를 즉시 로드한다(모듈 레벨
+    # change_gpt_weights 호출). CWD가 repo 밖이면 상대경로가 안 풀리므로 env로
+    # 절대경로를 못박는다. gpt_path/sovits_path까지 넘기면 import가 우리 ckpt를 로드.
+    if repo_path:
+        pre = os.path.join(repo_path, "GPT_SoVITS", "pretrained_models")
+        os.environ.setdefault(
+            "cnhubert_base_path", os.path.join(pre, "chinese-hubert-base")
+        )
+        os.environ.setdefault(
+            "bert_path", os.path.join(pre, "chinese-roberta-wwm-ext-large")
+        )
+    if gpt_ckpt:
+        os.environ.setdefault("gpt_path", str(gpt_ckpt))
+    if sovits_ckpt:
+        os.environ.setdefault("sovits_path", str(sovits_ckpt))
+
+    # torchcodec(GLIBCXX/ffmpeg 의존)를 피하려고 torchaudio.load를 soundfile로 교체.
+    # OGG/Vorbis도 libsndfile이 직접 읽는다. 반드시 inference_webui import 전에 적용.
+    import torch as _torch
+    import torchaudio as _ta
+
+    def _sf_load(filename, *_a, **_k):
+        data, sr0 = sf.read(str(filename), dtype="float32", always_2d=True)
+        return _torch.from_numpy(data.T), sr0
+
+    _ta.load = _sf_load
 
     try:
         from GPT_SoVITS.inference_webui import (  # type: ignore[import]
             change_gpt_weights,
+            change_sovits_weights,
             get_tts_wav,
+            i18n,
         )
     except ImportError as exc:
         raise ImportError(
@@ -118,24 +162,40 @@ def _infer_gptsovits(
             "  --sovits-repo /opt/gptsovits 또는 PYTHONPATH 설정"
         ) from exc
 
+    if ref_lang not in _GPTSOVITS_LANG or gen_lang not in _GPTSOVITS_LANG:
+        raise ValueError(f"지원 언어: {sorted(_GPTSOVITS_LANG)} (ref={ref_lang}, gen={gen_lang})")
+
+    # SoVITS 가중치 로드 — 제너레이터라 소진해야 적용됨. GPT는 일반 함수.
+    # prompt/text_language를 넘겨야 함: 안 넘기면 함수 마지막 yield가 설정 안 된
+    # prompt_text_update를 참조해 UnboundLocalError (webui는 항상 넘기는 전제).
+    if sovits_ckpt:
+        for _ in change_sovits_weights(
+            sovits_ckpt,
+            prompt_language=i18n(_GPTSOVITS_LANG[ref_lang]),
+            text_language=i18n(_GPTSOVITS_LANG[gen_lang]),
+        ):
+            pass
     if gpt_ckpt:
         change_gpt_weights(gpt_ckpt)
 
     sr = 32_000
-    chunks = []
-    for chunk in get_tts_wav(
+    audio_chunks: list[np.ndarray] = []
+    # get_tts_wav는 (sample_rate, int16 ndarray) 튜플을 yield. how_to_cut=不切(자르지 않음).
+    for out_sr, audio in get_tts_wav(
         ref_wav_path=str(ref_path),
         prompt_text=ref_text,
-        prompt_language="ko",
+        prompt_language=i18n(_GPTSOVITS_LANG[ref_lang]),
         text=gen_text,
-        text_language="ko",
+        text_language=i18n(_GPTSOVITS_LANG[gen_lang]),
+        how_to_cut=i18n("不切"),
     ):
-        chunks.append(chunk)
+        sr = out_sr
+        audio_chunks.append(audio)
 
-    if not chunks:
+    if not audio_chunks:
         return np.zeros(1, np.float32), sr
 
-    wav_i16 = np.concatenate([np.frombuffer(c, dtype=np.int16) for c in chunks])
+    wav_i16 = np.concatenate(audio_chunks)
     return (wav_i16.astype(np.float32) / 32768.0), sr
 
 
@@ -158,6 +218,9 @@ def run_one(
     device: str,
     sovits_repo: str | None,
     gpt_ckpt: str | None,
+    sovits_ckpt: str | None,
+    ref_lang: str,
+    gen_lang: str,
 ) -> Path | None:
     out_path = out_dir / f"{tag}_{model}.wav"
     if out_path.exists():
@@ -169,7 +232,8 @@ def run_one(
     try:
         if model == "gptsovits":
             wav, sr = _infer_gptsovits(
-                ref_path, ref_text, gen_text, device, sovits_repo, gpt_ckpt
+                ref_path, ref_text, gen_text, device,
+                sovits_repo, gpt_ckpt, sovits_ckpt, ref_lang, gen_lang,
             )
         elif model in _INFER:
             wav, sr = _INFER[model](ref_path, ref_text, gen_text, device)
@@ -226,6 +290,15 @@ def main() -> None:
     parser.add_argument("--device", default="cuda", help="추론 장치 (cuda / cpu)")
     parser.add_argument("--sovits-repo", metavar="PATH", help="GPT-SoVITS repo 경로")
     parser.add_argument("--gpt-ckpt", metavar="PATH", help="GPT-SoVITS GPT 모델 .ckpt 경로")
+    parser.add_argument("--sovits-ckpt", metavar="PATH", help="GPT-SoVITS SoVITS 모델 .pth 경로")
+    parser.add_argument(
+        "--ref-lang", default="ja", choices=sorted(_GPTSOVITS_LANG),
+        help="레퍼런스 오디오 언어 (gptsovits 전용, 기본 ja)",
+    )
+    parser.add_argument(
+        "--gen-lang", default="ja", choices=sorted(_GPTSOVITS_LANG),
+        help="합성 텍스트 언어 (gptsovits 전용, 기본 ja)",
+    )
     args = parser.parse_args()
 
     if not args.reference.exists():
@@ -255,6 +328,9 @@ def main() -> None:
                 args.device,
                 args.sovits_repo,
                 args.gpt_ckpt,
+                args.sovits_ckpt,
+                args.ref_lang,
+                args.gen_lang,
             )
             if result:
                 outputs.append(result)

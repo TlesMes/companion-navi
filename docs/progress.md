@@ -37,12 +37,16 @@ CosyVoice2 zero-shot(Stage 1) 후 GPT-SoVITS를 아리스 168클립으로 fine-t
 - **D3 결론(잠정):** GPT-SoVITS fine-tune = **음색 안정(가중치) + 톤 제어 가능(레퍼런스)** → **나비 목소리 유력안.** CosyVoice2 zero-shot 대비 음색 안정성에서 우위, 운율은 레퍼런스로 조절.
 - **운영 함의:** 나비 데몬에서 무드별 레퍼런스 클립 풀을 두고 상황(차분한 밤 인사 / 신난 아침 등)에 맞춰 레퍼런스를 골라 끼우면 톤 제어 파이프라인 구성 가능.
 
-**남은 일:**
-- `try_clone.py` gptsovits 분기 정본화(현 stub: `prompt_language="ko"` 하드코딩 + 구식 API 시그니처) → 받아온 ckpt로 로컬 추론.
-- 로컬 WSL GPT-SoVITS 설치 + 받은 ckpt 추론(RTF·TTFA 측정은 GPU 환경 확보 후).
-- (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
+**Stage 3 — 로컬 WSL CPU 추론 재현 + RTF 측정 (2026.06.17):**
+- **환경:** WSL Ubuntu 24.04, Python 3.12, 12코어/15GB. venv + torch CPU(2.12+cpu/torchaudio 2.11+cpu, **torchcodec 제외**) + `requirements.cpu.txt`. 베이스 모델 cnhubert+roberta는 `lj1995/GPT-SoVITS`에서 다운로드. `arisu` ckpt 2종으로 JA→JA 추론.
+- **측정 RTF (CPU, v2):** 첫 문장 ~25s(모델 로드 + numba JIT 웜업, 데몬 상주 시 시작 1회 비용) / **웜 상태 RTF ≈ 1.4**(t01 7.2s÷5.1s, t02 6.9s÷4.8s). → 5s 발화당 ~7s 합성.
+- **함의:** 비스트리밍 CPU RTF 1.4는 "첫 오디오 ~1초" 목표엔 빠듯. 배포는 ① GPU 가속(Windows 네이티브 DirectML/onnxruntime-directml은 ONNX export 비용 큼 — 별도 과제) 또는 ② 청크 스트리밍(get_tts_wav가 청크 yield)으로 TTFA 단축 필요. CPU도 데몬 상주 + 짧은 발화 위주면 사용 불가 수준은 아님.
+- **`try_clone.py` gptsovits 분기 정본화 완료** — 실 API 반영(sys.path 2개, env 절대경로, change_sovits_weights 인자, torchaudio→soundfile 패치). 환경 복원 절차는 메모리 `gptsovits-wsl-local`.
 
-**미실행:** Stage 2(TTFA·RTF·VRAM 정량) — GPU 환경 확보 후. 현재 CPU는 속도 측정 무의미.
+**남은 일:**
+- 청크 스트리밍 TTFA 측정(get_tts_wav 청크 단위) — 실시간성 판단.
+- (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
+- (선택) GPU 가속 경로 — CPU RTF/TTFA가 부족하다고 판정되면 DirectML/ONNX 착수.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
