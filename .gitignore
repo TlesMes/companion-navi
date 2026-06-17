@@ -19,3 +19,6 @@ notes/
 scripts/in/
 scripts/out/
 voice_ref/
+
+# fine-tune 데이터셋 (voice_ref 음원 파생물 — 대용량·저작권, 로컬 보관)
+dataset/
