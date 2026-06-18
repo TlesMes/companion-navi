@@ -4,8 +4,9 @@ from pathlib import Path
 from navi.brain import create_brain
 from navi.brain.echo import EchoBrain
 from navi.conductor import Conductor
-from navi.config import BrainConfig, Config
+from navi.config import BrainConfig, Config, MouthConfig
 from navi.memory import MemoryStore
+from navi.models import VoiceProfile
 from navi.persona import CharacterCard
 
 CARD_PATH = Path(__file__).parents[1] / "personas" / "navi.yaml"
@@ -20,6 +21,11 @@ MODELS = {
 def make_config(tmp_path, vendor: str = "echo") -> Config:
     return Config(
         brain=BrainConfig(vendor=vendor, models=MODELS),
+        mouth=MouthConfig(
+            vendor="fake",
+            voice=VoiceProfile(name="navi", vendor_voice_id="stub"),
+            options={},
+        ),
         db_path=tmp_path / "t.db",
         recent_turns=5,
         persona_card_path=CARD_PATH,

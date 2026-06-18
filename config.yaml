@@ -13,6 +13,25 @@ brain:
     anthropic: claude-haiku-4-5-20251001   # 잡담 티어 — 티어 분리(깊은 대화 승격)는 이후 Phase
     echo: echo
 
+mouth:
+  # TTS 교체는 vendor 한 줄 — 벤더별 추가 설정은 같은 이름의 하위 섹션에서 읽는다.
+  #   fake       → 스피커·모델 없이 파이프라인 검증용
+  #   supertonic → 고정 프리셋(F1 등), vendor_voice_id가 음색 이름
+  #   gptsovits  → D3 확정. vendor_voice_id가 레퍼런스 wav 경로(ref_text와 짝)
+  vendor: gptsovits
+  voice:
+    name: navi                      # 논리적 정체성 — 벤더 갈아껴도 같으면 "같은 목소리"
+    # gptsovits는 vendor_voice_id에 레퍼런스 wav 경로를 둔다(톤·억양 제어, ref_text와 한 쌍).
+    vendor_voice_id: dataset/arisu/wavs/Arisu_Maid_LogIn_1.wav
+    speed: 1.0
+  gptsovits:                        # vendor가 gptsovits일 때만 읽힘 → create_mouth kwargs
+    repo_path: C:\gptsovits         # ASCII 경로 (GPT-SoVITS repo)
+    gpt_ckpt: voice_ref/arisu-e15.ckpt
+    sovits_ckpt: voice_ref/arisu_e8_s352.pth
+    ref_text: おかえりなさいませ、ご主人様！メイドのアリスに何でもお任せください。
+    ref_lang: ja                    # 레퍼런스 음원 언어
+    gen_lang: ja                    # 합성 출력 언어 (한국어 ref 확보 시 ko)
+
 db:
   path: navi.db
 
