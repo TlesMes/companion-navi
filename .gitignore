@@ -1,5 +1,7 @@
 # Python
 .venv/
+# GPT-SoVITS 런타임 전용 3.12 venv (in-process import용, 별도 분리)
+.venv-voice/
 __pycache__/
 *.pyc
 *.egg-info/

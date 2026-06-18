@@ -42,8 +42,8 @@ type(scope): 제목 (한국어, 50자 내)
 - 머지 조건: 테스트 green + PR 본문에 이 단위의 **검증 방법**과 관련 D번호·완료 기준
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 
-## 현재 상태 (2026.06.17)
+## 현재 상태 (2026.06.18)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화) D3 진행 중.**
+Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화) D3 완료, 배선 단계 준비 중.**
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
-D3(TTS 음색): GPT-SoVITS fine-tune(아리스 168클립, Colab T4, v2) 청취 완료 → **유력안 확정**. 음색=가중치 안정, 톤=레퍼런스 제어. WSL CPU 로컬 추론 재현 완료(RTF~1.4). 상세 → [docs/progress.md](./docs/progress.md).
+D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. Windows native CPU 합성 완료(RTF~1.4, 실청취 합격). 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py). 환경 셋업: [scripts/setup/setup_voice_env.ps1](./scripts/setup/setup_voice_env.ps1). 상세 → [docs/progress.md](./docs/progress.md).
