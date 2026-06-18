@@ -14,6 +14,9 @@ __pycache__/
 *.db
 logs/
 
+# GPT-SoVITS WebUI 런타임 상태 (마지막 로드 ckpt 경로 캐시, 자동 생성)
+weight.json
+
 # 임시 학습·정리 노트 (공식 문서는 루트의 0X_*.md)
 notes/
 
