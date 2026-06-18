@@ -232,11 +232,12 @@ class GPTSoVITSMouth(MouthAdapter):
                     m = _SENTENCE_END.match(buf)
                     if not m:
                         break
-                    chunk_text = m.group(0)
+                    chunk_text = m.group(0).strip()  # 문장 사이 공백 제거(supertonic과 일관)
                     buf = buf[m.end():]
-                    wav = await asyncio.to_thread(_synth, chunk_text)
-                    if wav is not None:
-                        await audio_q.put(wav)
+                    if chunk_text:
+                        wav = await asyncio.to_thread(_synth, chunk_text)
+                        if wav is not None:
+                            await audio_q.put(wav)
                     if self._stopped:
                         break
             if buf.strip() and not self._stopped:
