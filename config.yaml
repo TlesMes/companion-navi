@@ -39,4 +39,6 @@ memory:
   recent_turns: 20      # 단기기억 인출 턴 수 (장기기억은 Phase 4)
 
 persona:
-  card_path: personas/navi.yaml
+  # 인격 교체는 이 한 줄. navi_ja.yaml = 일본어 응답(배선 테스트용 placeholder).
+  # gen_lang은 mouth.gptsovits에서 이미 ja라 음성도 일치.
+  card_path: personas/navi_ja.yaml
