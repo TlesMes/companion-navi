@@ -43,40 +43,39 @@ CosyVoice2 zero-shot(Stage 1) 후 GPT-SoVITS를 아리스 168클립으로 fine-t
 - **함의:** 비스트리밍 CPU RTF 1.4는 "첫 오디오 ~1초" 목표엔 빠듯. 배포는 ① GPU 가속(Windows 네이티브 DirectML/onnxruntime-directml은 ONNX export 비용 큼 — 별도 과제) 또는 ② 청크 스트리밍(get_tts_wav가 청크 yield)으로 TTFA 단축 필요. CPU도 데몬 상주 + 짧은 발화 위주면 사용 불가 수준은 아님.
 - **`try_clone.py` gptsovits 분기 정본화 완료** — 실 API 반영(sys.path 2개, env 절대경로, change_sovits_weights 인자, torchaudio→soundfile 패치). 환경 복원 절차는 메모리 `gptsovits-wsl-local`.
 
-**Stage 4 — Windows native 어댑터 이식 (진행 중, 2026.06.17):**
+**Stage 4 — Windows native 어댑터 이식 완료 (2026.06.17~18):**
 - **방향 전환 결정: WSL이 아니라 Windows native 단일 프로세스 in-process 통합.** 근거: ROCm 불가 확정
   → CPU torch는 Windows에서 동일 동작 → WSL을 유지할 유일한 이유(GPU)가 사라짐. WSL 브리지(HTTP
   서버)는 **프로세스 2개 + IPC**라 로컬 상시 데몬·배포에 비현실적이라 기각. GPU(CUDA/DirectML)는
   추후 `device` 인자만 교체.
-- **어댑터 정본화 완료** — `navi/mouth/gptsovits.py`에 `try_clone.py` 레시피 이식: sys.path 2개,
-  env 절대경로(cnhubert/bert/gpt/sovits), torchaudio→soundfile 패치, `change_sovits_weights` 소진,
-  `i18n`+`how_to_cut("不切")` 래핑, `ref_lang`/`gen_lang`/`device="cpu"` 인자 추가. `_play` 메서드
-  분리(테스트 가능). 단위 테스트(fake `tts_fn` 주입, 문장청킹·꼬리말·언어인자·barge-in) 작성 — **미실행.**
-- **의존성 빌드 벽 (핵심 발견):** `pyopenjtalk`(일본어 G2P, JA 경로 필수)는 **Windows 프리빌트
-  바이너리가 어디에도 없음** — PyPI wheel 없음(cp310/311/312 전부 sdist만), **conda-forge에도 없음**
-  (검색 0개 — "conda면 해결"은 오인이었음). `jieba_fast`도 wheel 없음(중국어 전용 → 순수 `jieba`
-  폴백 가능). `opencc`는 wheel 있음(`--no-binary=opencc`만 제거하면 됨). → **Windows에서 pyopenjtalk를
-  얻는 길은 소스 컴파일(1회)뿐.** Python 버전 다운그레이드는 무관(해결 안 됨).
-- **빌드 환경:** 데스크톱에 **VS2019 BuildTools + cl.exe 14.29 이미 설치돼 있음**(멀티-GB 신규 설치 불요).
-  빠진 CMake는 pip로 venv에 설치(open_jtalk 옛 CMakeLists 대비 **cmake<4** 핀 — 3.31.10). 빌드는
-  **설치 시 1회뿐**, 런타임엔 컴파일러 불필요(`.pyd` 바이너리 import만).
-- **venv 분리:** 기존 `.venv`는 Python 3.13(텍스트 뼈대), GPT-SoVITS 런타임은 **`.venv-voice`(3.12 전용)**
-  — 같은 인터프리터여야 in-process import 가능. GPT-SoVITS repo는 `C:\gptsovits`(ASCII 경로). 둘 다
-  gitignore.
-- **막힌 지점 (다음 세션 재개점):** vcvars64 환경에서 pyopenjtalk 빌드 시도 → setup.py가 PATH에서
-  cmake를 못 찾아 실패(`SystemError: CMake is not found`). 원인: venv를 활성화하지 않고 python.exe만
-  직접 호출해 `.venv-voice/Scripts`(cmake.exe 위치)가 PATH에 없음. **해결책: 빌드 시 PATH에
-  `.venv-voice/Scripts` 추가 + vcvars64.** 재시도 필요.
+- **의존성 빌드 벽 (핵심 발견):** `pyopenjtalk`(일본어 G2P)는 Windows prebuilt wheel 없음 — PyPI sdist만,
+  conda-forge에도 없음. `jieba_fast`도 wheel 없음. **해결:** pyopenjtalk는 VS2019 BuildTools + cmake<4
+  + Windows SDK rc.exe 로 1회 소스 빌드. jieba_fast는 어댑터 shim으로 jieba alias 대체.
+- **`_ensure_engine` shim 목록 (모두 `navi/mouth/gptsovits.py` 에 흡수됨):**
+  - `sys.path` 3개: repo / GPT_SoVITS/ / GPT_SoVITS/eres2net/ (sv.py의 ERes2NetV2 import)
+  - `os.chdir(repo)`: GPT-SoVITS 내부가 `os.getcwd()` 기준 상대경로 사용
+  - ckpt 경로 절대화: chdir 전에 미리 `os.path.abspath()` — CWD 이동 후 상대경로 깨짐 방지
+  - env 변수: `cnhubert_base_path`, `bert_path`, `gpt_path`, `sovits_path` (import 시점에 즉시 로드)
+  - `HfFolder` shim: gradio/oauth.py 가 사용, huggingface_hub 0.24+ 에서 제거됨
+  - `is_offline_mode` shim: transformers 4.50 hub.py 가 사용, 최신 hf_hub 에서 제거됨
+  - `jieba_fast` alias: `sys.modules["jieba_fast"] = jieba` (중국어 전처리 전용)
+  - `torchaudio.load` → soundfile 교체: torchcodec/ffmpeg 의존 회피
+  - `fast_langdetect` 디렉토리 보장: 없으면 lid.176.bin 다운로드 전에 FileNotFoundError
+  - `change_sovits_weights` 소진 + `prompt_language`/`text_language` 인자 필수 전달
+- **venv 분리:** `.venv-voice`(Python 3.12) — GPT-SoVITS 런타임. GPT-SoVITS repo: `C:\gptsovits`
+  (ASCII 경로). 기존 `.venv`(3.13, 텍스트 뼈대)와 분리.
+- **재현 가능 셋업 스크립트:** [`scripts/setup/setup_voice_env.ps1`](../scripts/setup/setup_voice_env.ps1)
+  — 1회 실행으로 venv 생성 → pyopenjtalk 빌드 → torch CPU → GPT-SoVITS deps → 모델 다운로드까지.
+  의존성 목록: [`requirements.win-cpu.txt`](../requirements.win-cpu.txt).
+- **Windows native 합성 검증 완료 (2026.06.18):**
+  - 레퍼런스: `Arisu_LogIn_1.wav` (JA) / 합성: `アリスはメイド勇者になります！`
+  - RTF: T0=2.13(콜드, numba JIT 웜업 포함) / T1=**1.39**(웜) → WSL 측정치(~1.4)와 일치
+  - **D3 최종 확정:** 실청취 "집중 안 하면 동일인으로 착각" → **음색 품질 합격.** fine-tune 가중치로 음색 안정, 레퍼런스로 톤 제어.
 
 **남은 일:**
-- **pyopenjtalk 빌드 완료** — vcvars64 + PATH에 venv Scripts 추가해 재시도. 이후 나머지 requirements
-  (`requirements.win-cpu.txt`: onnxruntime-gpu→onnxruntime, opencc no-binary 제거, jieba_fast 제외)
-  설치 + 베이스 모델 다운로드 + `fast_langdetect` 디렉토리 생성.
-- 검증 스크립트 `scripts/try/try_gptsovits.py`(스트리밍 재생 + TTFA 측정) 작성 — Windows native에서
-  청크 스트리밍 TTFA 실측(D3 실시간성 판단).
-- 단위 테스트 실행(`.venv-voice`에 pytest+navi 설치 후 `pytest tests/`).
+- 단위 테스트 실행 (`.venv-voice`에 pytest 설치 후 `pytest tests/ -q` — 5개 GPT-SoVITS 테스트 포함).
 - (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
-- (선택) GPU 가속 경로 — CPU RTF/TTFA가 부족하다고 판정되면 DirectML/ONNX 착수.
+- (선택) GPU 가속 경로 — CPU RTF/TTFA 부족 판정 시 DirectML/ONNX 착수.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.

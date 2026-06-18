@@ -1,0 +1,38 @@
+# GPT-SoVITS Windows CPU 추론 의존성
+# 원본 C:\gptsovits\requirements.txt에서 Windows/CPU 불가 항목 제거:
+#   - torch/torchaudio: 아래 스크립트에서 --index-url whl/cpu 로 별도 설치
+#   - onnxruntime-gpu → onnxruntime (CPU 빌드)
+#   - tensorrt, funasr (funasr는 tokenizers 버전 충돌)
+#   - jieba_fast (Windows wheel 없음 — 어댑터에서 jieba alias로 대체)
+#   - pyopenjtalk: Windows wheel 없어서 소스 빌드 필요 → setup_voice_env.ps1 참조
+#   - pytorch-lightning: GPT AR 모델 로드에 필요 (requirements.txt 누락분)
+numpy<2.0
+scipy
+librosa==0.10.2
+numba
+onnxruntime
+tqdm
+cn2an
+pypinyin
+g2p_en
+sentencepiece
+transformers>=4.43,<=4.50
+peft<0.18.0
+chardet
+PyYAML
+psutil
+jieba
+split-lang
+fast_langdetect>=0.3.1
+wordsegment
+rotary_embedding_torch
+ToJyutping
+g2pk2
+ko_pron
+opencc
+fastapi[standard]>=0.115.2
+x_transformers
+torchmetrics<=1.5
+pydantic<=2.10.6
+soundfile
+pytorch-lightning>=2.4

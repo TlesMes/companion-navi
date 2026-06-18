@@ -88,25 +88,73 @@ class GPTSoVITSMouth(MouthAdapter):
         if self._tts_fn is not None:
             return self._tts_fn
 
-        # repo 루트(= `from GPT_SoVITS.x`, `import config`)와 GPT_SoVITS/ 하위(= 내부
-        # `from text.x`, `from feature_extractor import cnhubert` 상대 import) 둘 다 필요.
+        # ckpt 경로를 먼저 절대경로로 고정한다 — 아래에서 CWD를 repo로 바꾸면
+        # 호출부가 넘긴 상대경로(navi 기준)가 깨지기 때문.
+        if self._gpt_ckpt:
+            self._gpt_ckpt = os.path.abspath(self._gpt_ckpt)
+        if self._sovits_ckpt:
+            self._sovits_ckpt = os.path.abspath(self._sovits_ckpt)
+
+        # repo 루트(= `from GPT_SoVITS.x`, `import config`)·GPT_SoVITS/ 하위(= 내부
+        # `from text.x`)·eres2net(= sv.py의 `from ERes2NetV2 import`) 셋 다 path에 필요.
         if self._repo_path:
-            sys.path.insert(0, os.path.join(self._repo_path, "GPT_SoVITS"))
-            sys.path.insert(0, self._repo_path)
+            repo = os.path.abspath(self._repo_path)
+            sys.path.insert(0, os.path.join(repo, "GPT_SoVITS", "eres2net"))
+            sys.path.insert(0, os.path.join(repo, "GPT_SoVITS"))
+            sys.path.insert(0, repo)
+
+            # GPT-SoVITS는 곳곳에서 os.getcwd() 기준 상대경로를 쓴다(sv.py의 sv_path,
+            # eres2net append 등). WSL은 CWD=repo로 돌렸으므로 동일하게 맞춘다.
+            os.chdir(repo)
 
             # inference_webui는 import 시점에 베이스/가중치를 즉시 로드한다(모듈 레벨).
-            # CWD가 repo 밖이면 상대경로가 안 풀리므로 env로 절대경로를 못박는다.
-            pre = os.path.join(self._repo_path, "GPT_SoVITS", "pretrained_models")
+            pre = os.path.join(repo, "GPT_SoVITS", "pretrained_models")
             os.environ.setdefault(
                 "cnhubert_base_path", os.path.join(pre, "chinese-hubert-base")
             )
             os.environ.setdefault(
                 "bert_path", os.path.join(pre, "chinese-roberta-wwm-ext-large")
             )
+            # fast_langdetect는 이 디렉토리가 없으면 lid.176.bin 다운로드 전에 죽는다.
+            # 첫 추론 시 fasttext 125MB + open_jtalk 사전이 자동으로 여기로 받아진다.
+            os.makedirs(os.path.join(pre, "fast_langdetect"), exist_ok=True)
         if self._gpt_ckpt:
-            os.environ.setdefault("gpt_path", str(self._gpt_ckpt))
+            os.environ.setdefault("gpt_path", self._gpt_ckpt)
         if self._sovits_ckpt:
-            os.environ.setdefault("sovits_path", str(self._sovits_ckpt))
+            os.environ.setdefault("sovits_path", self._sovits_ckpt)
+
+        # 최신 huggingface_hub(0.36+)가 제거한 옛 심볼들을 복원하는 shim. GPT-SoVITS의
+        # 핀(transformers==4.50.0, gradio<5)이 옛 hf_hub API를 기대하는데, 베이스 모델
+        # 다운로드 등으로 hf_hub가 최신이라 import가 깨진다. inference_webui가 이들을
+        # module level에서 import하므로 import 전에 채워둔다.
+        import huggingface_hub as _hf_hub
+
+        if not hasattr(_hf_hub, "HfFolder"):  # gradio/oauth.py가 사용
+            class _HfFolder:
+                @staticmethod
+                def get_token() -> str | None:
+                    return _hf_hub.get_token()
+                @staticmethod
+                def save_token(_token: str) -> None:
+                    pass
+            _hf_hub.HfFolder = _HfFolder  # type: ignore[attr-defined]
+
+        if not hasattr(_hf_hub, "is_offline_mode"):  # transformers 4.50 hub.py가 사용
+            _hf_hub.is_offline_mode = (  # type: ignore[attr-defined]
+                lambda: bool(_hf_hub.constants.HF_HUB_OFFLINE)
+            )
+
+        # text/chinese.py·tone_sandhi.py가 jieba_fast(C확장)를 하드 import하는데
+        # Windows wheel이 없다. 순수 파이썬 jieba가 API 호환이라 alias로 대체한다
+        # (중국어 전처리 전용 — JA/KO 경로엔 영향 없음).
+        try:
+            import jieba_fast  # noqa: F401
+        except ImportError:
+            import jieba
+            import jieba.posseg
+
+            sys.modules["jieba_fast"] = jieba
+            sys.modules["jieba_fast.posseg"] = jieba.posseg
 
         # torchcodec(GLIBCXX/ffmpeg 의존)를 피하려고 torchaudio.load를 soundfile로 교체.
         # OGG/Vorbis도 libsndfile이 직접 읽는다. 반드시 inference_webui import 전에 적용.
