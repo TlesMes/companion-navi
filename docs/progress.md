@@ -7,8 +7,8 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**현재 상태 — D3 GPT-SoVITS fine-tune 청취 완료, 유력 후보 확정 (2026.06.17):**
-CosyVoice2 zero-shot(Stage 1) 후 GPT-SoVITS를 아리스 168클립으로 fine-tune(Colab T4)해 청취. **음색은 가중치가 안정적으로 담당, 톤·억양은 레퍼런스로 제어 가능 → GPT-SoVITS fine-tune을 D3 유력안으로.** 상세는 아래 Stage 2.
+**현재 상태 — Brain→Mouth 배선 완료 + 실청취 통과 (2026.06.18):**
+타이핑 → 나비가 GPT-SoVITS 음성으로 답하는 전 구간이 실동한다(한국어·일본어 모두). 배선은 TurnPipeline(`navi/pipeline.py`)이 담당 — Brain.generate_stream과 Mouth.speak_stream이 둘 다 `AsyncIterator[str]`이라 변환 없이 토큰을 흘리고, barge-in은 interrupt()=mouth.stop()+brain.cancel(). 실청취 중 GPT-SoVITS 실동 픽스 3건(아래 Stage 5). D3 GPT-SoVITS fine-tune은 음색=가중치/톤=레퍼런스로 확정(Stage 2~4).
 
 **Stage 0 — WSL2 + ROCm 실패 → CPU로 음색 검증 선회 (게이트 결과):**
 - 데스크톱 = AMD RX 6600 XT(gfx1032). **WSL2에서 ROCm 미인식** — `/dev/dxg`는 있으나 `/dev/kfd`(ROCm 커널 인터페이스) 부재로 `torch.cuda.is_available()==False`.
@@ -72,10 +72,33 @@ CosyVoice2 zero-shot(Stage 1) 후 GPT-SoVITS를 아리스 168클립으로 fine-t
   - RTF: T0=2.13(콜드, numba JIT 웜업 포함) / T1=**1.39**(웜) → WSL 측정치(~1.4)와 일치
   - **D3 최종 확정:** 실청취 "집중 안 하면 동일인으로 착각" → **음색 품질 합격.** fine-tune 가중치로 음색 안정, 레퍼런스로 톤 제어.
 
+**Stage 5 — Brain→Mouth 배선 + 실청취 실동 (2026.06.18, `feat/wire-llm-tts`):**
+- **배선:** `navi/pipeline.py` TurnPipeline — run_turn이 요청 조립→Brain 토큰→Mouth 음성을 묶고,
+  _tee가 토큰을 Mouth로 흘리며 화면에도 echo. Brain·Mouth 계약이 둘 다 `AsyncIterator[str]`이라
+  변환 없이 통과(N/N+1 문장 오버래핑은 Mouth 내부 큐가 담당). config에 mouth 섹션(vendor·voice·
+  gptsovits 경로)+MouthConfig, CLI `--voice`. barge-in interrupt()=mouth.stop()+brain.cancel().
+- **실청취 중 발견·수정한 GPT-SoVITS 실동 픽스 3건 (배선이 돌려면 필수였음):**
+  1. **tqdm `WinError 1`** — 합성이 `asyncio.to_thread` 안에서 돌 때 tqdm이 터미널에 `\r`을 쓰려다
+     실패해 둘째 문장부터 합성이 죽었다. `_ensure_engine`에서 `TQDM_DISABLE=1`로 끔.
+  2. **pyopenjtalk mecab 한글 경로** — 일본어 G2P 사전이 venv(한글 경로) 안에 있으면 mecab C++가
+     경로를 ANSI로 해석해 'Failed to initialize Mecab'. 단축경로(8.3)도 cp949 유효 한글이 남아 무력
+     → 사전을 ASCII 경로(`C:\gptsovits\open_jtalk_dic_utf_8-1.11`)로 복사하고 `OPEN_JTALK_DICT_DIR`로
+     가리킴. (한국어는 mecab 미사용이라 직전 한국어 청취는 통과했음 → 일본어 전환 시 노출됨)
+  3. **종료 프리즈** — 합성 `to_thread`는 외부 라이브러리 추론(1500스텝)이라 중간에 못 끊는데,
+     `asyncio.run`이 종료 시 `shutdown_default_executor`로 그 스레드를 join 대기하다 프리즈
+     (+PortAudio/torch 잔여). `main()` finally에서 `os._exit(0)`로 executor join을 건너뛰고 즉시 종료.
+- **재현성:** `setup_voice_env.ps1` Step 8에 mecab 사전 ASCII 복사 추가(사전은 패키지에 없고 첫 사용 시
+  다운로드 → 트리거 후 복사). shim 2개(tqdm·mecab)는 `gptsovits.py` `_ensure_engine`에 흡수.
+- **콜드 스타트:** 첫 토큰 ~84s(GPT-SoVITS 가중치 로드 ~71s 동기 + Gemini). speak_stream이 엔진을
+  동기 로드 후 LLM을 소비하는 구조라 로드가 첫 토큰을 막음 → 데몬 기동 시 엔진 워밍업이 개선 후보.
+- 일본어 응답 페르소나 `personas/navi_ja.yaml`(배선 테스트용 placeholder) 추가, `config.yaml`
+  card_path 전환. (페르소나 표준 스키마·언어 속성 필드화는 별도 작업으로 분리)
+
 **남은 일:**
-- 단위 테스트 실행 (`.venv-voice`에 pytest 설치 후 `pytest tests/ -q` — 5개 GPT-SoVITS 테스트 포함).
+- (개선 후보) 콜드 스타트 — 데몬 기동 시 GPT-SoVITS 엔진 워밍업(더미 합성)으로 첫 토큰 지연 단축.
 - (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
 - (선택) GPU 가속 경로 — CPU RTF/TTFA 부족 판정 시 DirectML/ONNX 착수.
+- PR-2(STT): faster-whisper 실어댑터 + CLI 음성파일 입력.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.
