@@ -107,9 +107,41 @@ $LangDetectDir = Join-Path $GptSoVITSRepo "GPT_SoVITS\pretrained_models\fast_lan
 New-Item -ItemType Directory -Force -Path $LangDetectDir | Out-Null
 Write-Host "  생성: $LangDetectDir"
 
-# ── Step 8: 베이스 모델 다운로드 (선택) ─────────────────────────────────────
+# ── Step 8: pyopenjtalk mecab 사전을 ASCII 경로로 복사 ───────────────────────
+# venv가 한글 경로(예: '반려 ai 어플리케이션')면 mecab C++가 사전 경로를 ANSI로
+# 해석해 못 연다 → 일본어 G2P가 'Failed to initialize Mecab'으로 죽는다. 단축경로(8.3)도
+# cp949 유효 한글이 남아 무력. 사전을 ASCII 경로(repo 옆)로 복사하고 어댑터가
+# OPEN_JTALK_DICT_DIR로 가리킨다(navi/mouth/gptsovits.py). 사전은 패키지에 없고 첫
+# 사용 시 다운로드되므로, 다운로드를 먼저 트리거(mecab init 실패는 무시 — tar 추출까지는 됨)한다.
+Write-Host "`n=== Step 8: pyopenjtalk mecab 사전 ASCII 경로 복사 ===" -ForegroundColor Cyan
+$JtalkSrc = Join-Path $VenvAbs "Lib\site-packages\pyopenjtalk\open_jtalk_dic_utf_8-1.11"
+$JtalkDst = Join-Path $GptSoVITSRepo "open_jtalk_dic_utf_8-1.11"
+if (Test-Path $JtalkDst) {
+    Write-Host "  이미 존재 — 스킵: $JtalkDst"
+} else {
+    if (-not (Test-Path $JtalkSrc)) {
+        Write-Host "  사전 다운로드 트리거 (mecab init 실패는 무시)..."
+        $DicTrigger = @"
+import pyopenjtalk
+try:
+    pyopenjtalk.run_frontend(chr(0x3042))  # 'あ' — ASCII 외 문자 회피
+except Exception:
+    pass
+"@
+        & $PyExe -c $DicTrigger
+    }
+    if (Test-Path $JtalkSrc) {
+        Copy-Item -Recurse $JtalkSrc $JtalkDst
+        Write-Host "  복사 완료: $JtalkDst"
+    } else {
+        Write-Warning "  pyopenjtalk 사전을 찾지 못함 — 첫 일본어 합성 시 자동 다운로드 후"
+        Write-Warning "  '$JtalkSrc' → '$JtalkDst' 수동 복사 필요"
+    }
+}
+
+# ── Step 9: 베이스 모델 다운로드 (선택) ─────────────────────────────────────
 if ($DownloadModels) {
-    Write-Host "`n=== Step 8: 베이스 모델 다운로드 (cnhubert + roberta, ~820MB) ===" -ForegroundColor Cyan
+    Write-Host "`n=== Step 9: 베이스 모델 다운로드 (cnhubert + roberta, ~820MB) ===" -ForegroundColor Cyan
     Write-Host "  HF_TOKEN 환경변수 있으면 인증 다운로드 (없으면 익명 ~41kB/s로 느림)"
 
     $HfToken = if ($env:HF_TOKEN) { $env:HF_TOKEN } else { $null }
@@ -142,7 +174,8 @@ print('다운로드 완료')
 Write-Host "`n=== 셋업 완료 ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "다음 단계:"
-Write-Host "  1. 첫 추론 시 lid.176.bin(125MB) + open_jtalk 사전이 자동 다운로드됩니다 (~1회)."
+Write-Host "  1. 첫 추론 시 lid.176.bin(125MB)이 자동 다운로드됩니다 (~1회)."
+Write-Host "     (open_jtalk 사전은 Step 8에서 ASCII 경로로 복사됨 — 일본어 합성용)"
 Write-Host "  2. arisu ckpt 2개가 voice_ref/ 에 있는지 확인:"
 Write-Host "       voice_ref\arisu-e15.ckpt      (GPT)"
 Write-Host "       voice_ref\arisu_e8_s352.pth   (SoVITS)"

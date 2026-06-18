@@ -44,6 +44,7 @@ type(scope): 제목 (한국어, 50자 내)
 
 ## 현재 상태 (2026.06.18)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화) D3 완료, 배선 단계 준비 중.**
+Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화): Brain→Mouth 배선 완료, 실청취 통과.**
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
-D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. Windows native CPU 합성 완료(RTF~1.4, 실청취 합격). 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py). 환경 셋업: [scripts/setup/setup_voice_env.ps1](./scripts/setup/setup_voice_env.ps1). 상세 → [docs/progress.md](./docs/progress.md).
+D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
+배선: **타이핑 → 나비 음성 답변 실동**(한/일). TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) + CLI `--voice`. 실청취 픽스 3건(tqdm·mecab 한글경로·종료 프리즈)은 progress.md Stage 5. 다음 = PR-2(STT 입력). 상세 → [docs/progress.md](./docs/progress.md).

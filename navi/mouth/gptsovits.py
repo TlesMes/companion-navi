@@ -118,10 +118,23 @@ class GPTSoVITSMouth(MouthAdapter):
             # fast_langdetect는 이 디렉토리가 없으면 lid.176.bin 다운로드 전에 죽는다.
             # 첫 추론 시 fasttext 125MB + open_jtalk 사전이 자동으로 여기로 받아진다.
             os.makedirs(os.path.join(pre, "fast_langdetect"), exist_ok=True)
+
+            # pyopenjtalk(일본어 G2P)의 mecab 사전이 venv(한글 경로) 안에 있으면 mecab C++가
+            # 경로를 ANSI로 해석해 못 연다(repo를 ASCII 경로에 둔 것과 같은 함정 — 단축경로도
+            # 한글이 남아 무력). 사전을 ASCII 경로(repo 옆)로 복사해두고 OPEN_JTALK_DICT_DIR로
+            # 가리킨다. pyopenjtalk가 import 시점에 이 env를 읽으므로 inference_webui import
+            # 전에 설정해야 한다. (한국어 합성은 mecab을 쓰지 않아 무관)
+            jtalk_dic = os.path.join(repo, "open_jtalk_dic_utf_8-1.11")
+            if os.path.isdir(jtalk_dic):
+                os.environ.setdefault("OPEN_JTALK_DICT_DIR", jtalk_dic)
         if self._gpt_ckpt:
             os.environ.setdefault("gpt_path", self._gpt_ckpt)
         if self._sovits_ckpt:
             os.environ.setdefault("sovits_path", self._sovits_ckpt)
+
+        # tqdm이 asyncio.to_thread 안에서 \r을 터미널에 쓰려다 WinError 1이 난다.
+        # 데몬에서 progress bar는 불필요하므로 전역으로 끈다.
+        os.environ["TQDM_DISABLE"] = "1"
 
         # 최신 huggingface_hub(0.36+)가 제거한 옛 심볼들을 복원하는 shim. GPT-SoVITS의
         # 핀(transformers==4.50.0, gradio<5)이 옛 hf_hub API를 기대하는데, 베이스 모델
@@ -232,11 +245,12 @@ class GPTSoVITSMouth(MouthAdapter):
                     m = _SENTENCE_END.match(buf)
                     if not m:
                         break
-                    chunk_text = m.group(0)
+                    chunk_text = m.group(0).strip()  # 문장 사이 공백 제거(supertonic과 일관)
                     buf = buf[m.end():]
-                    wav = await asyncio.to_thread(_synth, chunk_text)
-                    if wav is not None:
-                        await audio_q.put(wav)
+                    if chunk_text:
+                        wav = await asyncio.to_thread(_synth, chunk_text)
+                        if wav is not None:
+                            await audio_q.put(wav)
                     if self._stopped:
                         break
             if buf.strip() and not self._stopped:
