@@ -44,6 +44,14 @@ class FasterWhisperStt(SttAdapter):
     async def open_stream(self, lang: str = "ko") -> SttSession:
         return _FwSession(self, lang)
 
+    def _transcribe_path(self, path: str, lang: str) -> tuple[str, str]:
+        """파일 경로를 직접 받아 추론 — wav/m4a/mp3 등 av가 디코딩 가능한 포맷 모두 지원."""
+        model = self._ensure_model()
+        segments, info = model.transcribe(path, language=lang, vad_filter=True)
+        text = "".join(s.text for s in segments).strip()
+        detected = info.language or lang
+        return text, detected
+
 
 class _FwSession(SttSession):
     def __init__(self, adapter: FasterWhisperStt, lang: str) -> None:
@@ -73,12 +81,6 @@ class _FwSession(SttSession):
                 wf.setsampwidth(2)  # 16-bit PCM
                 wf.setframerate(self._sample_rate)
                 wf.writeframes(pcm)
-            model = self._adapter._model
-            segments, info = model.transcribe(
-                str(tmp), language=self._lang, vad_filter=True
-            )
-            text = "".join(s.text for s in segments).strip()
-            detected = info.language or self._lang
-            return text, detected
+            return self._adapter._transcribe_path(str(tmp), self._lang)
         finally:
             tmp.unlink(missing_ok=True)

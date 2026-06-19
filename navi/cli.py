@@ -55,18 +55,17 @@ def _setup_logging(verbosity: int) -> None:
     root.addHandler(file)
 
 
-async def _transcribe_wav(path: Path) -> str:
-    """WAV 파일 한 건을 faster-whisper로 받아쓴다."""
-    import wave as wavemod
+async def _transcribe_file(path: Path) -> str:
+    """음성 파일(wav/m4a/mp3 등)을 faster-whisper로 받아쓴다.
 
-    stt = create_stt("faster-whisper")
-    with wavemod.open(str(path), "rb") as wf:
-        sample_rate = wf.getframerate()
-        pcm = wf.readframes(wf.getnframes())
-    session = await stt.open_stream(lang="ko")
-    await session.feed(AudioChunk(pcm=pcm, sample_rate=sample_rate))
-    result = await session.finalize()
-    return result.text
+    faster-whisper는 파일 경로를 직접 받아 av 라이브러리로 디코딩하므로
+    WAV 변환 없이 m4a 등도 그대로 넘긴다.
+    """
+    from navi.stt.fasterwhisper import FasterWhisperStt
+
+    stt = FasterWhisperStt()
+    text, _ = await asyncio.to_thread(stt._transcribe_path, str(path), "ko")
+    return text
 
 
 async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | None = None) -> None:
@@ -101,7 +100,7 @@ async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | Non
             # ── 입력 획득 ──────────────────────────────────────────────────
             if input_wav is not None:
                 print(f"[STT] {input_wav.name} 받아쓰는 중…")
-                text = await _transcribe_wav(input_wav)
+                text = await _transcribe_file(input_wav)
                 input_wav = None
                 if not text:
                     print("[STT] 인식 결과 없음")
