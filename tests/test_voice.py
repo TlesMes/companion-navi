@@ -239,3 +239,60 @@ def test_unknown_vendor_raises_value_error():
         create_stt("nope")
     with pytest.raises(ValueError):
         create_mouth("nope")
+
+
+# --- FasterWhisperStt: 가짜 모델 주입, 실 추론 없이 계약 검증 ---
+
+
+class _FakeWhisperModel:
+    """faster_whisper.WhisperModel 흉내."""
+
+    class _Info:
+        language = "ko"
+
+    def __init__(self) -> None:
+        self.transcribed: list[str] = []
+
+    def transcribe(self, path: str, language=None, vad_filter=False):
+        import wave as wavemod
+
+        with wavemod.open(path, "rb") as wf:
+            frames = wf.getnframes()
+        self.transcribed.append(path)
+
+        class _Seg:
+            text = "안녕 나비"
+
+        return [_Seg()], self._Info()
+
+
+async def test_fasterwhisper_accumulates_chunks_and_transcribes():
+    from navi.stt.fasterwhisper import FasterWhisperStt
+
+    stt = FasterWhisperStt()
+    stt._model = _FakeWhisperModel()  # 가짜 모델 주입 — 실 로드 없이
+    session = await stt.open_stream("ko")
+    pcm = b"\x00\x01" * 1600  # 16-bit, 16000Hz, 0.1s
+    await session.feed(AudioChunk(pcm=pcm, sample_rate=16000))
+    await session.feed(AudioChunk(pcm=pcm, sample_rate=16000))
+    result = await session.finalize()
+    assert result.text == "안녕 나비"
+    assert result.lang == "ko"
+    assert result.confidence == 1.0
+
+
+async def test_fasterwhisper_empty_feed_returns_empty():
+    from navi.stt.fasterwhisper import FasterWhisperStt
+
+    stt = FasterWhisperStt()
+    stt._model = _FakeWhisperModel()
+    session = await stt.open_stream("ko")
+    result = await session.finalize()
+    assert result.text == ""
+    assert result.confidence == 0.0
+
+
+def test_faster_whisper_vendor_builds_adapter():
+    from navi.stt.fasterwhisper import FasterWhisperStt
+
+    assert isinstance(create_stt("faster-whisper"), FasterWhisperStt)
