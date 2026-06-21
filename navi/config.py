@@ -57,31 +57,43 @@ def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
     raw_mouth = raw.get("mouth", {})
     vendor = raw_mouth.get("vendor", "fake")
     mv = raw_mouth.get("voice", {})
+    # 벤더 이름과 같은 하위 섹션 = 추가 kwargs + 그 벤더의 음색(voice_id).
+    # voice_id를 벤더 섹션에 두면 두 벤더 설정이 공존해도 음색이 섞이지 않아
+    # config 수정 없이 --mouth 로 무중단 교체된다.
+    options = dict(raw_mouth.get(vendor, {}))
+    # voice_id는 VoiceProfile로 빠지므로 create_mouth kwargs에서 제거한다.
+    voice_id = options.pop("voice_id", "") or mv.get("vendor_voice_id", "")
+    # gptsovits는 voice_id가 레퍼런스 wav 경로 → 절대경로로 풀어둔다.
+    # supertonic은 음색 이름(F1 등)이라 _resolve가 그대로 통과시킨다(파일이 아니어도 무해).
+    if vendor == "gptsovits" and voice_id:
+        voice_id = _resolve(root, voice_id)
     voice = VoiceProfile(
         name=mv.get("name", "navi"),
-        # gptsovits는 vendor_voice_id가 레퍼런스 wav 경로 → 절대경로로 풀어둔다.
-        # supertonic은 음색 이름(F1 등)이라 _resolve가 그대로 통과시킨다(파일이 아니어도 무해).
-        vendor_voice_id=mv.get("vendor_voice_id", ""),
+        vendor_voice_id=voice_id,
         speed=float(mv.get("speed", 1.0)),
     )
-    if vendor == "gptsovits" and voice.vendor_voice_id:
-        voice = VoiceProfile(
-            name=voice.name,
-            vendor_voice_id=_resolve(root, voice.vendor_voice_id),
-            speed=voice.speed,
-        )
-    # 벤더 이름과 같은 하위 섹션을 추가 kwargs로 읽는다(gptsovits → repo/ckpt 경로 등).
-    options = dict(raw_mouth.get(vendor, {}))
     for key in ("repo_path", "gpt_ckpt", "sovits_ckpt"):
         if options.get(key):
             options[key] = _resolve(root, options[key])
     return MouthConfig(vendor=vendor, voice=voice, options=options)
 
 
-def load_config(root: Path | None = None) -> Config:
+def load_config(
+    root: Path | None = None,
+    *,
+    mouth_vendor: str | None = None,
+    persona_card: str | None = None,
+) -> Config:
+    """config.yaml + .env를 합쳐 불변 Config로.
+
+    mouth_vendor·persona_card는 이번 실행만의 오버라이드(CLI --mouth/--persona) —
+    벤더 섹션을 다시 읽어야 해서 후처리 replace()로는 안 되므로 여기서 주입한다.
+    """
     root = root or Path.cwd()
     load_dotenv(root / ".env")
     raw = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    if mouth_vendor:
+        raw.setdefault("mouth", {})["vendor"] = mouth_vendor
     return Config(
         brain=BrainConfig(
             vendor=raw["brain"]["vendor"],
@@ -90,7 +102,7 @@ def load_config(root: Path | None = None) -> Config:
         mouth=_load_mouth(root, raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
-        persona_card_path=root / raw["persona"]["card_path"],
+        persona_card_path=root / (persona_card or raw["persona"]["card_path"]),
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
     )

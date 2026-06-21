@@ -1,6 +1,6 @@
 """Phase 1의 입과 귀 — CLI 텍스트 대화 루프.
 
-실행: python -m navi.cli [--brain gemini|anthropic|echo] [-v | -vv]
+실행: python -m navi.cli [--brain ...] [--mouth ...] [--persona 이름] [--voice] [-v | -vv]
 종료: /quit 또는 Ctrl+C. 실행마다 새 session_id를 발급하지만
 단기기억은 세션 경계 없이 인출하므로 껐다 켜도 직전 대화가 이어진다.
 """
@@ -164,10 +164,20 @@ def main() -> None:
         action="store_true",
         help="음성 모드 — 나비가 config.yaml의 mouth로 음성 답변(.venv-voice 필요)",
     )
+    parser.add_argument(
+        "--mouth",
+        choices=["fake", "supertonic", "gptsovits"],
+        help="config.yaml의 mouth.vendor를 이번 실행만 덮어쓴다 (음성 벤더 교체 검증용, --voice와 함께)",
+    )
+    parser.add_argument(
+        "--persona",
+        help="페르소나를 이번 실행만 교체 — 이름만(personas/<이름>.yaml). 예: --persona aris",
+    )
     args = parser.parse_args()
     _setup_logging(args.verbose)
 
-    config = load_config()
+    persona_card = f"personas/{args.persona}.yaml" if args.persona else None
+    config = load_config(mouth_vendor=args.mouth, persona_card=persona_card)
     if args.brain:
         config = replace(config, brain=replace(config.brain, vendor=args.brain))
     if args.db:
