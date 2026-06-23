@@ -28,3 +28,8 @@ voice_ref/
 
 # fine-tune 데이터셋 (voice_ref 음원 파생물 — 대용량·저작권, 로컬 보관)
 dataset/
+
+# 페르소나 카드 — 정식 기본(navi)만 공개. 캐릭터·실험 클론(아리스 등)은
+# 저작권·개인 자산이라 로컬 전용. README의 "페르소나 자산 제외" 약속을 실제로 구현.
+personas/*.yaml
+!personas/navi.yaml
