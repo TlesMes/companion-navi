@@ -13,14 +13,20 @@ __all__ = ["SttAdapter", "SttSession", "create_stt"]
 _PENDING_D2 = ("vito", "clova", "deepgram")
 
 
-def create_stt(vendor: str = "fake") -> SttAdapter:
+def create_stt(vendor: str = "fake", **kwargs) -> SttAdapter:
     if vendor == "fake":
         from navi.stt.fake import FakeStt
 
         return FakeStt()
+    if vendor == "faster-whisper":
+        from navi.stt.fasterwhisper import FasterWhisperStt
+
+        return FasterWhisperStt(**kwargs)
     if vendor in _PENDING_D2:
         raise NotImplementedError(
             f"STT 벤더 {vendor!r}는 D2 결정 후 구현합니다 — 현재 한국어 CER 청취 비교 중. "
             "키 없이 파이프라인을 시험하려면 vendor를 'fake'로 두세요."
         )
-    raise ValueError(f"알 수 없는 stt.vendor: {vendor!r} (fake | {' | '.join(_PENDING_D2)})")
+    raise ValueError(
+        f"알 수 없는 stt.vendor: {vendor!r} (fake | faster-whisper | {' | '.join(_PENDING_D2)})"
+    )

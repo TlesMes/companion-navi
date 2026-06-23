@@ -20,9 +20,11 @@ from navi.brain import create_brain
 from navi.conductor import Conductor
 from navi.config import Config, load_config
 from navi.memory import MemoryStore
+from navi.models import AudioChunk
 from navi.mouth import create_mouth
 from navi.persona import CharacterCard
 from navi.pipeline import TurnPipeline
+from navi.stt import create_stt
 
 # __name__ 금지: python -m navi.cli 실행 시 __main__이 되어 navi 로거 계층을 벗어난다
 log = logging.getLogger("navi.cli")
@@ -53,7 +55,20 @@ def _setup_logging(verbosity: int) -> None:
     root.addHandler(file)
 
 
-async def chat(config: Config, *, use_voice: bool = False) -> None:
+async def _transcribe_file(path: Path) -> str:
+    """음성 파일(wav/m4a/mp3 등)을 faster-whisper로 받아쓴다.
+
+    faster-whisper는 파일 경로를 직접 받아 av 라이브러리로 디코딩하므로
+    WAV 변환 없이 m4a 등도 그대로 넘긴다.
+    """
+    from navi.stt.fasterwhisper import FasterWhisperStt
+
+    stt = FasterWhisperStt()
+    text, _ = await asyncio.to_thread(stt._transcribe_path, str(path), "ko")
+    return text
+
+
+async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | None = None) -> None:
     store = MemoryStore(config.db_path)
     card = CharacterCard.load(config.persona_card_path)
     brain = create_brain(config)
@@ -79,35 +94,44 @@ async def chat(config: Config, *, use_voice: bool = False) -> None:
         f"{card.character} 깨어남 — 두뇌: {config.brain.vendor}({config.brain.model})."
         f"{voice_note} /quit 으로 종료."
     )
+    wav_mode = input_wav is not None  # WAV 모드면 1턴 후 종료
     try:
         while True:
-            try:
-                raw = await asyncio.to_thread(input, "\n나> ")
-                text = raw.strip("﻿ \t\r\n")  # BOM: 파이프 입력 인코딩 방어
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
-            if not text:
-                continue
-            if text in {"/quit", "/exit"}:
-                break
+            # ── 입력 획득 ──────────────────────────────────────────────────
+            if input_wav is not None:
+                print(f"[STT] {input_wav.name} 받아쓰는 중…")
+                text = await _transcribe_file(input_wav)
+                input_wav = None
+                if not text:
+                    print("[STT] 인식 결과 없음")
+                    break
+                print(f"나> {text}")
+            else:
+                try:
+                    raw = await asyncio.to_thread(input, "\n나> ")
+                    text = raw.strip("﻿ \t\r\n")  # BOM: 파이프 입력 인코딩 방어
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                if not text:
+                    continue
+                if text in {"/quit", "/exit"}:
+                    break
 
+            # ── Brain(→Mouth) 처리 ─────────────────────────────────────────
             started = time.perf_counter()
             first_token_at: float | None = None
             print(f"{card.character}> ", end="", flush=True)
 
             def _echo(token: str) -> None:
-                # 토큰 도착 즉시 화면에 — 음성/텍스트 공통의 스트리밍 출력.
                 nonlocal first_token_at
                 if first_token_at is None:
                     first_token_at = time.perf_counter()
-                    # 첫 토큰 레이턴시 — "첫 오디오 ~1초" 예산의 LLM 구간 선행 지표
                     log.info("첫 토큰까지 %.0fms", (first_token_at - started) * 1000)
                 print(token, end="", flush=True)
 
             try:
                 if pipeline is not None:
-                    # 음성 모드 — run_turn이 Brain→Mouth 합성·재생까지 await한다.
                     result = await pipeline.run_turn(
                         text, user_id=user_id, session_id=session_id, echo=_echo
                     )
@@ -116,15 +140,19 @@ async def chat(config: Config, *, use_voice: bool = False) -> None:
                         text, user_id=user_id, session_id=session_id
                     )
                     async for token in brain.generate_stream(request):
-                        _echo(token)  # 전 구간 스트리밍의 텍스트 버전
+                        _echo(token)
                     result = brain.last_result
                 print()
             except Exception:
                 print()
                 log.exception("두뇌 호출 실패 — 이 턴은 기억에 남기지 않는다")
                 print("(…말이 끊겼다. logs/navi.log 참고)")
+                if wav_mode:
+                    break
                 continue
-            if result is None:  # 스트림이 결과 없이 끊긴 경우 — 기억에 남기지 않는다
+            if result is None:
+                if wav_mode:
+                    break
                 continue
             store.append_turn(session_id, user_id, role="user", text=text)
             store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
@@ -136,6 +164,8 @@ async def chat(config: Config, *, use_voice: bool = False) -> None:
                 result.usage.input_tokens,
                 result.usage.output_tokens,
             )
+            if wav_mode:
+                break  # WAV 1턴 처리 완료 → 종료
     finally:
         store.close()
         log.info("세션 종료 — session=%s", session_id)
@@ -165,7 +195,12 @@ def main() -> None:
         help="음성 모드 — 나비가 config.yaml의 mouth로 음성 답변(.venv-voice 필요)",
     )
     parser.add_argument(
-        "--mouth",
+        "--input",
+        metavar="WAV",
+        help="WAV 파일을 STT로 받아쓴 뒤 Brain(→Mouth)까지 1턴 처리하고 종료. --voice와 함께 쓰면 전 구간 검증 가능.",
+    )    
+    parser.add_argument(
+      "--mouth",
         choices=["fake", "supertonic", "gptsovits"],
         help="config.yaml의 mouth.vendor를 이번 실행만 덮어쓴다 (음성 벤더 교체 검증용, --voice와 함께)",
     )
@@ -182,8 +217,9 @@ def main() -> None:
         config = replace(config, brain=replace(config.brain, vendor=args.brain))
     if args.db:
         config = replace(config, db_path=Path(args.db))
+    input_wav = Path(args.input) if args.input else None
     try:
-        asyncio.run(chat(config, use_voice=args.voice))
+        asyncio.run(chat(config, use_voice=args.voice, input_wav=input_wav))
     except KeyboardInterrupt:
         # 스트리밍 중 Ctrl+C — 턴은 즉시 커밋되므로 데이터는 안전, traceback만 숨긴다
         print("\n(나비가 잠들었다)")
