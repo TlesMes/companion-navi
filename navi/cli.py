@@ -1,6 +1,6 @@
 """Phase 1의 입과 귀 — CLI 텍스트 대화 루프.
 
-실행: python -m navi.cli [--brain ...] [--mouth ...] [--persona 이름] [--voice] [-v | -vv]
+실행: python -m navi.cli [--brain ...] [--mouth ...] [--persona 이름] [--voice] [--listen] [--input WAV] [-v | -vv]
 종료: /quit 또는 Ctrl+C. 실행마다 새 session_id를 발급하지만
 단기기억은 세션 경계 없이 인출하므로 껐다 켜도 직전 대화가 이어진다.
 """
@@ -68,7 +68,25 @@ async def _transcribe_file(path: Path) -> str:
     return text
 
 
-async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | None = None) -> None:
+async def _transcribe_utterance(stt, utt) -> str:
+    """마이크 발화 1건(PCM 프레임 묶음)을 STT 스트리밍 세션으로 받아쓴다 (계약 4.3)."""
+    session = await stt.open_stream("ko")
+    for chunk in utt.chunks:
+        await session.feed(chunk)
+    result = await session.finalize()
+    return result.text
+
+
+async def chat(
+    config: Config,
+    *,
+    use_voice: bool = False,
+    input_wav: Path | None = None,
+    listen: bool = False,
+    mic_device: int | None = None,
+    vad_threshold: float | None = None,
+    stt_model: str = "large-v3-turbo",
+) -> None:
     store = MemoryStore(config.db_path)
     card = CharacterCard.load(config.persona_card_path)
     brain = create_brain(config)
@@ -95,6 +113,23 @@ async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | Non
         f"{voice_note} /quit 으로 종료."
     )
     wav_mode = input_wav is not None  # WAV 모드면 1턴 후 종료
+
+    # 마이크 실시간 모드: Ear(VAD 엔드포인팅)가 발화 1건씩 내보내면 STT로 받아쓴다.
+    # STT 모델은 한 번만 로드해 발화마다 재사용한다.
+    utt_stream = None
+    listen_stt = None
+    if listen:
+        from navi.ear import create_vad
+        from navi.ear.mic import MicListener
+        from navi.stt.fasterwhisper import FasterWhisperStt
+
+        listen_stt = FasterWhisperStt(model_size=stt_model)
+        print(f"[STT 모델 로딩 중… {stt_model}]", flush=True)
+        await asyncio.to_thread(listen_stt.warmup)
+        vad = create_vad("energy", threshold=vad_threshold) if vad_threshold else None
+        utt_stream = MicListener(vad, device=mic_device).utterances()
+        print("[마이크 듣는 중 — 말하면 나비가 답합니다. Ctrl+C로 종료]", flush=True)
+
     try:
         while True:
             # ── 입력 획득 ──────────────────────────────────────────────────
@@ -105,6 +140,20 @@ async def chat(config: Config, *, use_voice: bool = False, input_wav: Path | Non
                 if not text:
                     print("[STT] 인식 결과 없음")
                     break
+                print(f"나> {text}")
+            elif utt_stream is not None:
+                try:
+                    utt = await utt_stream.__anext__()
+                except (StopAsyncIteration, KeyboardInterrupt):
+                    print()
+                    break
+                print("[받아쓰는 중…]")
+                stt_t0 = time.perf_counter()
+                text = await _transcribe_utterance(listen_stt, utt)
+                log.info("STT %.0fms", (time.perf_counter() - stt_t0) * 1000)
+                if not text:
+                    print("[인식 결과 없음 — 다시 말하세요]")
+                    continue
                 print(f"나> {text}")
             else:
                 try:
@@ -198,7 +247,30 @@ def main() -> None:
         "--input",
         metavar="WAV",
         help="WAV 파일을 STT로 받아쓴 뒤 Brain(→Mouth)까지 1턴 처리하고 종료. --voice와 함께 쓰면 전 구간 검증 가능.",
-    )    
+    )
+    parser.add_argument(
+        "--listen",
+        action="store_true",
+        help="마이크 실시간 모드 — VAD로 발화 종료를 감지해 STT→Brain(→Mouth) 루프. Ctrl+C로 종료. (.venv-voice 필요)",
+    )
+    parser.add_argument(
+        "--mic",
+        type=int,
+        metavar="INDEX",
+        help="입력 장치 번호 지정 (기본 마이크가 가상 장치일 때). 목록: python scripts/mic_check.py",
+    )
+    parser.add_argument(
+        "--vad-threshold",
+        type=float,
+        metavar="RMS",
+        help="발화로 인정할 RMS 임계 (기본 150). 말해도 안 잡히면 ↓, 잡음에 반응하면 ↑. mic_check로 발화 RMS 확인.",
+    )
+    parser.add_argument(
+        "--stt-model",
+        default="large-v3-turbo",
+        metavar="SIZE",
+        help="faster-whisper 모델 크기 (기본 large-v3-turbo). 속도 우선이면 small 또는 base.",
+    )
     parser.add_argument(
       "--mouth",
         choices=["fake", "supertonic", "gptsovits"],
@@ -219,7 +291,17 @@ def main() -> None:
         config = replace(config, db_path=Path(args.db))
     input_wav = Path(args.input) if args.input else None
     try:
-        asyncio.run(chat(config, use_voice=args.voice, input_wav=input_wav))
+        asyncio.run(
+            chat(
+                config,
+                use_voice=args.voice,
+                input_wav=input_wav,
+                listen=args.listen,
+                mic_device=args.mic,
+                vad_threshold=args.vad_threshold,
+                stt_model=args.stt_model,
+            )
+        )
     except KeyboardInterrupt:
         # 스트리밍 중 Ctrl+C — 턴은 즉시 커밋되므로 데이터는 안전, traceback만 숨긴다
         print("\n(나비가 잠들었다)")
