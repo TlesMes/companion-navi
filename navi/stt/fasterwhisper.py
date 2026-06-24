@@ -32,6 +32,10 @@ class FasterWhisperStt(SttAdapter):
         self._compute_type = compute_type
         self._model = None  # lazy
 
+    def warmup(self) -> None:
+        """모델을 미리 로드한다 — 첫 발화 전 호출하면 추론 지연이 사라진다."""
+        self._ensure_model()
+
     def _ensure_model(self):
         if self._model is None:
             from faster_whisper import WhisperModel

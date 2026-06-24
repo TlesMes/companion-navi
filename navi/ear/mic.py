@@ -32,12 +32,14 @@ class MicListener:
         self,
         vad: Vad | None = None,
         *,
+        device: int | str | None = None,
         sample_rate: int = 16000,
         frame_ms: int = 20,
         start_speech_ms: int = 200,
         endpoint_silence_ms: int = 800,
         preroll_ms: int = 200,
     ) -> None:
+        self._device = device  # None=기본 입력. 가상 마이크가 기본이면 실물 장치 번호를 지정.
         self._sr = sample_rate
         self._frame_samples = int(sample_rate * frame_ms / 1000)
         self._endpointer = Endpointer(
@@ -66,9 +68,15 @@ class MicListener:
             channels=1,
             dtype="int16",
             blocksize=self._frame_samples,
+            device=self._device,
             callback=_on_frame,
         )
-        log.info("마이크 열림 — %dHz, %d샘플/프레임", self._sr, self._frame_samples)
+        log.info(
+            "마이크 열림 — device=%s, %dHz, %d샘플/프레임",
+            self._device if self._device is not None else "기본",
+            self._sr,
+            self._frame_samples,
+        )
         with stream:
             while True:
                 pcm = await queue.get()

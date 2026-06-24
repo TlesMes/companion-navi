@@ -15,6 +15,7 @@ barge-in(kill switch): interrupt()가 재생 하드스톱(mouth.stop)과 LLM 생
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Callable
 
 from navi.brain.base import BrainAdapter
@@ -55,8 +56,10 @@ class TurnPipeline:
         request = self._conductor.build_request(
             trigger_text, user_id=user_id, session_id=session_id
         )
+        tts_t0 = time.perf_counter()
         tokens = self._tee(self._brain.generate_stream(request), echo)
         await self._mouth.speak_stream(tokens, self._voice)
+        log.info("TTS(합성+재생) %.0fms", (time.perf_counter() - tts_t0) * 1000)
         return self._brain.last_result
 
     async def _tee(

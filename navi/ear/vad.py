@@ -39,11 +39,12 @@ def _rms(pcm: bytes) -> float:
 class EnergyVad(Vad):
     """RMS 에너지 임계 VAD. threshold 위면 음성으로 본다.
 
-    threshold는 마이크 게인·소음 환경에 따라 달라지는 튜닝값(D12). 기본 500은 조용한
-    실내 근접 마이크 기준 보수적 값 — 생활소음을 음성으로 오인하면 올린다.
+    threshold는 마이크 게인·소음 환경에 따라 달라지는 튜닝값(D12). 기본 150은 실측 기준
+    (저게인 USB 마이크 보통 발화 RMS ~200) 보수적 값 — 생활소음에 반응하면 올리고,
+    말해도 안 잡히면 내린다. CLI --vad-threshold로 실시간 튜닝.
     """
 
-    def __init__(self, threshold: float = 500.0) -> None:
+    def __init__(self, threshold: float = 150.0) -> None:
         self._threshold = threshold
 
     def is_speech(self, chunk: AudioChunk) -> bool:
