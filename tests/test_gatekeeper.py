@@ -1,0 +1,67 @@
+"""검문① 키워드 게이트 검증 — LLM 없이 결정론적 모드 명령 판정을 고정한다.
+
+명령어=긴 구절 + 정규화(2026.06.25 실측 반영): 짧은 단어는 Whisper STT가 오인식·환각으로
+전멸 → 긴 구절 채택, STT가 붙이는 양끝 문장부호·공백은 정규화로 흡수한다.
+"""
+
+import pytest
+
+from navi.gatekeeper import GateResult, _SLEEP_COMMANDS, check_gate
+
+
+# --- PASS: 일반 대화는 통과 ---
+
+def test_normal_utterance_passes():
+    assert check_gate("오늘 날씨 어때?") == GateResult.PASS
+
+
+def test_short_chat_passes():
+    assert check_gate("안녕") == GateResult.PASS
+
+
+def test_question_passes():
+    assert check_gate("나비 뭐 하고 있어?") == GateResult.PASS
+
+
+# --- PASS: 명령 구절이 문장에 묻힌 경우는 가로채지 않는다 (false positive 방지) ---
+
+def test_sleep_phrase_in_sentence_passes():
+    assert check_gate("나 이제 자라") == GateResult.PASS
+    assert check_gate("나 오늘 잘 잤어") == GateResult.PASS
+    # "이제 그만 잘게"를 포함하지만 발화 전체가 아니므로 통과
+    assert check_gate("이제 그만 잘게라고 말했어") == GateResult.PASS
+
+
+# --- SLEEP: 등록된 명령 구절은 가로챈다 (집합 전수) ---
+
+@pytest.mark.parametrize("text", sorted(_SLEEP_COMMANDS))
+def test_sleep_commands_are_caught(text: str):
+    assert check_gate(text) == GateResult.SLEEP
+
+
+# --- 정규화: STT 출력의 양끝 부호·공백을 흡수한다 ---
+
+def test_trailing_punctuation_normalized():
+    # STT가 흔히 붙이는 종결 부호 — 정규화로 흡수해야 매칭
+    assert check_gate("이제 자러 갈게.") == GateResult.SLEEP
+    assert check_gate("이제 그만 잘게!") == GateResult.SLEEP
+
+
+def test_surrounding_whitespace_normalized():
+    assert check_gate("  이제 그만 잘게  ") == GateResult.SLEEP
+    assert check_gate("\t잘 자 나비\n") == GateResult.SLEEP
+
+
+def test_internal_whitespace_collapsed():
+    # 띄어쓰기 변동(이중 공백)도 단일화해 매칭
+    assert check_gate("이제  그만   잘게") == GateResult.SLEEP
+
+
+# --- 경계: 빈 문자열·공백 ---
+
+def test_empty_string_passes():
+    assert check_gate("") == GateResult.PASS
+
+
+def test_whitespace_only_passes():
+    assert check_gate("   ") == GateResult.PASS

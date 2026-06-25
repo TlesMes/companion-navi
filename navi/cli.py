@@ -19,6 +19,7 @@ from pathlib import Path
 from navi.brain import create_brain
 from navi.conductor import Conductor
 from navi.config import Config, load_config
+from navi.gatekeeper import GateResult, check_gate
 from navi.memory import MemoryStore
 from navi.models import AudioChunk
 from navi.mouth import create_mouth
@@ -157,6 +158,12 @@ async def chat(
                     print("[인식 결과 없음 — 다시 말하세요]")
                     continue
                 print(f"나> {text}")
+                # 검문① — 모드 명령을 LLM 전에 결정론적으로 가로챈다
+                gate = check_gate(text)
+                if gate == GateResult.SLEEP:
+                    print("(나비가 잠들었다. Ctrl+C로 완전 종료)")
+                    log.info("검문① SLEEP — %r", text)
+                    break
             else:
                 try:
                     raw = await asyncio.to_thread(input, "\n나> ")
