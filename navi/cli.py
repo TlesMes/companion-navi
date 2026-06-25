@@ -306,12 +306,11 @@ def main() -> None:
         # 스트리밍 중 Ctrl+C — 턴은 즉시 커밋되므로 데이터는 안전, traceback만 숨긴다
         print("\n(나비가 잠들었다)")
     finally:
-        # 음성 모드: GPT-SoVITS 합성이 asyncio.to_thread로 도는데 한 문장 추론은
-        # 외부 라이브러리 내부라 중간에 못 끊는다. 정상 종료 시 asyncio가
-        # shutdown_default_executor로 그 스레드를 join 대기하다 프리즈하므로
-        # (+ PortAudio/torch 잔여 스레드), executor join을 기다리지 않고 즉시 끝낸다.
-        # 기억(DB)은 chat() finally에서 이미 커밋·close됐다.
-        os._exit(0)
+        if args.voice:
+            # 음성 모드에서만: GPT-SoVITS 합성 스레드·PortAudio·torch 잔여 스레드가
+            # asyncio shutdown_default_executor 의 join 대기를 막아 프리즈한다.
+            # 기억(DB)은 chat() finally에서 이미 close됐으므로 즉시 종료해도 안전.
+            os._exit(0)
 
 
 if __name__ == "__main__":
