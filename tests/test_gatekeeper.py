@@ -52,9 +52,17 @@ def test_surrounding_whitespace_normalized():
     assert check_gate("\t잘 자 나비\n") == GateResult.SLEEP
 
 
-def test_internal_whitespace_collapsed():
-    # 띄어쓰기 변동(이중 공백)도 단일화해 매칭
-    assert check_gate("이제  그만   잘게") == GateResult.SLEEP
+def test_spacing_variations_normalized():
+    # 한국어 STT는 단어 경계(띄어쓰기)를 일관되게 안 준다 — 공백을 전부 무시해 흡수
+    assert check_gate("이제그만잘게") == GateResult.SLEEP        # 붙여쓰기
+    assert check_gate("이제 그만잘게") == GateResult.SLEEP       # 부분 띄어쓰기
+    assert check_gate("이제  그만   잘게") == GateResult.SLEEP   # 이중 공백
+    assert check_gate("잘자 나비") == GateResult.SLEEP
+
+
+def test_internal_punctuation_normalized():
+    # 양끝뿐 아니라 내부 쉼표 등도 제거
+    assert check_gate("이제, 그만 잘게.") == GateResult.SLEEP
 
 
 # --- 경계: 빈 문자열·공백 ---
