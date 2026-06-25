@@ -98,11 +98,11 @@ async def chat(
     session_id = uuid.uuid4().hex
     log.info("세션 시작 — session=%s, vendor=%s", session_id, config.brain.vendor)
 
-    # 웨이크워드를 켜려면 키·키워드가 있어야 한다 — 없으면 일찍 안내하고 끝낸다(데몬은 정상).
+    # 웨이크워드를 켜려면 엔진 설정이 갖춰져야 한다 — 없으면 일찍 안내하고 끝낸다(데몬은 정상).
     if wakeword and not config.wakeword.ready:
         print(
-            "[웨이크워드 설정 미비 — .env의 PICOVOICE_ACCESS_KEY와 "
-            "config.yaml ear.wakeword.keyword_path가 필요합니다]"
+            "[웨이크워드 설정 미비 — config.yaml ear.wakeword 확인 "
+            "(vosk: 모델 경로+호출어 / porcupine: .env PICOVOICE_ACCESS_KEY+키워드)]"
         )
         store.close()
         return
@@ -274,6 +274,23 @@ async def _input_loop(
             break  # WAV 1턴 처리 완료 → 종료
 
 
+def _build_wakeword(cfg):
+    """WakeWordConfig → WakeWord 어댑터. engine 한 줄로 엔진을 가른다(벤더 종속 금지)."""
+    from navi.ear import create_wakeword
+
+    if cfg.engine == "vosk":
+        return create_wakeword("vosk", model_path=cfg.vosk_model_path, keywords=cfg.keywords)
+    if cfg.engine == "porcupine":
+        return create_wakeword(
+            "porcupine",
+            access_key=cfg.access_key,
+            keyword_path=cfg.keyword_path,
+            model_path=cfg.model_path,
+            sensitivity=cfg.sensitivity,
+        )
+    raise ValueError(f"알 수 없는 wakeword engine: {cfg.engine!r} (vosk | porcupine)")
+
+
 async def _listen_wakeword(
     config: Config,
     listen_stt,
@@ -293,17 +310,17 @@ async def _listen_wakeword(
         ListenSession,
         SleepReason,
         create_vad,
-        create_wakeword,
     )
     from navi.ear.mic import MicListener
 
-    wakeword = create_wakeword(
-        "porcupine",
-        access_key=config.wakeword.access_key,
-        keyword_path=config.wakeword.keyword_path,
-        model_path=config.wakeword.model_path,
-        sensitivity=config.wakeword.sensitivity,
-    )
+    try:
+        wakeword = _build_wakeword(config.wakeword)
+    except ImportError:
+        print(
+            f"[{config.wakeword.engine} 엔진 미설치 — .venv-voice에 설치하세요 "
+            "(vosk: pip install vosk / porcupine: pip install pvporcupine)]"
+        )
+        return
     vad = create_vad("energy", threshold=vad_threshold) if vad_threshold else None
     session = ListenSession(
         wakeword,

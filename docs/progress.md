@@ -11,8 +11,8 @@
 전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 진행 중(~8할)**, Phase 3(능동성)·4(기억·인격)·5(완성) 대기. Phase 2 완료 기준은 *"부르면 ~1.5초 안에 음성으로 답한다"* — 아직 미달.
 
 - **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · 마이크 Ear 입력(`--listen`, PR #8) · **검문①(PR #9)**
-- **Phase 2 진행:** **웨이크워드 D7** — 청취축 상태머신·WakeWord 계약 완성, 엔진=Vosk 채택, 어댑터 구현 남음
-- **Phase 2 남음:** D7 엔진 마감(Vosk 어댑터) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
+- **Phase 2 진행:** **웨이크워드 D7** — 청취축 상태머신·WakeWord 계약·Vosk 어댑터 완성, 실모델·실마이크 E2E만 남음
+- **Phase 2 남음:** D7 실마이크 E2E(Vosk 모델 다운로드) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
 - **결정 현황(D번호):**
   - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · D15(VAD 1층 캐스케이드) · D16(모드 두 직교 축)
   - ◐ 진행/사실상 확정·미구현: **D7(엔진 Vosk 채택, 어댑터 구현 중)** · D5(SQLite) · D6(sqlite-vec) · D8(하드웨어)
@@ -30,8 +30,9 @@
   - Porcupine 어댑터는 **벤더중립 증명·향후 회사이메일 확보 시 사용** 위해 보존. `WakeWord` 계약 덕에 엔진 교체는 어댑터 1개 + 팩토리/설정 한 줄.
 - **프레임 통일(설계 정리):** 엔진이 요구하는 고정 프레임을 어댑터 내부 재정렬 대신 `WakeWord.frame_length` 선언으로 흡수 — 마이크 blocksize·Endpointer frame_ms를 거기 맞춤(EnergyVad는 프레임 크기 무관). `mic.py`에 raw `frames()` 분리, `utterances()`는 그 위에 재구성.
 - **수면 명령 거취(검문① KWS 재검토):** 텍스트 게이트 **유지**, KWS는 깨우기 전용. 두 게이트는 상보(arch 5.1) — KWS=SLEEP 입구(파형), 검문①=ACTIVE 변별("나 이제 자라는 통과").
-- **검증:** 유닛(FakeWakeWord+가짜 프레임+가짜 시계)으로 SLEEP→ACTIVE→발화→타임아웃→재기상, 검문①→SLEEP복귀 전 사이클(86 테스트 green). 실마이크 E2E는 Vosk 어댑터·한국어 모델 연결 후.
-- **남음:** `VoskWakeWord` 어댑터 구현 + config의 Picovoice 전용 섹션을 엔진 일반형으로(예: `ear.wakeword.engine`) + `create_wakeword("vosk")` 분기.
+- **Vosk 어댑터 구현 완료:** `VoskWakeWord`([navi/ear/wakeword.py](../navi/ear/wakeword.py)) — KaldiRecognizer 제한 문법(`호출어+[unk]`), AcceptWaveform 구간 종료에서 호출어 일치 판정(공백 정규화). config는 `ear.wakeword.engine` 스위치로 일반화(vosk/porcupine 공존), `create_wakeword("vosk")` 분기. `ready`는 모델 디렉터리 실존까지 확인, 미설치/미존재면 친절 안내 후 종료.
+- **검증:** 유닛(FakeWakeWord+가짜 프레임+가짜 시계)으로 SLEEP→ACTIVE→발화→타임아웃→재기상, 검문①→SLEEP복귀 전 사이클 + Vosk 지연임포트·팩토리(89 테스트 green).
+- **남음(사용자 셋업 후):** `.venv-voice`에 `pip install vosk` + 한국어 모델(vosk-model-small-ko) 받아 `secrets/`에 압축해제 → 실마이크 E2E(`--listen --voice --wakeword`).
 
 **현재 상태 — Brain→Mouth 배선 완료 + 실청취 통과 (2026.06.18):**
 타이핑 → 나비가 GPT-SoVITS 음성으로 답하는 전 구간이 실동한다(한국어·일본어 모두). 배선은 TurnPipeline(`navi/pipeline.py`)이 담당 — Brain.generate_stream과 Mouth.speak_stream이 둘 다 `AsyncIterator[str]`이라 변환 없이 토큰을 흘리고, barge-in은 interrupt()=mouth.stop()+brain.cancel(). 실청취 중 GPT-SoVITS 실동 픽스 3건(아래 Stage 5). D3 GPT-SoVITS fine-tune은 음색=가중치/톤=레퍼런스로 확정(Stage 2~4).

@@ -10,7 +10,12 @@ import struct
 import pytest
 
 from navi.ear import FakeWakeWord, WakeWord, create_wakeword
-from navi.ear.wakeword import PorcupineWakeWord, _pcm_to_samples
+from navi.ear.wakeword import (
+    PorcupineWakeWord,
+    VoskWakeWord,
+    _pcm_to_samples,
+    _strip_spaces,
+)
 from navi.models import AudioChunk
 
 SR = 16000
@@ -104,3 +109,26 @@ def test_create_wakeword_porcupine_lazy_imports_engine():
 def test_porcupine_is_wakeword_subclass():
     # 인스턴스화 없이 계약 상속만 확인(추상 메서드 구현 여부)
     assert issubclass(PorcupineWakeWord, WakeWord)
+
+
+# --- Vosk (채택 엔진) ---
+
+
+def test_strip_spaces_absorbs_korean_word_boundaries():
+    # KWS/STT의 들쭉날쭉한 띄어쓰기를 흡수 — "야 일어나"도 "야일어나"도 같은 키로
+    assert _strip_spaces("야 일어나") == _strip_spaces("야일어나") == "야일어나"
+
+
+def test_create_wakeword_vosk_lazy_imports_engine():
+    # vosk 미설치 환경: 인스턴스화 시점에야 import 시도(지연 임포트) → 팩토리 임포트는 안 깨짐.
+    try:
+        import vosk  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError):
+            create_wakeword("vosk", model_path="x", keywords=["야 일어나"])
+    else:
+        pytest.skip("vosk 설치됨 — 실 모델 없이 create는 검증하지 않는다")
+
+
+def test_vosk_is_wakeword_subclass():
+    assert issubclass(VoskWakeWord, WakeWord)

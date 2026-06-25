@@ -27,6 +27,9 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
             options={},
         ),
         wakeword=WakeWordConfig(
+            engine="vosk",
+            keywords=(),
+            vosk_model_path=None,
             access_key=None,
             keyword_path=None,
             model_path=None,

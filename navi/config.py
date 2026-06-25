@@ -39,11 +39,16 @@ class MouthConfig:
 
 @dataclass(frozen=True)
 class WakeWordConfig:
-    """웨이크워드(D7) 설정. access_key는 비밀(.env), 키워드·모델 파일은 경로(커밋 금지).
+    """웨이크워드(D7) 설정. engine으로 엔진 선택 — vosk(채택) | porcupine(보존).
 
-    파일이 아직 없어도(키 미발급) Config는 만들어진다 — 실제 사용은 CLI --wakeword 줄 때만.
+    모델·키 파일이 아직 없어도 Config는 만들어진다 — 실제 사용은 CLI --wakeword 줄 때만.
+    porcupine의 access_key는 비밀(.env), 모델·키워드 파일 경로는 secrets/(커밋 금지).
     """
 
+    engine: str
+    keywords: tuple[str, ...]
+    vosk_model_path: str | None
+    # Porcupine 전용 (보존)
     access_key: str | None
     keyword_path: str | None
     model_path: str | None
@@ -52,8 +57,20 @@ class WakeWordConfig:
 
     @property
     def ready(self) -> bool:
-        """엔진을 띄울 수 있는 최소 조건 — 키와 키워드 파일 경로가 있는가."""
-        return bool(self.access_key and self.keyword_path)
+        """선택한 엔진을 띄울 수 있는 최소 조건 — 모델/키 파일이 실제로 있는가까지 본다."""
+        if self.engine == "vosk":
+            return bool(
+                self.keywords
+                and self.vosk_model_path
+                and Path(self.vosk_model_path).exists()
+            )
+        if self.engine == "porcupine":
+            return bool(
+                self.access_key
+                and self.keyword_path
+                and Path(self.keyword_path).exists()
+            )
+        return False
 
 
 @dataclass(frozen=True)
@@ -100,14 +117,20 @@ def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
 
 def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
     ww = raw.get("ear", {}).get("wakeword", {})
-    kw_path = ww.get("keyword_path")
-    model_path = ww.get("model_path")
+    vosk = ww.get("vosk", {})
+    porc = ww.get("porcupine", {})
+    vosk_model = vosk.get("model_path")
+    pkw = porc.get("keyword_path")
+    pmodel = porc.get("model_path")
+    # 모델·키 파일은 secrets/ — 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해).
     return WakeWordConfig(
+        engine=ww.get("engine", "vosk"),
+        keywords=tuple(ww.get("keywords") or ()),
+        vosk_model_path=_resolve(root, vosk_model) if vosk_model else None,
         access_key=os.getenv("PICOVOICE_ACCESS_KEY") or None,
-        # .ppn/.pv는 비밀 파일 — 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해).
-        keyword_path=_resolve(root, kw_path) if kw_path else None,
-        model_path=_resolve(root, model_path) if model_path else None,
-        sensitivity=float(ww.get("sensitivity", 0.5)),
+        keyword_path=_resolve(root, pkw) if pkw else None,
+        model_path=_resolve(root, pmodel) if pmodel else None,
+        sensitivity=float(porc.get("sensitivity", 0.5)),
         active_timeout_ms=int(ww.get("active_timeout_ms", 30000)),
     )
 

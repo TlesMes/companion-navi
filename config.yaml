@@ -39,14 +39,19 @@ mouth:
 
 ear:
   # 웨이크워드(D7) — SLEEP에선 STT를 끄고 파형에서 호출어만 잡는다(arch 5.1·D16).
-  # CLI --wakeword 줄 때만 청취축이 켜진다. 키 없이도 데몬은 뜨고, --wakeword만 막힌다.
+  # CLI --wakeword 줄 때만 청취축이 켜진다. 모델 없이도 데몬은 뜨고, --wakeword만 막힌다.
   wakeword:
-    # access_key는 비밀 → .env의 PICOVOICE_ACCESS_KEY. 아래 .ppn/.pv는 비밀 파일이라 커밋 금지
-    # (secrets/는 .gitignore). 한국어 키워드는 .ppn + 한국어 모델(.pv) 둘 다 필요.
-    keyword_path: secrets/navi_ko.ppn               # Picovoice 콘솔에서 생성한 한국어 깨우기 문구
-    model_path: secrets/porcupine_params_ko.pv      # 한국어 언어 모델
-    sensitivity: 0.5                                # 0~1, 높을수록 민감(오수락↑)
-    active_timeout_ms: 30000                        # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
+    engine: vosk                # vosk(채택, 학습·키 불필요) | porcupine(보존, 콘솔 가입 필요)
+    keywords: ["야 일어나"]      # 호출어 — 길고 또렷하게(짧으면 오수락↑). 여러 개 가능.
+    active_timeout_ms: 30000    # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
+    vosk:
+      # 한국어 모델 디렉터리 — alphacephei.com/vosk/models 에서 받아 secrets/에 압축 해제.
+      # secrets/는 .gitignore. 작은 모델: vosk-model-small-ko-0.22
+      model_path: secrets/vosk-model-small-ko
+    porcupine:                  # 보존 — Picovoice 콘솔 가입(회사 이메일) 시에만. .env PICOVOICE_ACCESS_KEY
+      keyword_path: secrets/navi_ko.ppn             # 콘솔 생성 한국어 .ppn
+      model_path: secrets/porcupine_params_ko.pv    # 한국어 언어 모델 .pv
+      sensitivity: 0.5
 
 db:
   path: navi.db

@@ -50,5 +50,5 @@ Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) +
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
 검문①: **완료** — STT 출력을 LLM 전에 가로채 수면 명령 결정론 처리([navi/gatekeeper.py](./navi/gatekeeper.py), PR #9).
-D7(웨이크워드): **진행 중 — 엔진 Vosk 채택.** 청취축 상태머신·WakeWord 계약 완성([navi/ear/listening.py](./navi/ear/listening.py)·[navi/ear/wakeword.py](./navi/ear/wakeword.py)) — `--listen --wakeword`로 SLEEP(호출어만)↔ACTIVE(대화 세션). Porcupine은 콘솔 가입이 회사 이메일을 요구해 개인 무료 불가 → 학습0·CPU·한국어 **Vosk 스팟팅**으로 전환, **Vosk 어댑터 구현이 다음**(Porcupine 어댑터는 보존). '아무나 깨어남'(화자 인증 v1 제외).
-**Phase 2 남음:** D7 엔진 마감(Vosk 어댑터) · 스트리밍 STT(D2) · 속도(~1.5초). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.
+D7(웨이크워드): **진행 중 — 엔진 Vosk 채택.** 청취축 상태머신·WakeWord 계약 완성([navi/ear/listening.py](./navi/ear/listening.py)·[navi/ear/wakeword.py](./navi/ear/wakeword.py)) — `--listen --wakeword`로 SLEEP(호출어만)↔ACTIVE(대화 세션). Porcupine은 콘솔 가입이 회사 이메일을 요구해 개인 무료 불가 → 학습0·CPU·한국어 **Vosk 스팟팅**으로 전환·**어댑터 구현됨**(VoskWakeWord, Porcupine 어댑터 보존). 한국어 모델(vosk-model-small-ko) 받아 실마이크 E2E만 남음. '아무나 깨어남'(화자 인증 v1 제외).
+**Phase 2 남음:** D7 실마이크 E2E(Vosk 모델 다운로드) · 스트리밍 STT(D2) · 속도(~1.5초). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.

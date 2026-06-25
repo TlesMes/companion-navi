@@ -12,11 +12,17 @@
 from __future__ import annotations
 
 import array
+import json
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from navi.models import AudioChunk
+
+
+def _strip_spaces(text: str) -> str:
+    """공백 제거 — STT/KWS의 들쭉날쭉한 한국어 단어 경계를 흡수(gatekeeper와 동일 취지)."""
+    return "".join(text.split())
 
 
 def _pcm_to_samples(pcm: bytes) -> array.array:
@@ -95,6 +101,53 @@ class PorcupineWakeWord(WakeWord):
 
     def close(self) -> None:
         self._engine.delete()
+
+
+class VoskWakeWord(WakeWord):
+    """Vosk(Kaldi) 키워드 스팟팅 — D7 채택 엔진. 학습·키·계정 불필요, 순수 CPU.
+
+    제한 문법(grammar)으로 어휘를 호출어+[unk]로 묶어, 지정 문구를 말할 때만 잡는다 —
+    whisper처럼 임의 텍스트를 환각하지 않는다(검문①의 짧은 발화 환각 문제를 구조적으로 회피).
+    한국어 모델 디렉터리(model_path)와 호출어 문구(keywords)만 있으면 된다.
+
+    AcceptWaveform이 발화 끝(무음)에서 True를 내면 그 구간 인식 결과가 호출어와 일치하는지
+    본다 — 호출어를 말하고 잠깐 멈추면 깨어난다. 즉시성(부분결과 감지)은 추후 튜닝(D12).
+
+    vosk는 .venv-voice에만 설치되므로 지연 임포트한다(sounddevice·STT와 동일 규약).
+    """
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        keywords: list[str] | tuple[str, ...],
+        sample_rate: int = 16000,
+        frame_length: int = 512,
+    ) -> None:
+        from vosk import KaldiRecognizer, Model
+
+        if not keywords:
+            raise ValueError("VoskWakeWord: keywords가 비어 있습니다")
+        self._sr = sample_rate
+        self._frame_length = frame_length
+        self._targets = frozenset(_strip_spaces(k) for k in keywords)
+        # grammar: 호출어만 인식하도록 어휘 제한(+[unk]는 그 외 발화 흡수)
+        grammar = json.dumps(list(keywords) + ["[unk]"], ensure_ascii=False)
+        self._rec = KaldiRecognizer(Model(model_path), sample_rate, grammar)
+
+    @property
+    def frame_length(self) -> int:
+        return self._frame_length
+
+    @property
+    def sample_rate(self) -> int:
+        return self._sr
+
+    def detect(self, chunk: AudioChunk) -> bool:
+        if self._rec.AcceptWaveform(chunk.pcm):  # 발화 한 구간 종료
+            text = json.loads(self._rec.Result()).get("text", "")
+            return _strip_spaces(text) in self._targets
+        return False
 
 
 class FakeWakeWord(WakeWord):
