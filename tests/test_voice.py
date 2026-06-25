@@ -258,6 +258,14 @@ def test_pending_vendors_raise_with_decision_pointer():
         create_mouth("cartesia")
 
 
+def test_retired_d3_candidates_raise_not_implemented():
+    # D3 평가 후보였으나 GPT-SoVITS 확정으로 팩토리에서 제거됨 — 명확한 안내 포함
+    with pytest.raises(NotImplementedError, match="gptsovits"):
+        create_mouth("cosyvoice")
+    with pytest.raises(NotImplementedError, match="gptsovits"):
+        create_mouth("f5tts")
+
+
 def test_unknown_vendor_raises_value_error():
     with pytest.raises(ValueError):
         create_stt("nope")
