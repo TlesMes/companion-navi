@@ -7,6 +7,17 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
+**로드맵 현황 스냅샷 (2026-06-25):**
+전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 진행 중(~8할)**, Phase 3(능동성)·4(기억·인격)·5(완성) 대기. Phase 2 완료 기준은 *"부르면 ~1.5초 안에 음성으로 답한다"* — 아직 미달.
+
+- **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · **마이크 Ear 입력(`--listen`, PR #8 머지)**
+- **Phase 2 남음:** 검문①(STT 후 키워드 게이트) · 웨이크워드(D7) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
+- **결정 현황(D번호):**
+  - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · D15(VAD 1층 캐스케이드)
+  - ◐ 사실상 확정·미구현: D5(SQLite) · D6(sqlite-vec) · D7(Porcupine) · D8(하드웨어)
+  - · 보류: D1(LLM) · D2(STT 벤더) · D9(친밀도) · D10(안전) · D11(스케줄) · D12(턴테이킹 튠) · D13(피드)
+- **다음 갈림길:** ① 검문① 키워드 게이트(의존성 0·주권 원칙 구현) ② 속도(D2 스트리밍 STT 또는 D8 GPU — 결정 선행 필요).
+
 **현재 상태 — Brain→Mouth 배선 완료 + 실청취 통과 (2026.06.18):**
 타이핑 → 나비가 GPT-SoVITS 음성으로 답하는 전 구간이 실동한다(한국어·일본어 모두). 배선은 TurnPipeline(`navi/pipeline.py`)이 담당 — Brain.generate_stream과 Mouth.speak_stream이 둘 다 `AsyncIterator[str]`이라 변환 없이 토큰을 흘리고, barge-in은 interrupt()=mouth.stop()+brain.cancel(). 실청취 중 GPT-SoVITS 실동 픽스 3건(아래 Stage 5). D3 GPT-SoVITS fine-tune은 음색=가중치/톤=레퍼런스로 확정(Stage 2~4).
 
@@ -94,11 +105,21 @@
 - 일본어 응답 페르소나 `personas/navi_ja.yaml`(배선 테스트용 placeholder) 추가, `config.yaml`
   card_path 전환. (페르소나 표준 스키마·언어 속성 필드화는 별도 작업으로 분리)
 
+**Stage 6 — Ear 마이크 입력 파이프라인 (2026.06.25, PR #8 머지):**
+- **구현:** 마이크 → VAD → 엔드포인팅 → 발화 단위 방출 → STT → Brain(→Mouth) 실시간 루프. CLI `--listen`.
+  - `navi/ear/vad.py` — `Vad` 추상 + `EnergyVad`(RMS 임계, 기본 150). `navi/ear/endpointer.py` — 순수 상태머신(하드웨어 없이 테스트 가능). `navi/ear/mic.py` — `MicListener`(sounddevice 지연 임포트, `--mic`로 실물 장치 지정).
+  - CLI 플래그: `--listen` `--mic` `--vad-threshold` `--stt-model`. STT 모델 시작 시 선로드(첫 발화에 묻던 33s 로딩 분리), 단계별 속도 로그(STT·첫토큰·TTS).
+  - `scripts/mic_check.py` — 장치 목록 + 실시간 RMS 미터(threshold 튜닝 진단).
+- **실측 (실청취):** 첫 발화 모델 선로드로 33s→분리. STT 속도 `large-v3-turbo` 9.5s → `small` 2.5s(RTF~0.69, 4배). 전 구간(mic→발화→STT→음성 답변) 동작 확인. 테스트 48 passed.
+- **확인된 한계 → 후속 PR:** 속도 ~1.5s 미달(D2 스트리밍 STT/D8 GPU) · 웨이크워드 없음(D7/검문①) · EnergyVad 오탐(D12 튜닝).
+- **설계 메모:** STT→LLM 사이에 데몬 검문소(검문①: 키워드 게이트)가 들어가야 수면/DND 게이트·언령을 LLM에 안 맡길 수 있음 → 통합 실시간 API(Gemini Live) 배제(D4)의 실동 근거. 킬스위치(발화 중단)는 단어가 아닌 VAD(barge-in)가 담당.
+
 **남은 일:**
+- (다음 후보) 검문①: STT 후 키워드 게이트 — "자라"(SLEEP)·"조용히"(정지) 등 모드 명령을 LLM 전에 결정론적으로 가로챔. 의존성 0.
+- (속도) 스트리밍 STT(D2) 또는 GPU 가속(D8) — Phase 2 완료 기준 ~1.5s 직결.
 - (개선 후보) 콜드 스타트 — 데몬 기동 시 GPT-SoVITS 엔진 워밍업(더미 합성)으로 첫 토큰 지연 단축.
 - (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.
-- (선택) GPU 가속 경로 — CPU RTF/TTFA 부족 판정 시 DirectML/ONNX 착수.
-- PR-2(STT): faster-whisper 실어댑터 + CLI 음성파일 입력.
+- (보류) 웨이크워드(D7 Porcupine, 음향 KWS) — SLEEP에서 깨우려면 음향 필수.
 
 **이전 상태 — 세 부품 독립 작동 + Mouth 실어댑터 완성:**
 - **답변 생성**(Brain + Conductor + 기억) — Phase 1에서 구현, CLI 텍스트 대화로 작동.

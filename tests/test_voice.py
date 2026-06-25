@@ -212,6 +212,30 @@ def test_gptsovits_invalid_lang_raises():
         GPTSoVITSMouth(gen_lang="fr")
 
 
+def test_gptsovits_warmup_loads_engine_once():
+    """warmup()이 _ensure_engine()을 호출해 엔진을 선로드하는지 확인."""
+    from navi.mouth.gptsovits import GPTSoVITSMouth
+
+    calls: list[str] = []
+
+    def fake_tts_fn(**_):  # 주입된 가짜 엔진 — 실 모델 로드 없이
+        return iter([])
+
+    mouth = GPTSoVITSMouth(tts_fn=fake_tts_fn)
+    assert mouth._tts_fn is fake_tts_fn  # 생성 시점에 이미 주입됨
+    mouth.warmup()  # 엔진이 이미 있으면 no-op
+    assert mouth._tts_fn is fake_tts_fn  # 교체되지 않음
+
+
+def test_fake_mouth_warmup_is_noop():
+    """FakeMouth.warmup()은 상태를 바꾸지 않는다."""
+    from navi.mouth.fake import FakeMouth
+
+    mouth = FakeMouth()
+    mouth.warmup()  # 에러 없이 호출 가능
+    assert not mouth.is_playing()
+
+
 # --- 팩토리: 벤더 종속 금지 + 보류 결정 안내 ---
 
 
@@ -232,6 +256,14 @@ def test_pending_vendors_raise_with_decision_pointer():
         create_stt("vito")
     with pytest.raises(NotImplementedError, match="폴백"):
         create_mouth("cartesia")
+
+
+def test_retired_d3_candidates_raise_not_implemented():
+    # D3 평가 후보였으나 GPT-SoVITS 확정으로 팩토리에서 제거됨 — 명확한 안내 포함
+    with pytest.raises(NotImplementedError, match="gptsovits"):
+        create_mouth("cosyvoice")
+    with pytest.raises(NotImplementedError, match="gptsovits"):
+        create_mouth("f5tts")
 
 
 def test_unknown_vendor_raises_value_error():

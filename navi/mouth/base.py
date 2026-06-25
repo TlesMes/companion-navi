@@ -32,3 +32,6 @@ class MouthAdapter(ABC):
     @abstractmethod
     def is_playing(self) -> bool:
         """현재 재생 중인지 — 턴테이킹이 구독한다."""
+
+    def warmup(self) -> None:
+        """엔진을 미리 로드한다. 기본: no-op. 지연 로드 어댑터에서 재정의."""

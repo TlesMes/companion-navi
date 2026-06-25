@@ -43,9 +43,10 @@ type(scope): 제목 (한국어, 50자 내)
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
-## 현재 상태 (2026.06.18)
+## 현재 상태 (2026.06.25)
 
-Phase 0(기획·설계) 완료 → **Phase 1(텍스트 뼈대) 완료** → **Phase 2(음성화): Brain→Mouth 배선 완료, 실청취 통과.**
+Phase 0·1 완료 → **Phase 2(음성화) 진행 중(~8할).** 마이크로 말하면 나비가 음성으로 답하는 전 구간 실동. 완료 기준 *"부르면 ~1.5초 안에 답"*은 미달(속도·웨이크워드 남음).
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
-배선: **타이핑 → 나비 음성 답변 실동**(한/일). TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) + CLI `--voice`. 실청취 픽스 3건(tqdm·mecab 한글경로·종료 프리즈)은 progress.md Stage 5. 다음 = PR-2(STT 입력). 상세 → [docs/progress.md](./docs/progress.md).
+음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
+**Phase 2 남음:** 검문①(STT 후 키워드 게이트) · 웨이크워드(D7) · 스트리밍 STT(D2) · 속도(~1.5초). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.

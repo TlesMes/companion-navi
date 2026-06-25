@@ -19,6 +19,7 @@ from pathlib import Path
 from navi.brain import create_brain
 from navi.conductor import Conductor
 from navi.config import Config, load_config
+from navi.gatekeeper import GateResult, check_gate
 from navi.memory import MemoryStore
 from navi.models import AudioChunk
 from navi.mouth import create_mouth
@@ -100,6 +101,8 @@ async def chat(
     pipeline: TurnPipeline | None = None
     if use_voice:
         mouth = create_mouth(config.mouth.vendor, **config.mouth.options)
+        print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
+        await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(
             brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
         )
@@ -155,6 +158,12 @@ async def chat(
                     print("[인식 결과 없음 — 다시 말하세요]")
                     continue
                 print(f"나> {text}")
+                # 검문① — 모드 명령을 LLM 전에 결정론적으로 가로챈다
+                gate = check_gate(text)
+                if gate == GateResult.SLEEP:
+                    print("(나비가 잠들었다. Ctrl+C로 완전 종료)")
+                    log.info("검문① SLEEP — %r", text)
+                    break
             else:
                 try:
                     raw = await asyncio.to_thread(input, "\n나> ")
@@ -306,12 +315,11 @@ def main() -> None:
         # 스트리밍 중 Ctrl+C — 턴은 즉시 커밋되므로 데이터는 안전, traceback만 숨긴다
         print("\n(나비가 잠들었다)")
     finally:
-        # 음성 모드: GPT-SoVITS 합성이 asyncio.to_thread로 도는데 한 문장 추론은
-        # 외부 라이브러리 내부라 중간에 못 끊는다. 정상 종료 시 asyncio가
-        # shutdown_default_executor로 그 스레드를 join 대기하다 프리즈하므로
-        # (+ PortAudio/torch 잔여 스레드), executor join을 기다리지 않고 즉시 끝낸다.
-        # 기억(DB)은 chat() finally에서 이미 커밋·close됐다.
-        os._exit(0)
+        if args.voice:
+            # 음성 모드에서만: GPT-SoVITS 합성 스레드·PortAudio·torch 잔여 스레드가
+            # asyncio shutdown_default_executor 의 join 대기를 막아 프리즈한다.
+            # 기억(DB)은 chat() finally에서 이미 close됐으므로 즉시 종료해도 안전.
+            os._exit(0)
 
 
 if __name__ == "__main__":
