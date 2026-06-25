@@ -45,8 +45,10 @@ type(scope): 제목 (한국어, 50자 내)
 
 ## 현재 상태 (2026.06.25)
 
-Phase 0·1 완료 → **Phase 2(음성화) 진행 중(~8할).** 마이크로 말하면 나비가 음성으로 답하는 전 구간 실동. 완료 기준 *"부르면 ~1.5초 안에 답"*은 미달(속도·웨이크워드 남음).
+Phase 0·1 완료 → **Phase 2(음성화) 진행 중(~9할).** 마이크로 말하면 나비가 음성으로 답하는 전 구간 실동. 완료 기준 *"부르면 ~1.5초 안에 답"* 중 "부르면"은 D7 진행 중(청취축 완성·엔진 마감 중), "~1.5초"는 속도 남음.
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
-**Phase 2 남음:** 검문①(STT 후 키워드 게이트) · 웨이크워드(D7) · 스트리밍 STT(D2) · 속도(~1.5초). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.
+검문①: **완료** — STT 출력을 LLM 전에 가로채 수면 명령 결정론 처리([navi/gatekeeper.py](./navi/gatekeeper.py), PR #9).
+D7(웨이크워드): **진행 중 — 엔진 Vosk 채택.** 청취축 상태머신·WakeWord 계약 완성([navi/ear/listening.py](./navi/ear/listening.py)·[navi/ear/wakeword.py](./navi/ear/wakeword.py)) — `--listen --wakeword`로 SLEEP(호출어만)↔ACTIVE(대화 세션). Porcupine은 콘솔 가입이 회사 이메일을 요구해 개인 무료 불가 → 학습0·CPU·한국어 **Vosk 스팟팅**으로 전환, **Vosk 어댑터 구현이 다음**(Porcupine 어댑터는 보존). '아무나 깨어남'(화자 인증 v1 제외).
+**Phase 2 남음:** D7 엔진 마감(Vosk 어댑터) · 스트리밍 STT(D2) · 속도(~1.5초). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.

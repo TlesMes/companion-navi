@@ -10,13 +10,28 @@
 **로드맵 현황 스냅샷 (2026-06-25):**
 전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 진행 중(~8할)**, Phase 3(능동성)·4(기억·인격)·5(완성) 대기. Phase 2 완료 기준은 *"부르면 ~1.5초 안에 음성으로 답한다"* — 아직 미달.
 
-- **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · **마이크 Ear 입력(`--listen`, PR #8 머지)**
-- **Phase 2 남음:** 검문①(STT 후 키워드 게이트) · 웨이크워드(D7) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
+- **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · 마이크 Ear 입력(`--listen`, PR #8) · **검문①(PR #9)**
+- **Phase 2 진행:** **웨이크워드 D7** — 청취축 상태머신·WakeWord 계약 완성, 엔진=Vosk 채택, 어댑터 구현 남음
+- **Phase 2 남음:** D7 엔진 마감(Vosk 어댑터) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
 - **결정 현황(D번호):**
-  - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · D15(VAD 1층 캐스케이드)
-  - ◐ 사실상 확정·미구현: D5(SQLite) · D6(sqlite-vec) · D7(Porcupine) · D8(하드웨어)
+  - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · D15(VAD 1층 캐스케이드) · D16(모드 두 직교 축)
+  - ◐ 진행/사실상 확정·미구현: **D7(엔진 Vosk 채택, 어댑터 구현 중)** · D5(SQLite) · D6(sqlite-vec) · D8(하드웨어)
   - · 보류: D1(LLM) · D2(STT 벤더) · D9(친밀도) · D10(안전) · D11(스케줄) · D12(턴테이킹 튠) · D13(피드)
-- **다음 갈림길:** ① 검문① 키워드 게이트(의존성 0·주권 원칙 구현) ② 속도(D2 스트리밍 STT 또는 D8 GPU — 결정 선행 필요).
+- **다음 갈림길:** ① D7 Vosk 어댑터(엔진 마감) ② 속도(D2 스트리밍 STT 또는 D8 GPU — 결정 선행 필요).
+
+**Stage 6 — 웨이크워드 D7: 청취축 상태머신 + 엔진 Vosk 채택 (2026.06.25):**
+- **청취축 실체화(D16):** [navi/ear/listening.py](../navi/ear/listening.py) `ListenSession` — SLEEP(STT 끔, 호출어만 청취)↔ACTIVE(발화 끊어 STT). 창=**세션+무음 타임아웃**(반려자식, 기본 30초). `--listen --wakeword`로 켜짐, `--listen` 단독은 기존 상시청취(하위호환).
+- **WakeWord 계약(벤더 중립):** [navi/ear/wakeword.py](../navi/ear/wakeword.py) — `detect(chunk)·frame_length`만 노출, 엔진은 계약 뒤(Vad와 동일 규약). `FakeWakeWord`(무의존)로 마이크·키 없이 전 사이클 유닛 검증. 엔진은 `create_wakeword` 팩토리로 교체.
+- **엔진 결정 경위 — Porcupine → Vosk:**
+  - 1차안 Porcupine(D7 원안, 온디바이스·한국어 내장)으로 어댑터까지 구현. 그러나 **Picovoice 콘솔 가입이 회사 이메일을 요구**해 개인 Gmail 차단 — 무료 AccessKey 발급 불가 판명(블로그/FAQ상 free-forever와 실제 가입 화면이 불일치).
+  - openWakeWord 검토: 한국어 커스텀 모델은 **GPU 학습 프로젝트**(WSL2+CUDA, Piper 한국어 합성) + 구글 오디오 임베딩 영어 편향 경고 → ROCm 죽은 CPU-only 환경엔 부담 과다.
+  - **채택: Vosk 키워드 스팟팅.** 학습0·CPU·한국어 모델 존재. 제한 문법(grammar)으로 지정 문구만 인식 → whisper식 환각 없음(검문① 짧은발화 환각 문제 구조적 회피). SLEEP=가벼운 Vosk / ACTIVE=무거운 whisper의 2단 구성. 우리 검문①(작은 인식+텍스트 매칭) 철학과 동일. 콘센트 PC라 상시 인식 부담은 D15가 수용 판정.
+  - **화자 인증 제외(아무나 깨어남):** 빅스비식 "내 음성으로 깨우기"(화자 인증 2층)는 v1 제외. 문구 탐지(1층)만. 주인 한정은 후순위.
+  - Porcupine 어댑터는 **벤더중립 증명·향후 회사이메일 확보 시 사용** 위해 보존. `WakeWord` 계약 덕에 엔진 교체는 어댑터 1개 + 팩토리/설정 한 줄.
+- **프레임 통일(설계 정리):** 엔진이 요구하는 고정 프레임을 어댑터 내부 재정렬 대신 `WakeWord.frame_length` 선언으로 흡수 — 마이크 blocksize·Endpointer frame_ms를 거기 맞춤(EnergyVad는 프레임 크기 무관). `mic.py`에 raw `frames()` 분리, `utterances()`는 그 위에 재구성.
+- **수면 명령 거취(검문① KWS 재검토):** 텍스트 게이트 **유지**, KWS는 깨우기 전용. 두 게이트는 상보(arch 5.1) — KWS=SLEEP 입구(파형), 검문①=ACTIVE 변별("나 이제 자라는 통과").
+- **검증:** 유닛(FakeWakeWord+가짜 프레임+가짜 시계)으로 SLEEP→ACTIVE→발화→타임아웃→재기상, 검문①→SLEEP복귀 전 사이클(86 테스트 green). 실마이크 E2E는 Vosk 어댑터·한국어 모델 연결 후.
+- **남음:** `VoskWakeWord` 어댑터 구현 + config의 Picovoice 전용 섹션을 엔진 일반형으로(예: `ear.wakeword.engine`) + `create_wakeword("vosk")` 분기.
 
 **현재 상태 — Brain→Mouth 배선 완료 + 실청취 통과 (2026.06.18):**
 타이핑 → 나비가 GPT-SoVITS 음성으로 답하는 전 구간이 실동한다(한국어·일본어 모두). 배선은 TurnPipeline(`navi/pipeline.py`)이 담당 — Brain.generate_stream과 Mouth.speak_stream이 둘 다 `AsyncIterator[str]`이라 변환 없이 토큰을 흘리고, barge-in은 interrupt()=mouth.stop()+brain.cancel(). 실청취 중 GPT-SoVITS 실동 픽스 3건(아래 Stage 5). D3 GPT-SoVITS fine-tune은 음색=가중치/톤=레퍼런스로 확정(Stage 2~4).
