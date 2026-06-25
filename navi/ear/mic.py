@@ -50,8 +50,12 @@ class MicListener:
             preroll_ms=preroll_ms,
         )
 
-    async def utterances(self) -> AsyncIterator[Utterance]:
-        """마이크 스트림을 열고, 발화가 끝날 때마다 Utterance를 yield한다 (Ctrl+C까지 무한)."""
+    async def frames(self) -> AsyncIterator[AudioChunk]:
+        """마이크 스트림을 열고 raw PCM 프레임을 하나씩 yield한다 (Ctrl+C까지 무한).
+
+        발화 경계도 호출어도 모르는 가장 낮은 층 — 판정은 구독자(Endpointer·WakeWord)가
+        한다. 청취축 코디네이터(ListenSession)가 SLEEP/ACTIVE에 따라 프레임을 갈라 쓴다.
+        """
         import sounddevice as sd
 
         loop = asyncio.get_running_loop()
@@ -80,7 +84,12 @@ class MicListener:
         with stream:
             while True:
                 pcm = await queue.get()
-                utt = self._endpointer.push(AudioChunk(pcm=pcm, sample_rate=self._sr))
-                if utt is not None:
-                    log.info("발화 감지 — %.0fms", utt.duration_ms)
-                    yield utt
+                yield AudioChunk(pcm=pcm, sample_rate=self._sr)
+
+    async def utterances(self) -> AsyncIterator[Utterance]:
+        """프레임 스트림(frames)을 Endpointer로 묶어 발화가 끝날 때마다 Utterance를 yield한다."""
+        async for chunk in self.frames():
+            utt = self._endpointer.push(chunk)
+            if utt is not None:
+                log.info("발화 감지 — %.0fms", utt.duration_ms)
+                yield utt
