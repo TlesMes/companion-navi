@@ -276,6 +276,10 @@ class GPTSoVITSMouth(MouthAdapter):
         finally:
             self._playing = False
 
+    def warmup(self) -> None:
+        """GPT-SoVITS 가중치를 미리 로드한다 (첫 발화 ~71s 지연 제거)."""
+        self._ensure_engine()
+
     def _play(self, wav: Any) -> None:
         import sounddevice as sd
 

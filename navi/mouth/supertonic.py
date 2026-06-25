@@ -63,6 +63,10 @@ class SupertonicMouth(MouthAdapter):
             self._tts = TTS(model=self._model, auto_download=True)
         return self._tts
 
+    def warmup(self) -> None:
+        """Supertonic ONNX 모델을 미리 로드한다 (콜드 스타트 1.4s → 0.6s)."""
+        self._ensure_engine()
+
     def _style(self, voice_id: str) -> Any:
         if voice_id not in self._style_cache:
             self._style_cache[voice_id] = self._tts.get_voice_style(voice_name=voice_id)

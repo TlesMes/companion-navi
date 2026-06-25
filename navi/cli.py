@@ -100,6 +100,8 @@ async def chat(
     pipeline: TurnPipeline | None = None
     if use_voice:
         mouth = create_mouth(config.mouth.vendor, **config.mouth.options)
+        print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
+        await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(
             brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
         )
