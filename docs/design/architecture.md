@@ -226,6 +226,49 @@ loop tick (예: 수 초~수십 초마다):
 - 사용자의 즉시 오버라이드("더 잘래" 등)는 항상 자동 판단을 이긴다.
 - 상태 전이는 전부 명시적 규칙. 어떤 전이도 LLM 판단에 의존하지 않는다.
 
+### 5.1 모드 축 분리와 게이트 흐름 (D16 · D7)
+
+모드는 한 덩어리가 아니라 **두 직교 축**이다(D16). **청취축**은 마이크→STT→LLM 문으로,
+평소 닫혀 있고(STT 비활성) 웨이크워드로만 열려 endpoint/타임아웃에 닫힌다. **선톡축**은
+SLEEP/ACTIVE/DND/SNOOZE로, 나비가 *먼저* 말하는지를 가른다. 따라서 SLEEP/ACTIVE는
+마이크 상태가 아니라 선톡 상태를 가리킨다.
+
+두 축에는 **성격이 다른 게이트가 하나씩** 붙는다 — 둘은 중복이 아니라 STT 가용성에 따라
+역할이 갈린다:
+
+- **웨이크워드 (KWS, D7):** SLEEP→ACTIVE의 입구. STT가 꺼진 SLEEP에선 텍스트가 없어
+  *파형*에서 호출어를 직접 잡는 KWS만 가능하다. 길고 또렷한 문구라야 오수락이 적다.
+- **검문① (텍스트 게이트):** ACTIVE 안에서 STT 출력을 LLM 전에 거른다. STT가 이미 도는
+  구간이라 *발화 전체 일치*를 마이크로초에 판정 — KWS의 spotting이 못 하는 변별("나 이제
+  자라"는 통과)을 한다.
+
+```mermaid
+flowchart TD
+    subgraph SLEEP["잠 · SLEEP — STT 꺼짐, KWS만 청취 (저전력)"]
+        K(["웨이크워드 (KWS)<br/>「야 일어나」 · 파형 감지"])
+    end
+
+    subgraph ACTIVE["깨어있음 · ACTIVE — STT 켜짐, 대화 세션 유지"]
+        STT["사용자 발화 → STT<br/>음성 → 텍스트"]
+        GATE{"검문① 텍스트 게이트<br/>발화 전체가 명령인가?"}
+        LLM["두뇌 (LLM) → 음성 답변<br/>무엇을 말할지"]
+    end
+
+    K -- "웨이크워드 감지 → 깨어남" --> STT
+    STT --> GATE
+    GATE -- "일반 대화 (통과)" --> LLM
+    LLM -- "다음 발화" --> STT
+    GATE -- "수면명령 「자라」" --> SLEEP
+
+    classDef gate fill:#EEEDFE,stroke:#534AB7,color:#26215C;
+    style SLEEP fill:#F1EFE8,stroke:#5F5E5A,color:#2C2C2A
+    style ACTIVE fill:#E1F5EE,stroke:#0F6E56,color:#04342C
+    class K,GATE gate
+```
+
+> 미결(D7·D12): 웨이크워드 창 단위 — 발화 1건(알렉사식)인지, 세션+무음 타임아웃(반려자식)인지.
+> 정체성("실시간 대화")상 세션형이 유력하나 실구동 튜닝 영역이다.
+
 ---
 
 ## 6. 데이터 모델 (논리 스키마 — DB 엔진 무관)
