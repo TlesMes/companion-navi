@@ -38,9 +38,29 @@ class MouthConfig:
 
 
 @dataclass(frozen=True)
+class WakeWordConfig:
+    """웨이크워드(D7) 설정. access_key는 비밀(.env), 키워드·모델 파일은 경로(커밋 금지).
+
+    파일이 아직 없어도(키 미발급) Config는 만들어진다 — 실제 사용은 CLI --wakeword 줄 때만.
+    """
+
+    access_key: str | None
+    keyword_path: str | None
+    model_path: str | None
+    sensitivity: float
+    active_timeout_ms: int
+
+    @property
+    def ready(self) -> bool:
+        """엔진을 띄울 수 있는 최소 조건 — 키와 키워드 파일 경로가 있는가."""
+        return bool(self.access_key and self.keyword_path)
+
+
+@dataclass(frozen=True)
 class Config:
     brain: BrainConfig
     mouth: MouthConfig
+    wakeword: WakeWordConfig
     db_path: Path
     recent_turns: int
     persona_card_path: Path
@@ -78,6 +98,20 @@ def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
     return MouthConfig(vendor=vendor, voice=voice, options=options)
 
 
+def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
+    ww = raw.get("ear", {}).get("wakeword", {})
+    kw_path = ww.get("keyword_path")
+    model_path = ww.get("model_path")
+    return WakeWordConfig(
+        access_key=os.getenv("PICOVOICE_ACCESS_KEY") or None,
+        # .ppn/.pv는 비밀 파일 — 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해).
+        keyword_path=_resolve(root, kw_path) if kw_path else None,
+        model_path=_resolve(root, model_path) if model_path else None,
+        sensitivity=float(ww.get("sensitivity", 0.5)),
+        active_timeout_ms=int(ww.get("active_timeout_ms", 30000)),
+    )
+
+
 def load_config(
     root: Path | None = None,
     *,
@@ -100,6 +134,7 @@ def load_config(
             models=dict(raw["brain"]["models"]),
         ),
         mouth=_load_mouth(root, raw),
+        wakeword=_load_wakeword(root, raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
         persona_card_path=root / (persona_card or raw["persona"]["card_path"]),

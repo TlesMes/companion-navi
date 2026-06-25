@@ -37,6 +37,17 @@ mouth:
     ref_lang: ja                    # 레퍼런스 음원 언어
     gen_lang: ja                    # 합성 출력 언어 (한국어 ref 확보 시 ko)
 
+ear:
+  # 웨이크워드(D7) — SLEEP에선 STT를 끄고 파형에서 호출어만 잡는다(arch 5.1·D16).
+  # CLI --wakeword 줄 때만 청취축이 켜진다. 키 없이도 데몬은 뜨고, --wakeword만 막힌다.
+  wakeword:
+    # access_key는 비밀 → .env의 PICOVOICE_ACCESS_KEY. 아래 .ppn/.pv는 비밀 파일이라 커밋 금지
+    # (secrets/는 .gitignore). 한국어 키워드는 .ppn + 한국어 모델(.pv) 둘 다 필요.
+    keyword_path: secrets/navi_ko.ppn               # Picovoice 콘솔에서 생성한 한국어 깨우기 문구
+    model_path: secrets/porcupine_params_ko.pv      # 한국어 언어 모델
+    sensitivity: 0.5                                # 0~1, 높을수록 민감(오수락↑)
+    active_timeout_ms: 30000                        # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
+
 db:
   path: navi.db
 
