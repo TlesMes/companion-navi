@@ -106,12 +106,16 @@ class PorcupineWakeWord(WakeWord):
 class VoskWakeWord(WakeWord):
     """Vosk(Kaldi) 키워드 스팟팅 — D7 채택 엔진. 학습·키·계정 불필요, 순수 CPU.
 
-    제한 문법(grammar)으로 어휘를 호출어+[unk]로 묶어, 지정 문구를 말할 때만 잡는다 —
-    whisper처럼 임의 텍스트를 환각하지 않는다(검문①의 짧은 발화 환각 문제를 구조적으로 회피).
-    한국어 모델 디렉터리(model_path)와 호출어 문구(keywords)만 있으면 된다.
+    전체 인식 + 호출어 포함 매칭으로 호출어를 잡는다 — 우리 검문①(작은 인식+텍스트 매칭)과
+    동일 방식. 한국어 모델 디렉터리(model_path)와 호출어 문구(keywords)만 있으면 된다.
 
-    AcceptWaveform이 발화 끝(무음)에서 True를 내면 그 구간 인식 결과가 호출어와 일치하는지
-    본다 — 호출어를 말하고 잠깐 멈추면 깨어난다. 즉시성(부분결과 감지)은 추후 튜닝(D12).
+    왜 grammar 제한이 아니라 전체 인식인가: Vosk grammar의 `[unk]`(비호출어 흡수용 토큰)를
+    small-ko 모델이 어휘에 안 갖고 있어 무시된다 → grammar가 호출어 하나로 좁혀져 아무 말이나
+    호출어로 강제 매칭(오수락 폭주)된다. 전체 인식은 임의 발화를 정상 전사하고 그 안에서 호출어를
+    찾으므로 이 함정이 없다. 비호출어 발화의 전사는 그냥 버린다(SLEEP에선 LLM으로 안 보냄).
+
+    AcceptWaveform이 발화 끝(무음)에서 True를 내면 그 구간 전사에 호출어가 들어있는지 본다 —
+    호출어를 말하고 잠깐 멈추면 깨어난다. 즉시성(부분결과 감지)은 추후 튜닝(D12).
 
     vosk는 .venv-voice에만 설치되므로 지연 임포트한다(sounddevice·STT와 동일 규약).
     """
@@ -130,10 +134,8 @@ class VoskWakeWord(WakeWord):
             raise ValueError("VoskWakeWord: keywords가 비어 있습니다")
         self._sr = sample_rate
         self._frame_length = frame_length
-        self._targets = frozenset(_strip_spaces(k) for k in keywords)
-        # grammar: 호출어만 인식하도록 어휘 제한(+[unk]는 그 외 발화 흡수)
-        grammar = json.dumps(list(keywords) + ["[unk]"], ensure_ascii=False)
-        self._rec = KaldiRecognizer(Model(model_path), sample_rate, grammar)
+        self._targets = tuple(_strip_spaces(k) for k in keywords)
+        self._rec = KaldiRecognizer(Model(model_path), sample_rate)
 
     @property
     def frame_length(self) -> int:
@@ -145,8 +147,8 @@ class VoskWakeWord(WakeWord):
 
     def detect(self, chunk: AudioChunk) -> bool:
         if self._rec.AcceptWaveform(chunk.pcm):  # 발화 한 구간 종료
-            text = json.loads(self._rec.Result()).get("text", "")
-            return _strip_spaces(text) in self._targets
+            text = _strip_spaces(json.loads(self._rec.Result()).get("text", ""))
+            return any(t in text for t in self._targets)
         return False
 
 
