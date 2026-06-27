@@ -27,8 +27,11 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
             options={},
         ),
         wakeword=WakeWordConfig(
-            engine="vosk",
+            engine="openwakeword",
             keywords=(),
+            owww_model_path=None,
+            owww_model_name="hey_jarvis",
+            threshold=0.5,
             vosk_model_path=None,
             access_key=None,
             keyword_path=None,

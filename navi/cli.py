@@ -102,7 +102,7 @@ async def chat(
     if wakeword and not config.wakeword.ready:
         print(
             "[웨이크워드 설정 미비 — config.yaml ear.wakeword 확인 "
-            "(vosk: 모델 경로+호출어 / porcupine: .env PICOVOICE_ACCESS_KEY+키워드)]"
+            "(openwakeword: model_name 또는 model_path / vosk: 모델+호출어 / porcupine: 키+키워드)]"
         )
         store.close()
         return
@@ -278,6 +278,13 @@ def _build_wakeword(cfg):
     """WakeWordConfig → WakeWord 어댑터. engine 한 줄로 엔진을 가른다(벤더 종속 금지)."""
     from navi.ear import create_wakeword
 
+    if cfg.engine == "openwakeword":
+        return create_wakeword(
+            "openwakeword",
+            model_path=cfg.owww_model_path,
+            model_name=cfg.owww_model_name,
+            threshold=cfg.threshold,
+        )
     if cfg.engine == "vosk":
         return create_wakeword("vosk", model_path=cfg.vosk_model_path, keywords=cfg.keywords)
     if cfg.engine == "porcupine":
@@ -288,7 +295,9 @@ def _build_wakeword(cfg):
             model_path=cfg.model_path,
             sensitivity=cfg.sensitivity,
         )
-    raise ValueError(f"알 수 없는 wakeword engine: {cfg.engine!r} (vosk | porcupine)")
+    raise ValueError(
+        f"알 수 없는 wakeword engine: {cfg.engine!r} (openwakeword | vosk | porcupine)"
+    )
 
 
 async def _listen_wakeword(

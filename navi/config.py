@@ -39,7 +39,7 @@ class MouthConfig:
 
 @dataclass(frozen=True)
 class WakeWordConfig:
-    """웨이크워드(D7) 설정. engine으로 엔진 선택 — vosk(채택) | porcupine(보존).
+    """웨이크워드(D7) 설정. engine으로 엔진 선택 — openwakeword(채택) | vosk | porcupine(보존).
 
     모델·키 파일이 아직 없어도 Config는 만들어진다 — 실제 사용은 CLI --wakeword 줄 때만.
     porcupine의 access_key는 비밀(.env), 모델·키워드 파일 경로는 secrets/(커밋 금지).
@@ -47,6 +47,11 @@ class WakeWordConfig:
 
     engine: str
     keywords: tuple[str, ...]
+    # openWakeWord (채택)
+    owww_model_path: str | None  # 커스텀 한국어 .onnx
+    owww_model_name: str | None  # 내장 영어 모델(예 "hey_jarvis") — 런타임 검증용
+    threshold: float
+    # Vosk
     vosk_model_path: str | None
     # Porcupine 전용 (보존)
     access_key: str | None
@@ -58,6 +63,11 @@ class WakeWordConfig:
     @property
     def ready(self) -> bool:
         """선택한 엔진을 띄울 수 있는 최소 조건 — 모델/키 파일이 실제로 있는가까지 본다."""
+        if self.engine == "openwakeword":
+            # 커스텀 .onnx면 실존까지, 내장 영어 모델명이면 이름만으로 충분(런타임 검증용).
+            if self.owww_model_path:
+                return Path(self.owww_model_path).exists()
+            return bool(self.owww_model_name)
         if self.engine == "vosk":
             return bool(
                 self.keywords
@@ -117,15 +127,20 @@ def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
 
 def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
     ww = raw.get("ear", {}).get("wakeword", {})
+    owww = ww.get("openwakeword", {})
     vosk = ww.get("vosk", {})
     porc = ww.get("porcupine", {})
+    owww_model = owww.get("model_path")
     vosk_model = vosk.get("model_path")
     pkw = porc.get("keyword_path")
     pmodel = porc.get("model_path")
     # 모델·키 파일은 secrets/ — 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해).
     return WakeWordConfig(
-        engine=ww.get("engine", "vosk"),
-        keywords=tuple(ww.get("keywords") or ()),
+        engine=ww.get("engine", "openwakeword"),
+        keywords=tuple(vosk.get("keywords") or ()),  # Vosk 전용(호출어 포함 매칭)
+        owww_model_path=_resolve(root, owww_model) if owww_model else None,
+        owww_model_name=owww.get("model_name") or None,
+        threshold=float(owww.get("threshold", 0.5)),
         vosk_model_path=_resolve(root, vosk_model) if vosk_model else None,
         access_key=os.getenv("PICOVOICE_ACCESS_KEY") or None,
         keyword_path=_resolve(root, pkw) if pkw else None,

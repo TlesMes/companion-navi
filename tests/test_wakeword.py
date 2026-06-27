@@ -11,6 +11,7 @@ import pytest
 
 from navi.ear import FakeWakeWord, WakeWord, create_wakeword
 from navi.ear.wakeword import (
+    OpenWakeWordWakeWord,
     PorcupineWakeWord,
     VoskWakeWord,
     _pcm_to_samples,
@@ -132,3 +133,32 @@ def test_create_wakeword_vosk_lazy_imports_engine():
 
 def test_vosk_is_wakeword_subclass():
     assert issubclass(VoskWakeWord, WakeWord)
+
+
+# --- openWakeWord (채택 엔진) ---
+
+
+def test_create_wakeword_openwakeword_lazy_imports_engine():
+    # openwakeword 미설치 환경: 인스턴스화 시점에야 import 시도(지연 임포트) → 팩토리 임포트는 안 깨짐.
+    try:
+        import openwakeword  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError):
+            create_wakeword("openwakeword", model_name="hey_jarvis")
+    else:
+        pytest.skip("openwakeword 설치됨 — 실모델 로드는 단독 스크립트가 검증")
+
+
+def test_openwakeword_is_wakeword_subclass():
+    assert issubclass(OpenWakeWordWakeWord, WakeWord)
+
+
+def test_create_wakeword_default_is_openwakeword_branch():
+    # 기본 kind가 openwakeword로 바뀐 것 확인(미설치면 ImportError, 설치면 인스턴스 — 둘 다 분기 도달).
+    try:
+        import openwakeword  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError):
+            create_wakeword(model_name="hey_jarvis")
+    else:
+        pytest.skip("openwakeword 설치됨")

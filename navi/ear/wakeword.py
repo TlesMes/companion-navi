@@ -170,6 +170,62 @@ class VoskWakeWord(WakeWord):
         return False
 
 
+class OpenWakeWordWakeWord(WakeWord):
+    """openWakeWord 어댑터 — D7 채택 엔진. 계정·키·만료 없는 오프라인 KWS(.onnx).
+
+    진짜 음향 KWS다(ASR 아님 → 전사 품질 문제 없음). 16kHz·80ms(1280샘플) 프레임 → 0~1 점수,
+    임계 넘으면 호출어. 커스텀 한국어 모델(model_path=.onnx)이 없으면 내장 영어 모델(model_name,
+    예 "hey_jarvis")로 런타임을 검증할 수 있다 — 모델 품질과 런타임이 분리된다.
+
+    특징모델(melspectrogram·embedding)은 최초 1회 다운로드되며 이후 predict는 네트워크 0(로컬
+    onnxruntime). download_models는 파일이 있으면 즉시 통과해 오프라인에서도 안전하다.
+
+    openwakeword·numpy는 .venv-voice에만 있으므로 지연 임포트한다(sounddevice·vosk와 동일 규약).
+    """
+
+    def __init__(
+        self,
+        *,
+        model_path: str | None = None,
+        model_name: str | None = None,
+        threshold: float = 0.5,
+        frame_length: int = 1280,
+        sample_rate: int = 16000,
+    ) -> None:
+        import numpy as np
+        import openwakeword
+        from openwakeword.model import Model
+
+        openwakeword.utils.download_models()  # 특징모델 1회(있으면 즉시 통과 — 오프라인 안전)
+        self._np = np
+        self._threshold = threshold
+        self._frame_length = frame_length
+        self._sr = sample_rate
+        target = model_path or model_name  # 커스텀 .onnx 우선, 없으면 내장 이름
+        kwargs = {"inference_framework": "onnx"}
+        if target:
+            kwargs["wakeword_models"] = [target]
+        self._model = Model(**kwargs)
+
+    @property
+    def frame_length(self) -> int:
+        return self._frame_length
+
+    @property
+    def sample_rate(self) -> int:
+        return self._sr
+
+    def detect(self, chunk: AudioChunk) -> bool:
+        samples = self._np.frombuffer(chunk.pcm, dtype=self._np.int16)
+        scores = self._model.predict(samples)
+        best = max(scores.values()) if scores else 0.0
+        if best >= self._threshold:
+            log.debug("openWakeWord 호출어 감지 — 점수 %.3f", best)
+            self._model.reset()  # 예측 이력 초기화 — 같은 발화로 다음 프레임에 재발화 방지
+            return True
+        return False
+
+
 class FakeWakeWord(WakeWord):
     """외부 의존 0 — 테스트·키 없는 환경용. detect_at(N번째 호출) 또는 trigger(콜백)로 발화.
 

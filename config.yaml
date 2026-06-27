@@ -41,16 +41,20 @@ ear:
   # 웨이크워드(D7) — SLEEP에선 STT를 끄고 파형에서 호출어만 잡는다(arch 5.1·D16).
   # CLI --wakeword 줄 때만 청취축이 켜진다. 모델 없이도 데몬은 뜨고, --wakeword만 막힌다.
   wakeword:
-    engine: vosk                # vosk(채택, 학습·키 불필요) | porcupine(보존, 콘솔 가입 필요)
-    keywords: ["야 일어나"]      # 호출어 — 길고 또렷하게(짧으면 오수락↑). 여러 개 가능.
+    # openwakeword(채택, 오프라인 음향 KWS·계정없음) | vosk(ASR 스팟팅·한국어 약함) | porcupine(보존)
+    engine: openwakeword
     active_timeout_ms: 30000    # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
-    vosk:
-      # 한국어 모델 디렉터리 — alphacephei.com/vosk/models 에서 받아 secrets/에 압축 해제.
-      # secrets/는 .gitignore. 작은 모델: vosk-model-small-ko-0.22
-      model_path: secrets/vosk-model-small-ko
-    porcupine:                  # 보존 — Picovoice 콘솔 가입(회사 이메일) 시에만. .env PICOVOICE_ACCESS_KEY
-      keyword_path: secrets/navi_ko.ppn             # 콘솔 생성 한국어 .ppn
-      model_path: secrets/porcupine_params_ko.pv    # 한국어 언어 모델 .pv
+    openwakeword:
+      # 한국어 커스텀 모델(.onnx) — Track B에서 학습해 secrets/에 둔다(아직 없음).
+      # model_path: secrets/navi_ko.onnx
+      model_name: hey_jarvis    # 내장 영어 모델 — 런타임(검증2·3)용. 한국어 .onnx 생기면 model_path로 교체.
+      threshold: 0.5            # 0~1, 높을수록 엄격(오수락↓·누락↑)
+    vosk:                       # ASR 기반 스팟팅(보존). keywords에 호출어 문구(포함 매칭).
+      model_path: secrets/vosk-model-small-ko       # alphacephei.com/vosk/models, secrets/에 압축 해제
+      keywords: ["야 일어나", "여 일어나", "예 일어나"]
+    porcupine:                  # 보존 — Picovoice 무료 종료(2026-06-30)·가입 장벽으로 사실상 폐기
+      keyword_path: secrets/navi_ko.ppn
+      model_path: secrets/porcupine_params_ko.pv
       sensitivity: 0.5
 
 db:
