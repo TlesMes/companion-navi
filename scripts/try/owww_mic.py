@@ -20,6 +20,8 @@ def main() -> None:
     ap.add_argument("--model", default="hey_jarvis", help="내장 모델 이름 또는 .onnx 경로")
     ap.add_argument("--mic", type=int, default=None, help="입력 장치 번호(목록: scripts/mic_check.py)")
     ap.add_argument("--threshold", type=float, default=0.5, help="감지 임계 0~1")
+    ap.add_argument("--vad-threshold", type=float, default=0.0,
+                    help=">0이면 Silero VAD로 침묵 중 추론 스킵(idle CPU↓). 0=끔")
     ap.add_argument("--cpu-interval", type=float, default=2.0, help="CPU%% 출력 주기(초)")
     args = ap.parse_args()
 
@@ -33,8 +35,15 @@ def main() -> None:
 
     print("[특징모델 준비 중…]", flush=True)
     openwakeword.utils.download_models()  # 있으면 즉시 통과(오프라인 안전)
-    model = Model(wakeword_models=[args.model], inference_framework="onnx")
-    print(f"[모델 로드: {args.model} | 임계 {args.threshold}]", flush=True)
+    model = Model(
+        wakeword_models=[args.model],
+        inference_framework="onnx",
+        vad_threshold=args.vad_threshold,
+    )
+    print(
+        f"[모델 로드: {args.model} | 임계 {args.threshold} | VAD {args.vad_threshold}]",
+        flush=True,
+    )
 
     frames: queue.Queue[bytes] = queue.Queue()
 

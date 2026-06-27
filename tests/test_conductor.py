@@ -32,6 +32,7 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
             owww_model_path=None,
             owww_model_name="hey_jarvis",
             threshold=0.5,
+            vad_threshold=0.0,
             vosk_model_path=None,
             access_key=None,
             keyword_path=None,

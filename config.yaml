@@ -49,6 +49,7 @@ ear:
       # model_path: secrets/navi_ko.onnx
       model_name: hey_jarvis    # 내장 영어 모델 — 런타임(검증2·3)용. 한국어 .onnx 생기면 model_path로 교체.
       threshold: 0.5            # 0~1, 높을수록 엄격(오수락↓·누락↑)
+      vad_threshold: 0.5        # >0이면 Silero VAD가 침묵 중 추론 스킵(idle CPU↓·소음 오수락↓). 0=끔
     vosk:                       # ASR 기반 스팟팅(보존). keywords에 호출어 문구(포함 매칭).
       model_path: secrets/vosk-model-small-ko       # alphacephei.com/vosk/models, secrets/에 압축 해제
       keywords: ["야 일어나", "여 일어나", "예 일어나"]

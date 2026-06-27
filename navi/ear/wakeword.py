@@ -189,6 +189,7 @@ class OpenWakeWordWakeWord(WakeWord):
         model_path: str | None = None,
         model_name: str | None = None,
         threshold: float = 0.5,
+        vad_threshold: float = 0.0,
         frame_length: int = 1280,
         sample_rate: int = 16000,
     ) -> None:
@@ -202,7 +203,9 @@ class OpenWakeWordWakeWord(WakeWord):
         self._frame_length = frame_length
         self._sr = sample_rate
         target = model_path or model_name  # 커스텀 .onnx 우선, 없으면 내장 이름
-        kwargs = {"inference_framework": "onnx"}
+        # vad_threshold>0: Silero VAD가 침묵 구간엔 무거운 임베딩 추론을 건너뛴다 → SLEEP(대부분
+        # 침묵) idle CPU↓ + 소음 오수락↓. 우리 상시 청취에 맞는 게이팅.
+        kwargs = {"inference_framework": "onnx", "vad_threshold": vad_threshold}
         if target:
             kwargs["wakeword_models"] = [target]
         self._model = Model(**kwargs)

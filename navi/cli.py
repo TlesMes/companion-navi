@@ -284,6 +284,7 @@ def _build_wakeword(cfg):
             model_path=cfg.owww_model_path,
             model_name=cfg.owww_model_name,
             threshold=cfg.threshold,
+            vad_threshold=cfg.vad_threshold,
         )
     if cfg.engine == "vosk":
         return create_wakeword("vosk", model_path=cfg.vosk_model_path, keywords=cfg.keywords)

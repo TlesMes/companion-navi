@@ -51,6 +51,7 @@ class WakeWordConfig:
     owww_model_path: str | None  # 커스텀 한국어 .onnx
     owww_model_name: str | None  # 내장 영어 모델(예 "hey_jarvis") — 런타임 검증용
     threshold: float
+    vad_threshold: float  # >0이면 Silero VAD로 침묵 구간 추론 스킵(idle CPU↓)
     # Vosk
     vosk_model_path: str | None
     # Porcupine 전용 (보존)
@@ -141,6 +142,7 @@ def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
         owww_model_path=_resolve(root, owww_model) if owww_model else None,
         owww_model_name=owww.get("model_name") or None,
         threshold=float(owww.get("threshold", 0.5)),
+        vad_threshold=float(owww.get("vad_threshold", 0.0)),
         vosk_model_path=_resolve(root, vosk_model) if vosk_model else None,
         access_key=os.getenv("PICOVOICE_ACCESS_KEY") or None,
         keyword_path=_resolve(root, pkw) if pkw else None,
