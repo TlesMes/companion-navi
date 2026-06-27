@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import array
 import json
+import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
 from navi.models import AudioChunk
+
+log = logging.getLogger(__name__)
 
 
 def _strip_spaces(text: str) -> str:
