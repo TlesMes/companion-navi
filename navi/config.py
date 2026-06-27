@@ -51,7 +51,7 @@ class WakeWordConfig:
     owww_model_path: str | None  # 커스텀 한국어 .onnx
     owww_model_name: str | None  # 내장 영어 모델(예 "hey_jarvis") — 런타임 검증용
     threshold: float
-    vad_threshold: float  # >0이면 Silero VAD로 침묵 구간 추론 스킵(idle CPU↓)
+    vad_threshold: float  # >0이면 Silero VAD로 비음성 출력 억제(오탐↓). CPU 절감 아님(D15 참조)
     # Vosk
     vosk_model_path: str | None
     # Porcupine 전용 (보존)
