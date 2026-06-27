@@ -25,12 +25,12 @@
 - **엔진 결정 경위 — Porcupine → Vosk:**
   - 1차안 Porcupine(D7 원안, 온디바이스·한국어 내장)으로 어댑터까지 구현. 그러나 **Picovoice 콘솔 가입이 회사 이메일을 요구**해 개인 Gmail 차단 — 무료 AccessKey 발급 불가 판명(블로그/FAQ상 free-forever와 실제 가입 화면이 불일치).
   - openWakeWord 검토: 한국어 커스텀 모델은 **GPU 학습 프로젝트**(WSL2+CUDA, Piper 한국어 합성) + 구글 오디오 임베딩 영어 편향 경고 → ROCm 죽은 CPU-only 환경엔 부담 과다.
-  - **채택: Vosk 키워드 스팟팅.** 학습0·CPU·한국어 모델 존재. 제한 문법(grammar)으로 지정 문구만 인식 → whisper식 환각 없음(검문① 짧은발화 환각 문제 구조적 회피). SLEEP=가벼운 Vosk / ACTIVE=무거운 whisper의 2단 구성. 우리 검문①(작은 인식+텍스트 매칭) 철학과 동일. 콘센트 PC라 상시 인식 부담은 D15가 수용 판정.
+  - **채택: Vosk(ASR 기반 스팟팅).** 학습0·CPU·한국어 모델 존재. **주의 — Vosk는 진짜 음향 KWS가 아니라 작은 ASR이다.** 당초 grammar 제한(호출어+[unk])으로 KWS처럼 쓰려 했으나 small-ko가 [unk]를 어휘에 안 가져 무시 → grammar가 호출어 하나로 좁혀져 강제 매칭(오수락 폭주). 그래서 **전체 인식 후 전사에서 호출어 포함 매칭**으로 전환(검문①과 같은 방식, 모델만 경량). 결과적으로 SLEEP=경량 ASR(Vosk) / ACTIVE=무거운 whisper의 2단. 콘센트 PC라 상시 인식 부담은 D15가 수용. **함의:** arch 5.1의 "SLEEP=STT 꺼짐"은 엄밀히는 "무거운 STT 꺼짐+경량 ASR 켜짐"으로 읽어야 한다(진짜 텍스트-없는 KWS는 Porcupine/openWakeWord 회귀 시).
   - **화자 인증 제외(아무나 깨어남):** 빅스비식 "내 음성으로 깨우기"(화자 인증 2층)는 v1 제외. 문구 탐지(1층)만. 주인 한정은 후순위.
   - Porcupine 어댑터는 **벤더중립 증명·향후 회사이메일 확보 시 사용** 위해 보존. `WakeWord` 계약 덕에 엔진 교체는 어댑터 1개 + 팩토리/설정 한 줄.
 - **프레임 통일(설계 정리):** 엔진이 요구하는 고정 프레임을 어댑터 내부 재정렬 대신 `WakeWord.frame_length` 선언으로 흡수 — 마이크 blocksize·Endpointer frame_ms를 거기 맞춤(EnergyVad는 프레임 크기 무관). `mic.py`에 raw `frames()` 분리, `utterances()`는 그 위에 재구성.
 - **수면 명령 거취(검문① KWS 재검토):** 텍스트 게이트 **유지**, KWS는 깨우기 전용. 두 게이트는 상보(arch 5.1) — KWS=SLEEP 입구(파형), 검문①=ACTIVE 변별("나 이제 자라는 통과").
-- **Vosk 어댑터 구현 완료:** `VoskWakeWord`([navi/ear/wakeword.py](../navi/ear/wakeword.py)) — KaldiRecognizer 제한 문법(`호출어+[unk]`), AcceptWaveform 구간 종료에서 호출어 일치 판정(공백 정규화). config는 `ear.wakeword.engine` 스위치로 일반화(vosk/porcupine 공존), `create_wakeword("vosk")` 분기. `ready`는 모델 디렉터리 실존까지 확인, 미설치/미존재면 친절 안내 후 종료.
+- **Vosk 어댑터 구현 완료:** `VoskWakeWord`([navi/ear/wakeword.py](../navi/ear/wakeword.py)) — KaldiRecognizer 전체 인식, 전사를 공백 정규화해 호출어 포함 매칭. config는 `ear.wakeword.engine` 스위치로 일반화(vosk/porcupine 공존), `create_wakeword("vosk")` 분기. `ready`는 모델 디렉터리 실존까지 확인, 미설치/미존재면 친절 안내 후 종료.
 - **검증:** 유닛(FakeWakeWord+가짜 프레임+가짜 시계)으로 SLEEP→ACTIVE→발화→타임아웃→재기상, 검문①→SLEEP복귀 전 사이클 + Vosk 지연임포트·팩토리(89 테스트 green).
 - **남음(사용자 셋업 후):** `.venv-voice`에 `pip install vosk` + 한국어 모델(vosk-model-small-ko) 받아 `secrets/`에 압축해제 → 실마이크 E2E(`--listen --voice --wakeword`).
 

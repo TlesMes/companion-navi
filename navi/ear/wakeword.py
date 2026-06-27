@@ -1,8 +1,14 @@
-"""웨이크워드(KWS) 계약 + Porcupine 구현 (arch 4.1 입력 깔때기 · D7).
+"""웨이크워드 계약 + 어댑터 (arch 4.1 입력 깔때기 · D7).
 
-파형에서 호출어("야 일어나")를 직접 잡는다 — STT가 꺼진 SLEEP에선 텍스트가 없어 KWS만이
-청취축(마이크→STT→LLM 문)을 여는 입구다(arch 5.1·D16). 벤더(Porcupine·openWakeWord…)는
+호출어("야 일어나")를 잡아 청취축(마이크→STT→LLM 문)을 여는 입구다(arch 5.1·D16). 벤더는
 이 계약 뒤에 숨는다 — 청취 루프는 detect(bool)로만 대화한다(Vad와 동일 규약, 벤더 종속 금지).
+
+호출어 감지에는 두 갈래가 있고, 계약은 둘 다 수용한다:
+  - **음향 KWS** (PorcupineWakeWord): 파형 → "호출어 점수" 직접 출력. 텍스트 없음. SLEEP에서
+    ASR을 안 돌리는 진짜 spotting. 단 Porcupine은 콘솔 가입(회사 이메일) 장벽으로 보류.
+  - **ASR 기반 스팟팅** (VoskWakeWord, 채택): 작은 ASR로 전사 → 그 텍스트에서 호출어를 찾는다.
+    텍스트가 나온다(검문①과 같은 방식, 모델만 경량). 따라서 채택안에서 SLEEP은 'STT 꺼짐'이
+    아니라 '무거운 STT(whisper) 꺼짐 + 경량 ASR(Vosk) 켜짐'의 2단이다.
 
 프레임 크기는 어댑터에서 슬라이싱하지 않고 통일한다: 엔진이 frame_length(샘플 수)를 선언하면
 마이크 blocksize·Endpointer frame_ms를 거기 맞춘다. 우리 1순위 VAD(EnergyVad)는 순수 RMS라
@@ -114,8 +120,10 @@ class VoskWakeWord(WakeWord):
     호출어로 강제 매칭(오수락 폭주)된다. 전체 인식은 임의 발화를 정상 전사하고 그 안에서 호출어를
     찾으므로 이 함정이 없다. 비호출어 발화의 전사는 그냥 버린다(SLEEP에선 LLM으로 안 보냄).
 
-    AcceptWaveform이 발화 끝(무음)에서 True를 내면 그 구간 전사에 호출어가 들어있는지 본다 —
-    호출어를 말하고 잠깐 멈추면 깨어난다. 즉시성(부분결과 감지)은 추후 튜닝(D12).
+    부분결과(partial)까지 본다: 발화 끝(AcceptWaveform=True)을 기다리지 않고, 말하는 도중
+    인식 가설에 호출어가 뜨는 순간 잡는다 → recall↑·지연↓(발화가 깔끔히 안 끊겨도 잡힘).
+    매칭 후 Reset으로 같은 부분결과의 연속 재발화를 막는다. 전사는 DEBUG 로그로 남겨 -vv로
+    호출어가 실제 뭘로 들리는지 보고 keywords 변이형을 채울 수 있게 한다(인식률 튜닝).
 
     vosk는 .venv-voice에만 설치되므로 지연 임포트한다(sounddevice·STT와 동일 규약).
     """
@@ -146,9 +154,16 @@ class VoskWakeWord(WakeWord):
         return self._sr
 
     def detect(self, chunk: AudioChunk) -> bool:
-        if self._rec.AcceptWaveform(chunk.pcm):  # 발화 한 구간 종료
+        if self._rec.AcceptWaveform(chunk.pcm):  # 발화 한 구간 종료 → 최종 전사
             text = _strip_spaces(json.loads(self._rec.Result()).get("text", ""))
-            return any(t in text for t in self._targets)
+            if text:
+                log.debug("Vosk 전사: %r", text)  # 튜닝용 — keywords 변이형 채우기
+        else:  # 발화 중 — 부분 가설에서 미리 잡는다
+            text = _strip_spaces(json.loads(self._rec.PartialResult()).get("partial", ""))
+        if text and any(t in text for t in self._targets):
+            log.debug("호출어 일치: %r", text)
+            self._rec.Reset()  # 같은 부분결과로 다음 프레임에 또 발화하지 않게 초기화
+            return True
         return False
 
 
