@@ -20,21 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from navi.models import VoiceProfile
 from navi.mouth.base import MouthAdapter
+from navi.mouth.sentence import SENTENCE_END
 
 if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
-
-# 문장 종결 부호 뒤에서 자른다 — 한국어/영어 공통(마침표·물음·느낌·말줄임·줄바꿈).
-# 닫는 따옴표·괄호가 뒤따르면 함께 포함한다. 소수점(3.5)에서 끊기지 않도록 뒤에 공백/끝을 요구.
-_SENTENCE_END = re.compile(r'.*?[.!?。…\n]+["”\')\]]*(?=\s|$)', re.DOTALL)
 
 
 class SupertonicMouth(MouthAdapter):
@@ -132,7 +128,7 @@ class SupertonicMouth(MouthAdapter):
                     break
                 buf += token
                 # 버퍼에서 완성된 문장을 가능한 만큼 꺼내 합성한다
-                while (m := _SENTENCE_END.match(buf)) is not None:
+                while (m := SENTENCE_END.match(buf)) is not None:
                     sentence = m.group().strip()
                     buf = buf[m.end():]
                     if sentence:

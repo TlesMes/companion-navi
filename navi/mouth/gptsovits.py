@@ -34,17 +34,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 import sys
 from collections.abc import AsyncIterator
 from typing import Any
 
 from navi.models import VoiceProfile
 from navi.mouth.base import MouthAdapter
+from navi.mouth.sentence import SENTENCE_END
 
 logger = logging.getLogger(__name__)
 
-_SENTENCE_END = re.compile(r".*?[.!?。…\n]+[\"'”’)\]]*(?=\s|$)", re.DOTALL)
 _OUTPUT_SR = 32_000  # GPT-SoVITS 기본 출력 샘플레이트
 
 # 언어 코드 → i18n 소스 문자열 (dict_language 키와 일치)
@@ -242,7 +241,7 @@ class GPTSoVITSMouth(MouthAdapter):
                     break
                 buf += tok
                 while True:
-                    m = _SENTENCE_END.match(buf)
+                    m = SENTENCE_END.match(buf)
                     if not m:
                         break
                     chunk_text = m.group(0).strip()  # 문장 사이 공백 제거(supertonic과 일관)

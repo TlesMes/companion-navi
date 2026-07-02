@@ -20,19 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from navi.models import VoiceProfile
 from navi.mouth.base import MouthAdapter
+from navi.mouth.sentence import SENTENCE_END
 
 if TYPE_CHECKING:
     import numpy as np
 
 logger = logging.getLogger(__name__)
-
-_SENTENCE_END = re.compile(r".*?[.!?。…\n]+[""\')\]]*(?=\s|$)", re.DOTALL)
 
 
 class F5TTSMouth(MouthAdapter):
@@ -78,7 +76,7 @@ class F5TTSMouth(MouthAdapter):
                     break
                 buf += tok
                 while True:
-                    m = _SENTENCE_END.match(buf)
+                    m = SENTENCE_END.match(buf)
                     if not m:
                         break
                     chunk_text = m.group(0)
