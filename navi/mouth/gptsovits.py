@@ -36,6 +36,7 @@ import logging
 import os
 import re
 import sys
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -228,12 +229,34 @@ class GPTSoVITSMouth(MouthAdapter):
         self._playing = True
         audio_q: asyncio.Queue[Any] = asyncio.Queue()
         _DONE = object()
+        # 속도 계측 기준점 — run_turn의 스트림 시작(≈ STT 완료 직후)과 사실상 같다
+        t0 = time.perf_counter()
+        first_sentence_done = False
+        first_synth_done = False
 
         def _synth(text: str) -> Any:
             return _synth_one(
                 tts_fn, ref_path, self._ref_text, text,
                 self._prompt_lang, self._text_lang, self._how_to_cut,
             )
+
+        async def _synth_and_queue(text: str) -> None:
+            nonlocal first_sentence_done, first_synth_done
+            if not first_sentence_done:
+                first_sentence_done = True
+                logger.debug(
+                    "첫 문장 확정 +%.0fms (%d자)",
+                    (time.perf_counter() - t0) * 1000, len(text),
+                )
+            wav = await asyncio.to_thread(_synth, text)
+            if wav is not None:
+                if not first_synth_done:
+                    first_synth_done = True
+                    logger.debug(
+                        "첫 문장 합성 완료 +%.0fms (%.2fs 오디오)",
+                        (time.perf_counter() - t0) * 1000, len(wav) / _OUTPUT_SR,
+                    )
+                await audio_q.put(wav)
 
         async def _synth_worker() -> None:
             buf = ""
@@ -248,24 +271,26 @@ class GPTSoVITSMouth(MouthAdapter):
                     chunk_text = m.group(0).strip()  # 문장 사이 공백 제거(supertonic과 일관)
                     buf = buf[m.end():]
                     if chunk_text:
-                        wav = await asyncio.to_thread(_synth, chunk_text)
-                        if wav is not None:
-                            await audio_q.put(wav)
+                        await _synth_and_queue(chunk_text)
                     if self._stopped:
                         break
             if buf.strip() and not self._stopped:
-                wav = await asyncio.to_thread(_synth, buf.strip())
-                if wav is not None:
-                    await audio_q.put(wav)
+                await _synth_and_queue(buf.strip())
             await audio_q.put(_DONE)
 
         async def _play_loop() -> None:
+            first_play = True
             while True:
                 item = await audio_q.get()
                 if item is _DONE:
                     break
                 if self._stopped:
                     continue
+                if first_play:
+                    first_play = False
+                    logger.info(
+                        "첫 오디오 재생 +%.0fms (TTFA)", (time.perf_counter() - t0) * 1000
+                    )
                 await asyncio.to_thread(self._play, item)
 
         try:

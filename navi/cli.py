@@ -56,16 +56,20 @@ def _setup_logging(verbosity: int) -> None:
     root.addHandler(file)
 
 
-async def _transcribe_file(path: Path) -> str:
+async def _transcribe_file(path: Path, model_size: str = "large-v3-turbo") -> str:
     """음성 파일(wav/m4a/mp3 등)을 faster-whisper로 받아쓴다.
 
     faster-whisper는 파일 경로를 직접 받아 av 라이브러리로 디코딩하므로
-    WAV 변환 없이 m4a 등도 그대로 넘긴다.
+    WAV 변환 없이 m4a 등도 그대로 넘긴다. 모델 로드는 warmup으로 분리해
+    STT 시간 로그가 순수 추론(데몬 상주 웜 상태)만 재도록 한다.
     """
     from navi.stt.fasterwhisper import FasterWhisperStt
 
-    stt = FasterWhisperStt()
+    stt = FasterWhisperStt(model_size=model_size)
+    await asyncio.to_thread(stt.warmup)
+    stt_t0 = time.perf_counter()
     text, _ = await asyncio.to_thread(stt._transcribe_path, str(path), "ko")
+    log.info("STT(파일) %.0fms — model=%s", (time.perf_counter() - stt_t0) * 1000, model_size)
     return text
 
 
@@ -138,7 +142,7 @@ async def chat(
             # ── 입력 획득 ──────────────────────────────────────────────────
             if input_wav is not None:
                 print(f"[STT] {input_wav.name} 받아쓰는 중…")
-                text = await _transcribe_file(input_wav)
+                text = await _transcribe_file(input_wav, stt_model)
                 input_wav = None
                 if not text:
                     print("[STT] 인식 결과 없음")
