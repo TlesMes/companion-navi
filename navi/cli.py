@@ -84,9 +84,11 @@ async def chat(
     use_voice: bool = False,
     input_wav: Path | None = None,
     listen: bool = False,
+    wakeword: bool = False,
     mic_device: int | None = None,
     vad_threshold: float | None = None,
     stt_model: str = "large-v3-turbo",
+    active_timeout_ms: int | None = None,
 ) -> None:
     store = MemoryStore(config.db_path)
     card = CharacterCard.load(config.persona_card_path)
@@ -95,6 +97,15 @@ async def chat(
     user_id = store.ensure_user(display_name="친구")
     session_id = uuid.uuid4().hex
     log.info("세션 시작 — session=%s, vendor=%s", session_id, config.brain.vendor)
+
+    # 웨이크워드를 켜려면 엔진 설정이 갖춰져야 한다 — 없으면 일찍 안내하고 끝낸다(데몬은 정상).
+    if wakeword and not config.wakeword.ready:
+        print(
+            "[웨이크워드 설정 미비 — config.yaml ear.wakeword 확인 "
+            "(openwakeword: model_name 또는 model_path / vosk: 모델+호출어 / porcupine: 키+키워드)]"
+        )
+        store.close()
+        return
 
     # 음성 모드: Brain 토큰을 Mouth로 흘려 나비가 음성으로 답한다(텍스트는 화면에 동시 echo).
     # 텍스트 모드(기본)는 기존 print 경로 그대로 — 음성 의존성 없이 가볍게.
@@ -117,116 +128,249 @@ async def chat(
     )
     wav_mode = input_wav is not None  # WAV 모드면 1턴 후 종료
 
-    # 마이크 실시간 모드: Ear(VAD 엔드포인팅)가 발화 1건씩 내보내면 STT로 받아쓴다.
-    # STT 모델은 한 번만 로드해 발화마다 재사용한다.
-    utt_stream = None
+    # ── 한 턴 처리: 입력 텍스트 → Brain(→Mouth) → 기억. 모든 입력 경로가 공유한다. ──
+    async def _run_turn(text: str) -> None:
+        started = time.perf_counter()
+        first_token_at: float | None = None
+        print(f"{card.character}> ", end="", flush=True)
+
+        def _echo(token: str) -> None:
+            nonlocal first_token_at
+            if first_token_at is None:
+                first_token_at = time.perf_counter()
+                log.info("첫 토큰까지 %.0fms", (first_token_at - started) * 1000)
+            print(token, end="", flush=True)
+
+        try:
+            if pipeline is not None:
+                result = await pipeline.run_turn(
+                    text, user_id=user_id, session_id=session_id, echo=_echo
+                )
+            else:
+                request = conductor.build_request(
+                    text, user_id=user_id, session_id=session_id
+                )
+                async for token in brain.generate_stream(request):
+                    _echo(token)
+                result = brain.last_result
+            print()
+        except Exception:
+            print()
+            log.exception("두뇌 호출 실패 — 이 턴은 기억에 남기지 않는다")
+            print("(…말이 끊겼다. logs/navi.log 참고)")
+            return
+        if result is None:
+            return
+        store.append_turn(session_id, user_id, role="user", text=text)
+        store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
+        store.log_usage("llm", result.usage)
+        log.info(
+            "응답 완료 — %d자, 총 %.0fms, 토큰 in=%d out=%d",
+            len(result.full_text),
+            (time.perf_counter() - started) * 1000,
+            result.usage.input_tokens,
+            result.usage.output_tokens,
+        )
+
+    # 마이크 실시간 모드: STT 모델은 한 번만 로드해 발화마다 재사용한다.
     listen_stt = None
     if listen:
-        from navi.ear import create_vad
-        from navi.ear.mic import MicListener
         from navi.stt.fasterwhisper import FasterWhisperStt
 
         listen_stt = FasterWhisperStt(model_size=stt_model)
         print(f"[STT 모델 로딩 중… {stt_model}]", flush=True)
         await asyncio.to_thread(listen_stt.warmup)
+
+    try:
+        if listen and wakeword:
+            await _listen_wakeword(
+                config,
+                listen_stt,
+                _run_turn,
+                mic_device=mic_device,
+                vad_threshold=vad_threshold,
+                active_timeout_ms=active_timeout_ms,
+            )
+        else:
+            await _input_loop(
+                _run_turn,
+                input_wav=input_wav,
+                listen=listen,
+                wav_mode=wav_mode,
+                listen_stt=listen_stt,
+                mic_device=mic_device,
+                vad_threshold=vad_threshold,
+            )
+    finally:
+        store.close()
+        log.info("세션 종료 — session=%s", session_id)
+
+
+async def _input_loop(
+    run_turn,
+    *,
+    input_wav: Path | None,
+    listen: bool,
+    wav_mode: bool,
+    listen_stt,
+    mic_device: int | None,
+    vad_threshold: float | None,
+) -> None:
+    """텍스트 / WAV 1턴 / 상시청취(--listen 단독, 웨이크워드 없음) 입력 루프.
+
+    상시청취는 하위호환 경로 — 마이크를 열면 항상 STT를 돌린다. 청취축(웨이크워드로만 열림)은
+    _listen_wakeword가 담당한다. 검문① SLEEP은 여기선 복귀할 세션이 없어 루프를 종료한다.
+    """
+    utt_stream = None
+    if listen:
+        from navi.ear import create_vad
+        from navi.ear.mic import MicListener
+
         vad = create_vad("energy", threshold=vad_threshold) if vad_threshold else None
         utt_stream = MicListener(vad, device=mic_device).utterances()
         print("[마이크 듣는 중 — 말하면 나비가 답합니다. Ctrl+C로 종료]", flush=True)
 
+    while True:
+        if input_wav is not None:
+            print(f"[STT] {input_wav.name} 받아쓰는 중…")
+            text = await _transcribe_file(input_wav)
+            input_wav = None
+            if not text:
+                print("[STT] 인식 결과 없음")
+                break
+            print(f"나> {text}")
+        elif utt_stream is not None:
+            try:
+                utt = await utt_stream.__anext__()
+            except (StopAsyncIteration, KeyboardInterrupt):
+                print()
+                break
+            print("[받아쓰는 중…]")
+            stt_t0 = time.perf_counter()
+            text = await _transcribe_utterance(listen_stt, utt)
+            log.info("STT %.0fms", (time.perf_counter() - stt_t0) * 1000)
+            if not text:
+                print("[인식 결과 없음 — 다시 말하세요]")
+                continue
+            print(f"나> {text}")
+            if check_gate(text) == GateResult.SLEEP:
+                print("(나비가 잠들었다. Ctrl+C로 완전 종료)")
+                log.info("검문① SLEEP — %r", text)
+                break
+        else:
+            try:
+                raw = await asyncio.to_thread(input, "\n나> ")
+                text = raw.strip("﻿ \t\r\n")  # BOM: 파이프 입력 인코딩 방어
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not text:
+                continue
+            if text in {"/quit", "/exit"}:
+                break
+
+        await run_turn(text)
+        if wav_mode:
+            break  # WAV 1턴 처리 완료 → 종료
+
+
+def _build_wakeword(cfg):
+    """WakeWordConfig → WakeWord 어댑터. engine 한 줄로 엔진을 가른다(벤더 종속 금지)."""
+    from navi.ear import create_wakeword
+
+    if cfg.engine == "openwakeword":
+        return create_wakeword(
+            "openwakeword",
+            model_path=cfg.owww_model_path,
+            model_name=cfg.owww_model_name,
+            threshold=cfg.threshold,
+            vad_threshold=cfg.vad_threshold,
+        )
+    if cfg.engine == "vosk":
+        return create_wakeword("vosk", model_path=cfg.vosk_model_path, keywords=cfg.keywords)
+    if cfg.engine == "porcupine":
+        return create_wakeword(
+            "porcupine",
+            access_key=cfg.access_key,
+            keyword_path=cfg.keyword_path,
+            model_path=cfg.model_path,
+            sensitivity=cfg.sensitivity,
+        )
+    raise ValueError(
+        f"알 수 없는 wakeword engine: {cfg.engine!r} (openwakeword | vosk | porcupine)"
+    )
+
+
+async def _listen_wakeword(
+    config: Config,
+    listen_stt,
+    run_turn,
+    *,
+    mic_device: int | None,
+    vad_threshold: float | None,
+    active_timeout_ms: int | None,
+) -> None:
+    """청취축 상태머신(D16): SLEEP=호출어만 청취, ACTIVE=대화 세션(무음 타임아웃까지).
+
+    ListenSession이 이벤트(WAKE/UTTERANCE/SLEEP)를 흘리면 여기서 STT·검문①·Brain을 잇는다.
+    검문① SLEEP은 루프 종료가 아니라 session.request_sleep() — ACTIVE만 닫고 호출어 대기로 돌아간다.
+    """
+    from navi.ear import (
+        EventKind,
+        ListenSession,
+        SleepReason,
+        create_vad,
+    )
+    from navi.ear.mic import MicListener
+
     try:
-        while True:
-            # ── 입력 획득 ──────────────────────────────────────────────────
-            if input_wav is not None:
-                print(f"[STT] {input_wav.name} 받아쓰는 중…")
-                text = await _transcribe_file(input_wav)
-                input_wav = None
-                if not text:
-                    print("[STT] 인식 결과 없음")
-                    break
-                print(f"나> {text}")
-            elif utt_stream is not None:
-                try:
-                    utt = await utt_stream.__anext__()
-                except (StopAsyncIteration, KeyboardInterrupt):
-                    print()
-                    break
+        wakeword = _build_wakeword(config.wakeword)
+    except ImportError:
+        print(
+            f"[{config.wakeword.engine} 엔진 미설치 — .venv-voice에 설치하세요 "
+            "(vosk: pip install vosk / porcupine: pip install pvporcupine)]"
+        )
+        return
+    vad = create_vad("energy", threshold=vad_threshold) if vad_threshold else None
+    session = ListenSession(
+        wakeword,
+        vad=vad,
+        active_timeout_ms=active_timeout_ms or config.wakeword.active_timeout_ms,
+    )
+    mic = MicListener(
+        vad,
+        device=mic_device,
+        sample_rate=session.sample_rate,
+        frame_ms=session.frame_ms,
+    )
+    print("[잠든 채 호출어를 기다립니다 — 깨우면 대화. Ctrl+C로 종료]", flush=True)
+
+    try:
+        async for ev in session.run(mic.frames()):
+            if ev.kind == EventKind.WAKE:
+                print("[나비가 깨어났습니다 — 말하세요]", flush=True)
+            elif ev.kind == EventKind.SLEEP:
+                if ev.reason == SleepReason.TIMEOUT:
+                    print("[조용해서 다시 잠듭니다]", flush=True)
+                else:
+                    print("[나비가 잠들었습니다 — 부르면 깨어납니다]", flush=True)
+            elif ev.kind == EventKind.UTTERANCE:
                 print("[받아쓰는 중…]")
                 stt_t0 = time.perf_counter()
-                text = await _transcribe_utterance(listen_stt, utt)
+                text = await _transcribe_utterance(listen_stt, ev.utterance)
                 log.info("STT %.0fms", (time.perf_counter() - stt_t0) * 1000)
                 if not text:
                     print("[인식 결과 없음 — 다시 말하세요]")
                     continue
                 print(f"나> {text}")
-                # 검문① — 모드 명령을 LLM 전에 결정론적으로 가로챈다
-                gate = check_gate(text)
-                if gate == GateResult.SLEEP:
-                    print("(나비가 잠들었다. Ctrl+C로 완전 종료)")
+                # 검문① — 수면 명령이면 ACTIVE만 닫고 호출어 대기로(루프 종료 아님)
+                if check_gate(text) == GateResult.SLEEP:
                     log.info("검문① SLEEP — %r", text)
-                    break
-            else:
-                try:
-                    raw = await asyncio.to_thread(input, "\n나> ")
-                    text = raw.strip("﻿ \t\r\n")  # BOM: 파이프 입력 인코딩 방어
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    break
-                if not text:
+                    session.request_sleep()
                     continue
-                if text in {"/quit", "/exit"}:
-                    break
-
-            # ── Brain(→Mouth) 처리 ─────────────────────────────────────────
-            started = time.perf_counter()
-            first_token_at: float | None = None
-            print(f"{card.character}> ", end="", flush=True)
-
-            def _echo(token: str) -> None:
-                nonlocal first_token_at
-                if first_token_at is None:
-                    first_token_at = time.perf_counter()
-                    log.info("첫 토큰까지 %.0fms", (first_token_at - started) * 1000)
-                print(token, end="", flush=True)
-
-            try:
-                if pipeline is not None:
-                    result = await pipeline.run_turn(
-                        text, user_id=user_id, session_id=session_id, echo=_echo
-                    )
-                else:
-                    request = conductor.build_request(
-                        text, user_id=user_id, session_id=session_id
-                    )
-                    async for token in brain.generate_stream(request):
-                        _echo(token)
-                    result = brain.last_result
-                print()
-            except Exception:
-                print()
-                log.exception("두뇌 호출 실패 — 이 턴은 기억에 남기지 않는다")
-                print("(…말이 끊겼다. logs/navi.log 참고)")
-                if wav_mode:
-                    break
-                continue
-            if result is None:
-                if wav_mode:
-                    break
-                continue
-            store.append_turn(session_id, user_id, role="user", text=text)
-            store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
-            store.log_usage("llm", result.usage)
-            log.info(
-                "응답 완료 — %d자, 총 %.0fms, 토큰 in=%d out=%d",
-                len(result.full_text),
-                (time.perf_counter() - started) * 1000,
-                result.usage.input_tokens,
-                result.usage.output_tokens,
-            )
-            if wav_mode:
-                break  # WAV 1턴 처리 완료 → 종료
+                await run_turn(text)
     finally:
-        store.close()
-        log.info("세션 종료 — session=%s", session_id)
+        wakeword.close()
 
 
 def main() -> None:
@@ -261,6 +405,18 @@ def main() -> None:
         "--listen",
         action="store_true",
         help="마이크 실시간 모드 — VAD로 발화 종료를 감지해 STT→Brain(→Mouth) 루프. Ctrl+C로 종료. (.venv-voice 필요)",
+    )
+    parser.add_argument(
+        "--wakeword",
+        action="store_true",
+        help="청취축 켜기(D7) — 평소 SLEEP(STT 끔, 호출어만), 부르면 ACTIVE로 대화. --listen과 함께. "
+        "키 필요: .env PICOVOICE_ACCESS_KEY + config.yaml ear.wakeword.keyword_path",
+    )
+    parser.add_argument(
+        "--active-timeout",
+        type=float,
+        metavar="SEC",
+        help="웨이크워드 ACTIVE 유지 시간 — 이만큼 무음이면 다시 SLEEP (기본 config.yaml 30초)",
     )
     parser.add_argument(
         "--mic",
@@ -299,6 +455,9 @@ def main() -> None:
     if args.db:
         config = replace(config, db_path=Path(args.db))
     input_wav = Path(args.input) if args.input else None
+    active_timeout_ms = (
+        int(args.active_timeout * 1000) if args.active_timeout is not None else None
+    )
     try:
         asyncio.run(
             chat(
@@ -306,9 +465,11 @@ def main() -> None:
                 use_voice=args.voice,
                 input_wav=input_wav,
                 listen=args.listen,
+                wakeword=args.wakeword,
                 mic_device=args.mic,
                 vad_threshold=args.vad_threshold,
                 stt_model=args.stt_model,
+                active_timeout_ms=active_timeout_ms,
             )
         )
     except KeyboardInterrupt:

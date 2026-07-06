@@ -37,6 +37,28 @@ mouth:
     ref_lang: ja                    # 레퍼런스 음원 언어
     gen_lang: ja                    # 합성 출력 언어 (한국어 ref 확보 시 ko)
 
+ear:
+  # 웨이크워드(D7) — SLEEP에선 STT를 끄고 파형에서 호출어만 잡는다(arch 5.1·D16).
+  # CLI --wakeword 줄 때만 청취축이 켜진다. 모델 없이도 데몬은 뜨고, --wakeword만 막힌다.
+  wakeword:
+    # openwakeword(채택, 오프라인 음향 KWS·계정없음) | vosk(ASR 스팟팅·한국어 약함) | porcupine(보존)
+    engine: openwakeword
+    active_timeout_ms: 30000    # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
+    openwakeword:
+      # 한국어 커스텀 모델(.onnx) — Track B에서 학습해 secrets/에 둔다(아직 없음).
+      # model_path: secrets/navi_ko.onnx
+      model_name: hey_jarvis    # 내장 영어 모델 — 런타임(검증2·3)용. 한국어 .onnx 생기면 model_path로 교체.
+      threshold: 0.5            # 0~1, 높을수록 엄격(오수락↓·누락↑)
+      vad_threshold: 0          # 0=끔(기본). >0이면 Silero VAD가 비음성 출력을 억제(오탐↓). 단
+                                # 연산은 안 줄임 — VAD는 풀 추론 "뒤"에 결과를 거를 뿐, 오히려 ~1% 더 씀.
+    vosk:                       # ASR 기반 스팟팅(보존). keywords에 호출어 문구(포함 매칭).
+      model_path: secrets/vosk-model-small-ko       # alphacephei.com/vosk/models, secrets/에 압축 해제
+      keywords: ["야 일어나", "여 일어나", "예 일어나"]
+    porcupine:                  # 보존 — Picovoice 무료 종료(2026-06-30)·가입 장벽으로 사실상 폐기
+      keyword_path: secrets/navi_ko.ppn
+      model_path: secrets/porcupine_params_ko.pv
+      sensitivity: 0.5
+
 db:
   path: navi.db
 

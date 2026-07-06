@@ -10,6 +10,9 @@ __pycache__/
 # 비밀 — API 키는 .env에만 (커밋 금지)
 .env
 
+# 웨이크워드 비밀 파일 (Picovoice .ppn 키워드·.pv 언어 모델 — 라이선스/개인 자산, 커밋 금지)
+secrets/
+
 # 런타임 데이터 — 나비의 기억. 백업은 git이 아니라 파일 복사로
 *.db
 logs/

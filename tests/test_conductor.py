@@ -4,7 +4,7 @@ from pathlib import Path
 from navi.brain import create_brain
 from navi.brain.echo import EchoBrain
 from navi.conductor import Conductor
-from navi.config import BrainConfig, Config, MouthConfig
+from navi.config import BrainConfig, Config, MouthConfig, WakeWordConfig
 from navi.memory import MemoryStore
 from navi.models import VoiceProfile
 from navi.persona import CharacterCard
@@ -25,6 +25,20 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
             vendor="fake",
             voice=VoiceProfile(name="navi", vendor_voice_id="stub"),
             options={},
+        ),
+        wakeword=WakeWordConfig(
+            engine="openwakeword",
+            keywords=(),
+            owww_model_path=None,
+            owww_model_name="hey_jarvis",
+            threshold=0.5,
+            vad_threshold=0.0,
+            vosk_model_path=None,
+            access_key=None,
+            keyword_path=None,
+            model_path=None,
+            sensitivity=0.5,
+            active_timeout_ms=30000,
         ),
         db_path=tmp_path / "t.db",
         recent_turns=5,
