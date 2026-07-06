@@ -7,16 +7,69 @@
 
 ## Phase 2 — 음성화 (진행 중)
 
-**로드맵 현황 스냅샷 (2026-06-25):**
-전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 진행 중(~8할)**, Phase 3(능동성)·4(기억·인격)·5(완성) 대기. Phase 2 완료 기준은 *"부르면 ~1.5초 안에 음성으로 답한다"* — 아직 미달.
+**로드맵 현황 스냅샷 (2026-07-06):**
+전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 진행 중(~9할)**, Phase 3(능동성)·4(기억·인격)·5(완성) 대기. Phase 2 완료 기준은 *"부르면 ~1.5초 안에 음성으로 답한다"* — 아직 미달.
 
-- **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · **마이크 Ear 입력(`--listen`, PR #8 머지)**
-- **Phase 2 남음:** 검문①(STT 후 키워드 게이트) · 웨이크워드(D7) · 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)**
+- **Phase 2 완료:** D3 음색(GPT-SoVITS) · Brain→Mouth 배선 · STT 파일 입력(`--input`) · 마이크 Ear 입력(`--listen`, PR #8) · **검문①(PR #9)** · **D7 웨이크워드(엔진+한국어 모델, 실측 통과)**
+- **Phase 2 남음:** 스트리밍 STT(D2) · AEC · **속도(~1.5초 미달)** — 속도 프로파일링 착수(research/speed-profile 브랜치)
 - **결정 현황(D번호):**
-  - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · D15(VAD 1층 캐스케이드)
-  - ◐ 사실상 확정·미구현: D5(SQLite) · D6(sqlite-vec) · D7(Porcupine) · D8(하드웨어)
+  - ✅ 확정: D3(TTS=GPT-SoVITS) · D4(실시간 음성 API 배제) · **D7(호출어="나비야", 엔진=openWakeWord, 한국어 모델=livekit-wakeword+VoxCPM2, 원어민 실측 통과)** · D15(VAD 1층 캐스케이드) · D16(모드 두 직교 축)
+  - ◐ 진행: D5(SQLite) · D6(sqlite-vec) · D8(하드웨어)
   - · 보류: D1(LLM) · D2(STT 벤더) · D9(친밀도) · D10(안전) · D11(스케줄) · D12(턴테이킹 튠) · D13(피드)
-- **다음 갈림길:** 속도 — Stage 7(2026.07.02) 실측으로 우선순위 확정: ① 문장 분리 수정(공짜) ② D8 GPU ③ D1 유료 티어. D2 스트리밍 STT는 그다음. ~1.5s는 희망치 — "호출 즉답 ≤0.5s(웨이크워드 고정 응답) / 명령 답변 ≤3s"로 재정의(2026.07.03 합의).
+- **다음 갈림길:** 속도 — Stage 9(2026.07.02) 실측으로 우선순위 확정: ① 문장 분리 수정(공짜) ② D8 GPU ③ D1 유료 티어. D2 스트리밍 STT는 그다음. ~1.5s는 희망치 — "호출 즉답 ≤0.5s(웨이크워드 고정 응답, D7로 구조적 충족) / 명령 답변 ≤3s"로 재정의(2026.07.03 합의). D7은 완결.
+
+**Stage 10 — D7 한국어 "나비야" 모델 본학습 + 원어민 실측 통과 (2026.07.06):**
+- **본학습 실행(Colab T4, livekit-wakeword):** 양성 2000+검증 200 · adversarial negative 2000+200 ·
+  background 200+40(VoxCPM2 합성 + free-sound 노이즈) → augment(멜스펙+임베딩 특징추출) →
+  train(conv_attention/small, 50000스텝 3-phase) → export(ONNX) → eval. 전 구간 무중단 완주(중간
+  Colab 무료 GPU 한도로 여러 차례 끊김 — **Google Drive 마운트로 다운로드·산출물 영속화**해 매
+  세션 이어감, 상세 절차는 [notebooks/RESUME_next_session.md](../notebooks/RESUME_next_session.md)).
+- **합성 eval(참고용, 과대평가 감안):** `threshold=0.5`에서 recall 69.5%·FPPH 0.06,
+  `optimal_threshold=0.25`에서 recall 80%·FPPH 0.18(negative 30324개·16.85시간 기준). VoxCPM2
+  합성판 train·검증이 같은 발음 편향(비원어민 톤)을 공유해 낙관 편향 가능성 있음 — 실측 전엔
+  참고치.
+- **★ 원어민 마이크 실측 — 통과.** `navi_ko.onnx`를 **다리(dnn head·tflite export) 없이** 기존
+  `OpenWakeWordWakeWord` 어댑터(`inference_framework="onnx"`)에 그대로 로드해 동작 확인. d7
+  문서가 우려했던 "conv_attention은 livekit 자체 런타임 전용, 우리 어댑터엔 dnn+tflite 필요"는
+  **기우로 판명** — 특징 shape(16×96, openWakeWord 표준 임베딩과 동일)이 맞아 classifier onnx가
+  그대로 호환됨. 신규 어댑터·재학습 불요.
+- **실측 조건:** 임계값 기본 0.5(config 그대로, 튜닝은 후순위) · 원어민(개발자 본인) 발화 ·
+  `scripts/try/owww_mic.py --model secrets/navi_ko.onnx`. 결과: DETECT 점수 0.51~0.70대로 다회
+  반복 감지, 대기 중 최고점수 0.003~0.009대 유지(오탐 없음). CPU 3~7%대(영어 내장 모델
+  hey_jarvis 실측치와 동급 — Stage 8 참조).
+- **D7 확정.** 호출어="나비야", 엔진=openWakeWord, 한국어 모델=livekit-wakeword(VoxCPM2)+
+  conv_attention, 어댑터=기존 `OpenWakeWordWakeWord` 그대로 재사용. 모델 파일은 `secrets/navi_ko.onnx`
+  (커밋 금지 — 비밀 취급).
+- **남음(후순위):** 임계값 튜닝(현재 0.5, eval optimal 0.25 참고) · 오탐률 장시간 실측(생활 소음·
+  타인 발화) · your-voice 주입은 지금 실측 통과로 불필요해짐(보류 해제 없이 폐기 검토 가능).
+
+**Stage 8 — D7 엔진 피벗(Vosk→openWakeWord) + 한국어 학습 경로 확정 (2026.06.28):**
+- **엔진 피벗 — Vosk → openWakeWord:** Vosk(ASR 스팟팅)는 SLEEP에서 경량 ASR을 상시 돌리는 2단이라 "진짜 텍스트-없는 KWS"가 아니었다(Stage 7 함의). **openWakeWord = 진짜 음향 KWS**(.onnx, 계정·키·만료 0, 오프라인). 어댑터 `OpenWakeWordWakeWord`([navi/ear/wakeword.py](../navi/ear/wakeword.py)) — 16kHz·80ms(1280)→0~1 점수→임계. 커스텀 `model_path` 우선, 없으면 내장 영어(`hey_jarvis`)로 런타임 검증(모델↔런타임 분리). Vosk·Porcupine 어댑터는 계약 뒤 보존(엔진 교체=어댑터1+팩토리 한 줄). (커밋 17d9c70)
+- **Track A — 런타임 sanity check(영어 내장 모델, 통과):**
+  - 감지 ✓ — `hey_jarvis` 마이크 E2E 실동(`scripts/try/owww_mic.py`).
+  - **CPU 정체 규명(실측):** SLEEP 대기 ~4%/코어(≈시스템 0.4%) = openWakeWord predict. 분해 → **preprocessor(멜스펙+임베딩) 2.6ms가 대부분**, 분류기 ~0ms(공짜), 나머지 ~1% 파이썬 루프. 호출어 여러 개 등록해도 임베딩 공유라 거의 안 비싸짐. 콘센트 PC엔 무시 가능 → 수용.
+  - **VAD 정정(커밋 6f3b39f):** `vad_threshold`를 "침묵 추론 스킵→idle CPU↓"로 적은 건 **소스 오독**. openWakeWord는 매 프레임 풀 추론 *뒤* VAD로 결과만 0으로 거름 — 연산 절감 0, 오히려 Silero가 ~1% 더 씀(3.2→3.9ms). 기능은 **오탐 억제**. 기본 0으로 끔. idle CPU 진짜 레버는 EnergyVad 앞단 게이트(D15)뿐 → 콘센트 PC엔 실익 미미, D8(배터리)까지 보류.
+- **Track B — 한국어 "나비야" 학습 경로 확정** (상세 → [research/d7_wakeword_ko.md](./research/d7_wakeword_ko.md)):
+  - **호출어 = "나비야" 확정**(페르소나 이름, 3음절 — 오탐 잦으면 임계↑로 대응).
+  - **호스팅(openwakeword.com) 폐기:** 한국어 체크포인트 부재(영어 Lessac 교차언어 임시방편) + 목소리 모델 하나 23,317크레딧(보유 0)·~7.8h. 영어 뿌리라 한국어 품질도 타협.
+  - **채택: livekit-wakeword**(Apache 2.0) — VoxCPM2로 진짜 한국어 다화자 합성. 학습 엔진은 openWakeWord와 동일, **dnn head + tflite export로 우리 어댑터에 직결**(남은 글루: 어댑터 `inference_framework` 인자화 1줄 + config `model_path`). 공식 노트북은 영어 전용(automatic) / export·TTS 미배선(manual)이라 탈락.
+  - **함의:** 웨이크워드는 화자-독립 → **개발자가 한 번 구워 배포, 사용자 학습 0**. your-voice는 내 인스턴스 선택 부스트(후순위, livekit 미문서화→수동 노트북 폴백). 한국어 정확도는 영어 임베딩 편향 상속 리스크 → **실측 판정**.
+- **남음:** Colab에서 livekit `run`(나비야·voxcpm·dnn)→tflite→`owww_mic` recall 실측. 통과 시 D7 한국어 확정.
+
+**Stage 7 — 웨이크워드 D7: 청취축 상태머신 + 엔진 Vosk 채택 (2026.06.25):**
+- **청취축 실체화(D16):** [navi/ear/listening.py](../navi/ear/listening.py) `ListenSession` — SLEEP(STT 끔, 호출어만 청취)↔ACTIVE(발화 끊어 STT). 창=**세션+무음 타임아웃**(반려자식, 기본 30초). `--listen --wakeword`로 켜짐, `--listen` 단독은 기존 상시청취(하위호환).
+- **WakeWord 계약(벤더 중립):** [navi/ear/wakeword.py](../navi/ear/wakeword.py) — `detect(chunk)·frame_length`만 노출, 엔진은 계약 뒤(Vad와 동일 규약). `FakeWakeWord`(무의존)로 마이크·키 없이 전 사이클 유닛 검증. 엔진은 `create_wakeword` 팩토리로 교체.
+- **엔진 결정 경위 — Porcupine → Vosk:**
+  - 1차안 Porcupine(D7 원안, 온디바이스·한국어 내장)으로 어댑터까지 구현. 그러나 **Picovoice 콘솔 가입이 회사 이메일을 요구**해 개인 Gmail 차단 — 무료 AccessKey 발급 불가 판명(블로그/FAQ상 free-forever와 실제 가입 화면이 불일치).
+  - openWakeWord 검토: 한국어 커스텀 모델은 **GPU 학습 프로젝트**(WSL2+CUDA, Piper 한국어 합성) + 구글 오디오 임베딩 영어 편향 경고 → ROCm 죽은 CPU-only 환경엔 부담 과다.
+  - **채택: Vosk(ASR 기반 스팟팅).** 학습0·CPU·한국어 모델 존재. **주의 — Vosk는 진짜 음향 KWS가 아니라 작은 ASR이다.** 당초 grammar 제한(호출어+[unk])으로 KWS처럼 쓰려 했으나 small-ko가 [unk]를 어휘에 안 가져 무시 → grammar가 호출어 하나로 좁혀져 강제 매칭(오수락 폭주). 그래서 **전체 인식 후 전사에서 호출어 포함 매칭**으로 전환(검문①과 같은 방식, 모델만 경량). 결과적으로 SLEEP=경량 ASR(Vosk) / ACTIVE=무거운 whisper의 2단. 콘센트 PC라 상시 인식 부담은 D15가 수용. **함의:** arch 5.1의 "SLEEP=STT 꺼짐"은 엄밀히는 "무거운 STT 꺼짐+경량 ASR 켜짐"으로 읽어야 한다(진짜 텍스트-없는 KWS는 Porcupine/openWakeWord 회귀 시).
+  - **화자 인증 제외(아무나 깨어남):** 빅스비식 "내 음성으로 깨우기"(화자 인증 2층)는 v1 제외. 문구 탐지(1층)만. 주인 한정은 후순위.
+  - Porcupine 어댑터는 **벤더중립 증명·향후 회사이메일 확보 시 사용** 위해 보존. `WakeWord` 계약 덕에 엔진 교체는 어댑터 1개 + 팩토리/설정 한 줄.
+- **프레임 통일(설계 정리):** 엔진이 요구하는 고정 프레임을 어댑터 내부 재정렬 대신 `WakeWord.frame_length` 선언으로 흡수 — 마이크 blocksize·Endpointer frame_ms를 거기 맞춤(EnergyVad는 프레임 크기 무관). `mic.py`에 raw `frames()` 분리, `utterances()`는 그 위에 재구성.
+- **수면 명령 거취(검문① KWS 재검토):** 텍스트 게이트 **유지**, KWS는 깨우기 전용. 두 게이트는 상보(arch 5.1) — KWS=SLEEP 입구(파형), 검문①=ACTIVE 변별("나 이제 자라는 통과").
+- **Vosk 어댑터 구현 완료:** `VoskWakeWord`([navi/ear/wakeword.py](../navi/ear/wakeword.py)) — KaldiRecognizer 전체 인식, 전사를 공백 정규화해 호출어 포함 매칭. config는 `ear.wakeword.engine` 스위치로 일반화(vosk/porcupine 공존), `create_wakeword("vosk")` 분기. `ready`는 모델 디렉터리 실존까지 확인, 미설치/미존재면 친절 안내 후 종료.
+- **검증:** 유닛(FakeWakeWord+가짜 프레임+가짜 시계)으로 SLEEP→ACTIVE→발화→타임아웃→재기상, 검문①→SLEEP복귀 전 사이클 + Vosk 지연임포트·팩토리(89 테스트 green).
+- **남음(사용자 셋업 후):** `.venv-voice`에 `pip install vosk` + 한국어 모델(vosk-model-small-ko) 받아 `secrets/`에 압축해제 → 실마이크 E2E(`--listen --voice --wakeword`).
 
 **현재 상태 — Brain→Mouth 배선 완료 + 실청취 통과 (2026.06.18):**
 타이핑 → 나비가 GPT-SoVITS 음성으로 답하는 전 구간이 실동한다(한국어·일본어 모두). 배선은 TurnPipeline(`navi/pipeline.py`)이 담당 — Brain.generate_stream과 Mouth.speak_stream이 둘 다 `AsyncIterator[str]`이라 변환 없이 토큰을 흘리고, barge-in은 interrupt()=mouth.stop()+brain.cancel(). 실청취 중 GPT-SoVITS 실동 픽스 3건(아래 Stage 5). D3 GPT-SoVITS fine-tune은 음색=가중치/톤=레퍼런스로 확정(Stage 2~4).
@@ -114,7 +167,7 @@
 - **확인된 한계 → 후속 PR:** 속도 ~1.5s 미달(D2 스트리밍 STT/D8 GPU) · 웨이크워드 없음(D7/검문①) · EnergyVad 오탐(D12 튜닝).
 - **설계 메모:** STT→LLM 사이에 데몬 검문소(검문①: 키워드 게이트)가 들어가야 수면/DND 게이트·언령을 LLM에 안 맡길 수 있음 → 통합 실시간 API(Gemini Live) 배제(D4)의 실동 근거. 킬스위치(발화 중단)는 단어가 아닌 VAD(barge-in)가 담당.
 
-**Stage 7 — 전 구간 속도 프로파일링 (2026.07.02, `research/speed-profile`):**
+**Stage 9 — 전 구간 속도 프로파일링 (2026.07.02, `research/speed-profile`):**
 - **목적:** Phase 2 완료 기준 *"부르면 ~1.5초 안에 음성 답변"*(희망 목표) 미달의 병목을 실측으로 규명 — 다음 갈림길(D2 스트리밍 STT vs D8 GPU) 판단 근거. **측정만, 최적화는 범위 밖.**
 - **측정 조건:** Windows native CPU(GPU 없음, Stage 0), `.venv-voice`. 입력=`scripts/in/probe_ko.wav`(한국어 2.2초 발화, Supertonic 합성 프로브). STT=faster-whisper `small`(웜) → Brain=gemini-3-flash-preview(무료 티어) → Mouth=GPT-SoVITS(아리스, JA). 동일 입력 웜업 1회 + 3회 반복, 엔진 상주(데몬 전제). 도구: `scripts/bench/profile_turn.py`, 계측 로그는 `gptsovits.py`(문장확정·합성완료·TTFA)와 `cli.py --input`(웜 STT)에 DEBUG/INFO로 흡수. 실행 시 `PYTHONUTF8=1` 필요(GPT-SoVITS가 import 시 중국어 print → cp949 리다이렉트에서 크래시).
 - **실측 (웜업 제외 3회):**
@@ -156,7 +209,7 @@
 - **결론 한 줄: 병목은 ④TTS 첫 청크(79%, 문장분리 버그×CPU RTF)와 ③TTFT 편차(무료 티어), 레버는 ①문장 분리 수정(공짜)→②D8 GPU→③D1 유료 티어 순. D2 스트리밍 STT는 2.2s 절감으로 그다음.**
 
 **남은 일:**
-- (속도, Stage 7 순서) ① 문장 분리 수정(일본어 무공백 종결) ② D8 GPU 가속 ③ D1 유료 티어/벤더 — 재정의 목표 "호출 즉답 ≤0.5s / 명령 답변 ≤3s".
+- (속도, Stage 9 순서) ① 문장 분리 수정(일본어 무공백 종결) ② D8 GPU 가속 ③ D1 유료 티어/벤더 — 재정의 목표 "호출 즉답 ≤0.5s / 명령 답변 ≤3s".
 - 웨이크워드(D7) — Colab 학습 중.
 - (개선 후보) 콜드 스타트 — 데몬 기동 시 GPT-SoVITS 엔진 워밍업(더미 합성)으로 첫 토큰 지연 단축.
 - (보류) 한국어 ref→출력 — 한국어 레퍼런스 음원 확보 시.

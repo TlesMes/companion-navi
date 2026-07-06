@@ -18,6 +18,9 @@ voice = [
     "supertonic",      # 로컬 TTS (Mouth, 잠정 D3)
     "sounddevice",     # 스피커 재생
     "faster-whisper",  # 로컬 STT (Ear, 잠정 D2)
+    "openwakeword",    # 웨이크워드 KWS (Ear, D7 채택 — 오프라인 음향 KWS, 계정 없음)
+    "vosk",            # 웨이크워드 KWS 대안 (Ear, ASR 스팟팅 — 한국어 약함)
+    "pvporcupine",     # 웨이크워드 KWS 대안 (Ear, 보존 — 무료 종료·가입 장벽)
 ]
 # D3 보이스 클로닝 후보 — WSL2 + ROCm 환경에서 설치
 # ROCm PyTorch: pip install torch --index-url https://download.pytorch.org/whl/rocm6.1

@@ -14,8 +14,11 @@
     false positive 방지("나 이제 자라"는 통과). 발화 중단은 VAD barge-in이 담당.
   - 어미 변형("잘래" vs "잘래요")은 집합에 명시한 구절만 잡는다 — 사용자가 외우는 고정 명령.
   - 레이턴시(STT ~8s, large-v3-turbo CPU)는 게이트 밖 문제 → 속도는 D8(GPU)/D2에서 일괄 처리.
-  - 전략 대안: 고정 명령을 KWS(D7 웨이크워드)로 옮기면 인식·속도를 동시에 해결한다 —
-    D7 구현 시 재검토(D16). 그때 이 텍스트 게이트의 존속 여부를 다시 판단.
+  - KWS 재검토 결론(D7 구현 시, 2026.06.25): 수면 명령은 이 텍스트 게이트에 **유지**한다.
+    KWS(웨이크워드)는 *깨우기 전용*. 이유 — 두 게이트는 상보적이다(arch 5.1): KWS는 STT가 꺼진
+    SLEEP의 입구(파형 spotting)고, 검문①은 STT가 켜진 ACTIVE에서 발화 전체 일치로 변별한다
+    ("나 이제 자라"는 통과). spotting은 그 변별을 못 하고, 수면 명령을 KWS로 옮기면 별도 .ppn이
+    더 필요해 운영만 무거워진다. 청취축 상태머신은 navi/ear/listening.py(ListenSession).
 """
 
 from __future__ import annotations
