@@ -106,6 +106,13 @@ async def test_supertonic_chunks_stream_into_sentences():
     assert not mouth.is_playing()
 
 
+async def test_supertonic_splits_fullwidth_terminator_without_space():
+    """전각 종결(？！。)은 공백 없이도 경계 — 반각 소수점 보호는 그대로."""
+    mouth, engine, _ = _build_supertonic()
+    await mouth.speak_stream(_stream("무게는 3.5키로야？", "응！가볍지。"), VOICE)
+    assert engine.synthesized == ["무게는 3.5키로야？", "응！", "가볍지。"]
+
+
 async def test_supertonic_tail_without_terminator_is_spoken():
     mouth, engine, played = _build_supertonic()
     await mouth.speak_stream(_stream("종결 ", "부호 ", "없음"), VOICE)
@@ -170,6 +177,19 @@ async def test_gptsovits_chunks_stream_into_sentences():
     await mouth.speak_stream(_stream("こんにちは", "。 げん", "き?"), VOICE)
     assert [c[0] for c in fake.calls] == ["こんにちは。", "げんき?"]  # 문장 경계마다
     assert len(played) == 2  # 합성 즉시 순차 재생
+    assert not mouth.is_playing()
+
+
+async def test_gptsovits_splits_cjk_sentences_without_space():
+    """일본어 문말(。！)은 뒤 공백이 없어도 문장마다 잘린다 — TTFA 비대 방지."""
+    mouth, fake, played = _build_gptsovits()
+    await mouth.speak_stream(
+        _stream("おはよう。今日もいい", "天気だね。散歩し", "よう！いこう"), VOICE
+    )
+    assert [c[0] for c in fake.calls] == [
+        "おはよう。", "今日もいい天気だね。", "散歩しよう！", "いこう",
+    ]
+    assert len(played) == 4
     assert not mouth.is_playing()
 
 
