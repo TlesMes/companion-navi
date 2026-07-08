@@ -5,7 +5,30 @@
 
 ---
 
-## Phase 2 — 음성화 (진행 중)
+## Phase 3 — 능동성 (진행 중)
+
+**Stage 13 — 데몬화(Daemon Core, arch 4.11) (2026.07.08, `feat/core-daemon`):**
+- **이벤트 버스([navi/bus.py](../navi/bus.py)):** 프로세스 안 경량 pub/sub — 구독자별 유한
+  `asyncio.Queue`, publish는 논블로킹(포화 시 가장 오래된 것 drop, 최신 우선). **발행자는 절대
+  대기하지 않는다** — 느린 구독자(향후 GUI WS)가 마이크→STT→TTS 핫패스를 못 막는 핵심 보장.
+  `EventKind` = WAKE/UTTERANCE/SLEEP(청취축 유래) + TICK/TURN_STARTED/TURN_ENDED/SHUTDOWN.
+- **데몬([navi/daemon.py](../navi/daemon.py)):** `python -m navi.daemon [--voice --wakeword ...]`
+  상주 프로세스. 발행자(ear_task=ListenSession 이벤트 감싸기 · tick_task=순수 시계 · stop_watcher)
+  + 구독자(dispatcher: STT→검문①→TurnPipeline / console: 상태 안내 — 독립 구독 시연).
+  `DaemonState` 스냅샷(listening_mode·turns_count·이벤트 링버퍼)이 3단계 GUI `GET /status`의 원천.
+  기능은 기존 `--listen --wakeword --voice`와 동일 — cli.py는 개발 도구로 보존, 배선은 미러
+  (공통화 리팩터링은 중복이 아플 때 다음 PR).
+- **생명주기(Windows, systemd 없음):** `logs/navi.pid` 단일 인스턴스 가드(중복 기동 거부),
+  종료는 Ctrl+C 또는 `python -m navi.daemon stop` — **센티널 파일**(`logs/navi.stop`) 방식
+  (Windows 프로세스 간 시그널 불안정 → 3단계 HTTP 컨트롤 플레인 생기면 POST /shutdown으로 대체).
+- **구현 중 결정 2건:** ① PID 생존 확인에 `os.kill(pid, 0)` 금지 — Windows에선 시그널 0도
+  TerminateProcess를 불러 대상 프로세스를 죽인다 → ctypes `OpenProcess`+`GetExitCodeProcess`로
+  구현. ② stdout/stderr `errors="replace"` 재구성 — 출력 리다이렉트 시 cp949 인코딩으로
+  em dash(—)에서 데몬이 죽는 것을 실측, 인코딩 불가 문자는 `?`로 대체(콘솔 인코딩은 유지).
+- **검증:** 유닛 112개 green(버스 5·데몬 7 신규, 마이크·키 불필요 — FakeWakeWord+프레임 큐 주입으로
+  WAKE→턴→수면명령→SLEEP 전 사이클 결정론 재현). 오프라인 E2E(echo 두뇌): 기동→TICK 누적→중복
+  기동 거부→stop 종료→pid/stop 파일 정리 확인. **실기 E2E(`--voice --wakeword` 마이크 대화)는
+  사용자 확인 대기.**
 
 **로드맵 현황 스냅샷 (2026-07-08):**
 전체 6단계 중 Phase 0(기획·설계)·Phase 1(텍스트 뼈대) 완료, **Phase 2(음성화) 배선 완결 — 속도만 하드웨어 대기**, **Phase 3(능동성)으로 전환**. Phase 4(기억·인격)·5(완성) 대기.
@@ -17,8 +40,8 @@
   - ◐ 진행: D5(SQLite) · D6(sqlite-vec) · D8(하드웨어 — 속도 재개의 열쇠)
   - · 보류: D1(LLM — Claude Haiku 검증 완료, `--brain` 전환 가능) · D2(STT 벤더) · D9(친밀도) · D10(안전) · D11(스케줄) · D12(턴테이킹 튠) · D13(피드)
 - **다음 갈림길: Phase 3 착수 순서 (2026.07.08 합의)** — 목표 재정의 중 "호출 즉답 ≤0.5s"는 D7로 충족, "명령 답변 ≤3s"는 D8 대기.
-  1. **데몬화(Daemon Core, arch 4.11)** — CLI 단발 실행 → loop tick 상주 프로세스 + 이벤트 구조. Phase 3 전체의 전제. **← 다음 작업(새 세션, plan 모드 권장 — 이벤트 버스 형태·GUI용 상태 노출 방식 결정 필요)**
-  2. **모드 상태머신 + 결정론 게이트(arch 5장, 검문②)** — SLEEP/ACTIVE/DND/SNOOZE, "더 잘래" 오버라이드. 완료 기준 "자는 시간에 절대 말 안 건다"의 본체.
+  1. ✅ **데몬화(Daemon Core, arch 4.11)** — 완료(Stage 13). 이벤트 버스=경량 pub/sub 자작, 상주=콘솔+명시적 실행/종료, GUI용은 상태 스냅샷 객체까지(HTTP/WS는 3번에서).
+  2. **모드 상태머신 + 결정론 게이트(arch 5장, 검문②)** — SLEEP/ACTIVE/DND/SNOOZE, "더 잘래" 오버라이드. 완료 기준 "자는 시간에 절대 말 안 건다"의 본체. **← 다음 작업**
   3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저.
   4. **Heartbeat 2·3층(arch 4.4)** — 타이밍(가중치+jitter) + 주제 도출 → 첫 선톡. interaction_log 수집 시작.
   5. **감정 태그→레퍼런스 전환** — Brain이 감정 태그 출력, Mouth가 감정별 레퍼런스 오디오 선택(D3 "톤=레퍼런스 제어" 활용). D9 친밀도 산식 없이 얹는 1차 감정선.

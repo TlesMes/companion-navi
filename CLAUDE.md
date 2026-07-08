@@ -45,7 +45,7 @@ type(scope): 제목 (한국어, 50자 내)
 
 ## 현재 상태 (2026.07.08)
 
-Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결** → **Phase 3(능동성) 착수.** 다음 작업: **데몬화(Daemon Core)** — 착수 순서 5단계는 [docs/progress.md](./docs/progress.md) 상단 "다음 갈림길" 참조.
+Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결**, **Phase 3(능동성) 진행 중 — 1/5 데몬화 완료(Stage 13).** 데몬: `python -m navi.daemon [--voice --wakeword]` 상주 — 이벤트 버스([navi/bus.py](./navi/bus.py)) + 데몬 코어([navi/daemon.py](./navi/daemon.py)), 종료는 `stop` 서브커맨드/Ctrl+C. 다음 작업: **모드 상태머신 + 검문②** — 착수 순서 5단계는 [docs/progress.md](./docs/progress.md) 상단 "다음 갈림길" 참조.
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
