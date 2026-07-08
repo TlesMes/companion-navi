@@ -1,8 +1,13 @@
 """Anthropic(Claude) 어댑터 (스트리밍).
 
-키 미보유로 실호출 검증은 보류 — 키 확보 시 config.yaml에서 vendor만 바꿔 검증한다
-(Phase 1 완료 기준 2: 벤더 교체에도 같은 말투).
-프롬프트 캐싱: system 블록에 cache_control을 명시해 캐릭터 카드 입력비를 0에 수렴시킨다.
+키 확보·실호출 검증 완료(2026.07.08, Haiku 4.5 실측: TTFT ~0.7~1.3s 안정).
+config.yaml에서 vendor만 바꿔 교체(Phase 1 완료 기준 2: 벤더 교체에도 같은 말투).
+
+프롬프트 캐싱: system 블록에 cache_control을 명시해 캐릭터 카드 입력비를 절감한다.
+단 캐시 최소 프리픽스가 모델별로 다르다 — Haiku 4.5는 4096토큰, Sonnet/Opus는 1024토큰.
+현재 캐릭터 카드는 ~1.6K토큰이라 Haiku에선 최소치 미달로 조용히 no-op(에러 없음, 매 턴 전액
+청구). Sonnet/Opus로 올리면 최소치를 넘겨 자동으로 캐시가 켜진다 — 코드는 벤더 중립이라 그대로 둔다.
+검증법: usage의 cache_creation/cache_read_input_tokens가 둘 다 0이면 캐시 미작동.
 """
 
 from __future__ import annotations
