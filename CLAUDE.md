@@ -43,12 +43,12 @@ type(scope): 제목 (한국어, 50자 내)
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
-## 현재 상태 (2026.07.06)
+## 현재 상태 (2026.07.08)
 
-Phase 0·1 완료 → **Phase 2(음성화) 진행 중(~9할).** 마이크로 말하면 나비가 음성으로 답하는 전 구간 실동. 완료 기준 *"부르면 ~1.5초 안에 답"* 중 **"부르면"(D7)은 완료**, "~1.5초"만 남음.
+Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결** → **Phase 3(능동성) 착수.** 다음 작업: **데몬화(Daemon Core)** — 착수 순서 5단계는 [docs/progress.md](./docs/progress.md) 상단 "다음 갈림길" 참조.
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
 검문①: **완료** — STT 출력을 LLM 전에 가로채 수면 명령 결정론 처리([navi/gatekeeper.py](./navi/gatekeeper.py), PR #9).
 **D7(웨이크워드): 확정.** 엔진=**openWakeWord**(Vosk 폐기 — ASR 스팟팅은 진짜 KWS 아님, 피벗 경위 progress.md Stage 6·7). 한국어 "나비야" 모델은 livekit-wakeword(VoxCPM2 합성)로 학습 → `secrets/navi_ko.onnx`(conv_attention, 다리 없이 기존 어댑터 그대로 로드) → **원어민 마이크 실측 통과**([navi/ear/wakeword.py](./navi/ear/wakeword.py)). 임계값 튜닝은 후순위.
-**Phase 2 남음:** 스트리밍 STT(D2) · 속도(~1.5초 미달, 프로파일링 착수). 로드맵 현황·다음 갈림길 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.
+두뇌: **Claude Haiku 4.5 실호출 검증 완료(Stage 12)** — TTFT 0.7~1.3s 안정, `--brain anthropic`으로 런타임 전환. D1은 보류 유지(검증된 대안 확보). E2E 실측 9.8s 중 **TTS(CPU)가 63% — 속도는 D8(GPU) 확보 시 재개.** 스트리밍 STT(D2)·AEC도 속도 트랙과 묶어 보류. 로드맵 현황·Phase 3 착수 순서 상세 → [docs/progress.md](./docs/progress.md) 상단 스냅샷.
