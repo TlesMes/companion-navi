@@ -259,10 +259,15 @@ async def _input_loop(
                 print("[인식 결과 없음 — 다시 말하세요]")
                 continue
             print(f"나> {text}")
-            if check_gate(text) == GateResult.SLEEP:
+            gate = check_gate(text)
+            if gate == GateResult.SLEEP:
                 print("(나비가 잠들었다. Ctrl+C로 완전 종료)")
                 log.info("검문① SLEEP — %r", text)
                 break
+            if gate != GateResult.PASS:
+                # 선톡축 명령(Stage 14)은 상태머신이 있는 데몬 전용 — LLM엔 안 보낸다
+                print("[모드 명령은 데몬 전용 — cli에선 무시]")
+                continue
         else:
             try:
                 raw = await asyncio.to_thread(input, "\n나> ")
@@ -370,9 +375,14 @@ async def _listen_wakeword(
                     continue
                 print(f"나> {text}")
                 # 검문① — 수면 명령이면 ACTIVE만 닫고 호출어 대기로(루프 종료 아님)
-                if check_gate(text) == GateResult.SLEEP:
+                gate = check_gate(text)
+                if gate == GateResult.SLEEP:
                     log.info("검문① SLEEP — %r", text)
                     session.request_sleep()
+                    continue
+                if gate != GateResult.PASS:
+                    # 선톡축 명령(Stage 14)은 상태머신이 있는 데몬 전용
+                    print("[모드 명령은 데몬 전용 — cli에선 무시]")
                     continue
                 await run_turn(text)
     finally:

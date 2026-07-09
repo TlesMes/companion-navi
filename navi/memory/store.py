@@ -1,4 +1,4 @@
-"""메모리 모듈 — 단기기억·친밀도·usage_log (01 문서 4.5절 계약의 Phase 1 부분집합).
+"""메모리 모듈 — 단기기억·친밀도·usage_log·mode_state (01 문서 4.5절 계약의 부분집합).
 
 계약 확장: recall_recent_for_user(user_id, n).
 "껐다 켜도 어제 대화를 기억한다"(Phase 1 완료 기준)를 위해 세션 경계 없이
@@ -109,6 +109,30 @@ class MemoryStore:
         )
         self._conn.commit()
         return self.get_intimacy(user_id)
+
+    # ─── 선톡축 모드 (Stage 14) ───────────────────────────────
+
+    def get_mode_state(self, user_id: int) -> tuple[str, str | None] | None:
+        """저장된 (current_mode, override_until) — 없으면 None(첫 기동)."""
+        row = self._conn.execute(
+            "SELECT current_mode, override_until FROM mode_state WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return (row["current_mode"], row["override_until"]) if row else None
+
+    def set_mode_state(
+        self, user_id: int, mode: str, override_until: str | None
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO mode_state (user_id, current_mode, override_until, updated_at)"
+            " VALUES (?, ?, ?, ?)"
+            " ON CONFLICT(user_id) DO UPDATE SET"
+            "   current_mode = excluded.current_mode,"
+            "   override_until = excluded.override_until,"
+            "   updated_at = excluded.updated_at",
+            (user_id, mode, override_until, _now_iso()),
+        )
+        self._conn.commit()
 
     # ─── 원가 모니터링 ────────────────────────────────────────
 

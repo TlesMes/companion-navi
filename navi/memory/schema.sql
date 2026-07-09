@@ -1,5 +1,5 @@
--- Phase 1 테이블만 (01 문서 6장 논리 스키마의 부분집합).
--- mode_state·fact·memory_embedding 등은 해당 Phase에서 추가한다.
+-- 01 문서 6장 논리 스키마의 부분집합 — Phase 1 테이블 + mode_state(Stage 14).
+-- fact·memory_embedding 등은 해당 Phase에서 추가한다.
 
 CREATE TABLE IF NOT EXISTS user (
     user_id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS conversation_turn (
 
 CREATE INDEX IF NOT EXISTS idx_turn_user_time ON conversation_turn (user_id, turn_id);
 CREATE INDEX IF NOT EXISTS idx_turn_session   ON conversation_turn (session_id, turn_id);
+
+-- 선톡축 모드(Stage 14) — 재기동해도 오버라이드("더 잘래" 등)가 살아남는다.
+-- current_mode는 저장 상태(오버라이드의 근원)이고, 겉으로 보이는 모드는
+-- ModeMachine이 시계와 합성해 판정한다 (navi/heartbeat/mode.py).
+CREATE TABLE IF NOT EXISTS mode_state (
+    user_id        INTEGER PRIMARY KEY REFERENCES user(user_id),
+    current_mode   TEXT NOT NULL CHECK (current_mode IN ('sleep', 'active', 'dnd', 'snooze')),
+    override_until TEXT,           -- ISO, NULL = 만료 없음(DND·기본)
+    updated_at     TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS usage_log (
     log_id          INTEGER PRIMARY KEY AUTOINCREMENT,
