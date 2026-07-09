@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import time
 from pathlib import Path
 from typing import Any
 
@@ -85,10 +86,23 @@ class WakeWordConfig:
 
 
 @dataclass(frozen=True)
+class ModeConfig:
+    """선톡축(arch 5장) 기본값 — GUI(3단계)가 생기면 런타임 변경, 여긴 부팅 기본값.
+
+    섹션이 없어도 기본값(23:00~07:00, 30분)으로 뜬다 — 기존 config.yaml 하위호환.
+    """
+
+    sleep_start: time
+    sleep_end: time
+    snooze_minutes: int
+
+
+@dataclass(frozen=True)
 class Config:
     brain: BrainConfig
     mouth: MouthConfig
     wakeword: WakeWordConfig
+    mode: ModeConfig
     db_path: Path
     recent_turns: int
     persona_card_path: Path
@@ -152,6 +166,16 @@ def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
     )
 
 
+def _load_mode(raw: dict[str, Any]) -> ModeConfig:
+    m = raw.get("mode", {})
+    window = m.get("sleep_window", {})
+    return ModeConfig(
+        sleep_start=time.fromisoformat(window.get("start", "23:00")),
+        sleep_end=time.fromisoformat(window.get("end", "07:00")),
+        snooze_minutes=int(m.get("snooze_minutes", 30)),
+    )
+
+
 def load_config(
     root: Path | None = None,
     *,
@@ -175,6 +199,7 @@ def load_config(
         ),
         mouth=_load_mouth(root, raw),
         wakeword=_load_wakeword(root, raw),
+        mode=_load_mode(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
         persona_card_path=root / (persona_card or raw["persona"]["card_path"]),
