@@ -28,6 +28,7 @@ class EventKind(Enum):
     TICK = auto()          # 주기 시계 이벤트 — Heartbeat·모드 판정의 원료 (payload 없음)
     TURN_STARTED = auto()  # 턴 처리 시작 (payload=트리거 텍스트)
     TURN_ENDED = auto()    # 턴 처리 종료 (payload=트리거 텍스트)
+    MODE_CHANGED = auto()  # 선톡축 모드 전이 (payload=(이전, 이후) 모드 문자열) — Stage 14
     SHUTDOWN = auto()      # 데몬 종료 — 전 구독자에게 마지막 인사
 
 
