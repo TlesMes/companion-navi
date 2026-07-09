@@ -1,0 +1,449 @@
+"""데몬 코어 — 상주 프로세스로 귀·시계·대화를 이벤트 버스 위에서 돌린다 (arch 4.11).
+
+실행: python -m navi.daemon [--voice --wakeword ...]   종료: Ctrl+C 또는 `python -m navi.daemon stop`
+
+CLI(navi/cli.py)가 "켜서 대화하고 끄는" 단발 세션이라면, 데몬은 한 번 띄우면 상주한다 —
+잘 때는 호출어만 기다리고, 시계(TICK)가 흘러 이후 Heartbeat(선톡)·모드 판정의 원료가 된다.
+구조는 발행자(ear_task·tick_task)와 구독자(dispatcher·console)로 갈라져 있어 Phase 3의
+나머지(모드 상태머신·GUI·Heartbeat)가 구독자 추가만으로 붙는다.
+
+원칙: "언제"는 결정론 — 이 파일의 루프·tick·종료 판정에 LLM은 없다. 무엇을 말할지만
+dispatcher가 TurnPipeline로 넘긴다. cli.py는 개발 도구로 보존하고, 여기는 같은 부품
+(Brain/Mouth/Conductor/TurnPipeline/ListenSession)을 새로 조립만 한다.
+
+생명주기(Windows, systemd 없음): 시작 시 logs/navi.pid로 단일 인스턴스 가드. 종료는
+Ctrl+C 또는 stop 서브커맨드가 만드는 센티널 파일(logs/navi.stop) — Windows에서 프로세스 간
+시그널이 불안정해 파일 방식을 쓴다(3단계 HTTP 컨트롤 플레인이 생기면 POST /shutdown으로 대체).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import sys
+import time
+import uuid
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from navi.bus import Event, EventBus, EventKind
+from navi.cli import _build_wakeword, _setup_logging, _transcribe_utterance
+from navi.ear import EventKind as ListenKind
+from navi.ear import ListenSession, SleepReason
+from navi.gatekeeper import GateResult, check_gate
+from navi.models import AudioChunk
+
+log = logging.getLogger("navi.daemon")
+
+PID_FILE = Path("logs") / "navi.pid"
+STOP_FILE = Path("logs") / "navi.stop"
+
+_LISTEN_TO_BUS = {
+    ListenKind.WAKE: EventKind.WAKE,
+    ListenKind.UTTERANCE: EventKind.UTTERANCE,
+    ListenKind.SLEEP: EventKind.SLEEP,
+}
+
+
+@dataclass
+class DaemonState:
+    """데몬의 현재 상태 스냅샷 — 3단계 GUI의 GET /status가 이걸 직렬화하면 끝."""
+
+    started_at: float
+    listening_mode: str = "sleep"  # sleep | active
+    turns_count: int = 0
+    last_events: deque[Event] = field(default_factory=lambda: deque(maxlen=50))
+
+    def record(self, event: Event) -> None:
+        self.last_events.append(event)
+        if event.kind == EventKind.WAKE:
+            self.listening_mode = "active"
+        elif event.kind == EventKind.SLEEP:
+            self.listening_mode = "sleep"
+
+    def snapshot(self, *, now: Callable[[], float] = time.monotonic) -> dict:
+        return {
+            "listening_mode": self.listening_mode,
+            "uptime_s": round(now() - self.started_at, 1),
+            "turns_count": self.turns_count,
+            "last_events": [e.kind.name for e in self.last_events],
+        }
+
+
+class DaemonCore:
+    """발행자 태스크들 + dispatcher를 돌리는 오케스트레이터.
+
+    부품은 전부 주입받는다 — frames·시계·transcribe·run_turn을 가짜로 갈아끼우면
+    마이크·키 없이 전 사이클이 유닛 테스트가 된다(ListenSession과 동일 규약).
+    """
+
+    def __init__(
+        self,
+        *,
+        bus: EventBus,
+        transcribe: Callable[..., Awaitable[str]],  # (Utterance) -> 텍스트
+        run_turn: Callable[[str], Awaitable[None]],
+        session: ListenSession | None = None,
+        frames: AsyncIterator[AudioChunk] | None = None,
+        tick_interval: float = 10.0,
+        stop_requested: Callable[[], bool] = lambda: False,
+        stop_poll: float = 1.0,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._bus = bus
+        self._transcribe = transcribe
+        self._run_turn = run_turn
+        self._session = session
+        self._frames = frames
+        self._tick_interval = tick_interval
+        self._stop_requested = stop_requested
+        self._stop_poll = stop_poll
+        self._now = now
+        self.state = DaemonState(started_at=now())
+
+    async def run(self) -> None:
+        """SHUTDOWN 이벤트까지 상주. 발행자 태스크들은 종료 시 전부 취소한다."""
+        core_q = self._bus.subscribe("core", maxsize=256)
+        tasks = [
+            asyncio.create_task(self._tick_loop(), name="tick"),
+            asyncio.create_task(self._stop_watch(), name="stop_watcher"),
+        ]
+        if self._session is not None and self._frames is not None:
+            tasks.append(asyncio.create_task(self._ear_loop(), name="ear"))
+        try:
+            await self._dispatch(core_q)
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._bus.unsubscribe("core")
+
+    # ── 발행자들 ──
+
+    async def _ear_loop(self) -> None:
+        """청취축(ListenSession) 이벤트를 버스 Event로 감싸 발행 — 판정은 하지 않는다."""
+        async for lev in self._session.run(self._frames):
+            payload = lev.utterance if lev.kind == ListenKind.UTTERANCE else lev.reason
+            self._bus.publish(Event(_LISTEN_TO_BUS[lev.kind], self._now(), payload))
+
+    async def _tick_loop(self) -> None:
+        """순수 시계 이벤트 — Heartbeat(4단계)·모드 판정(2단계)이 나중에 구독한다."""
+        while True:
+            await asyncio.sleep(self._tick_interval)
+            self._bus.publish(Event(EventKind.TICK, self._now()))
+
+    async def _stop_watch(self) -> None:
+        while True:
+            await asyncio.sleep(self._stop_poll)
+            if self._stop_requested():
+                log.info("종료 신호 감지 — SHUTDOWN 발행")
+                self._bus.publish(Event(EventKind.SHUTDOWN, self._now()))
+                return
+
+    # ── 구독자(core) ──
+
+    async def _dispatch(self, queue: asyncio.Queue[Event]) -> None:
+        while True:
+            event = await queue.get()
+            self.state.record(event)
+            if event.kind == EventKind.SHUTDOWN:
+                return
+            if event.kind == EventKind.UTTERANCE:
+                await self._handle_utterance(event.payload)
+            elif event.kind == EventKind.TICK:
+                log.debug("tick — %s", self.state.snapshot(now=self._now))
+
+    async def _handle_utterance(self, utterance) -> None:
+        """UTTERANCE → STT → 검문①(결정론) → 통과 시 한 턴. cli의 루프 몸통과 같은 순서."""
+        text = await self._transcribe(utterance)
+        if not text:
+            print("[인식 결과 없음 — 다시 말하세요]")
+            return
+        print(f"나> {text}")
+        if check_gate(text) == GateResult.SLEEP:
+            log.info("검문① SLEEP — %r", text)
+            if self._session is not None:
+                self._session.request_sleep()
+            return
+        self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), text))
+        try:
+            await self._run_turn(text)
+            self.state.turns_count += 1
+        finally:
+            self._bus.publish(Event(EventKind.TURN_ENDED, self._now(), text))
+
+
+# ── 생명주기: pid 가드 · stop 센티널 (Windows에 시그널 대신 파일) ──
+
+
+def _pid_alive(pid: int) -> bool:
+    """PID 생존 확인. Windows의 os.kill은 시그널 0도 TerminateProcess를 부르므로 금지."""
+    if sys.platform == "win32":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def acquire_pidfile(path: Path = PID_FILE) -> bool:
+    """단일 인스턴스 가드 — 살아있는 데몬이 이미 있으면 False. 죽은 pid는 덮어쓴다."""
+    pid = _read_pid(path)
+    if pid is not None and pid != os.getpid() and _pid_alive(pid):
+        return False
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(str(os.getpid()))
+    return True
+
+
+def release_pidfile(path: Path = PID_FILE, stop_path: Path = STOP_FILE) -> None:
+    path.unlink(missing_ok=True)
+    stop_path.unlink(missing_ok=True)
+
+
+def cmd_stop(path: Path = PID_FILE, stop_path: Path = STOP_FILE) -> int:
+    """stop 서브커맨드 — 센티널 파일을 만들고 데몬이 내려갈 때까지 잠깐 기다린다."""
+    pid = _read_pid(path)
+    if pid is None or not _pid_alive(pid):
+        print("데몬이 떠 있지 않습니다")
+        release_pidfile(path, stop_path)  # 죽은 pid 잔재 정리
+        return 1
+    stop_path.parent.mkdir(exist_ok=True)
+    stop_path.touch()
+    print(f"종료 요청 — PID {pid}가 내려가길 기다립니다…")
+    for _ in range(30):  # 최대 ~15초
+        time.sleep(0.5)
+        if not _pid_alive(pid):
+            print("데몬 종료 확인")
+            return 0
+    print("아직 종료 중 — logs/navi.log 확인")
+    return 0
+
+
+# ── 조립부: cli.chat()의 배선을 미러링 (공통화 리팩터링은 다음 PR) ──
+
+
+async def _run(config, args) -> None:
+    from navi.brain import create_brain
+    from navi.conductor import Conductor
+    from navi.memory import MemoryStore
+    from navi.persona import CharacterCard
+    from navi.pipeline import TurnPipeline
+
+    store = MemoryStore(config.db_path)
+    card = CharacterCard.load(config.persona_card_path)
+    brain = create_brain(config)
+    conductor = Conductor(card=card, memory=store, config=config)
+    user_id = store.ensure_user(display_name="친구")
+    session_id = uuid.uuid4().hex
+    bus = EventBus()
+    log.info("데몬 시작 — session=%s, vendor=%s, pid=%d", session_id, config.brain.vendor, os.getpid())
+
+    pipeline: TurnPipeline | None = None
+    if args.voice:
+        from navi.mouth import create_mouth
+
+        mouth = create_mouth(config.mouth.vendor, **config.mouth.options)
+        print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
+        await asyncio.to_thread(mouth.warmup)
+        pipeline = TurnPipeline(
+            brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
+        )
+
+    async def run_turn(text: str) -> None:
+        started = time.perf_counter()
+        print(f"{card.character}> ", end="", flush=True)
+
+        def _echo(token: str) -> None:
+            print(token, end="", flush=True)
+
+        try:
+            if pipeline is not None:
+                result = await pipeline.run_turn(
+                    text, user_id=user_id, session_id=session_id, echo=_echo
+                )
+            else:
+                request = conductor.build_request(
+                    text, user_id=user_id, session_id=session_id
+                )
+                async for token in brain.generate_stream(request):
+                    _echo(token)
+                result = brain.last_result
+            print()
+        except Exception:
+            print()
+            log.exception("두뇌 호출 실패 — 이 턴은 기억에 남기지 않는다")
+            print("(…말이 끊겼다. logs/navi.log 참고)")
+            return
+        if result is None:
+            return
+        store.append_turn(session_id, user_id, role="user", text=text)
+        store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
+        store.log_usage("llm", result.usage)
+        log.info("응답 완료 — %d자, 총 %.0fms", len(result.full_text), (time.perf_counter() - started) * 1000)
+
+    # 귀 배선 — --wakeword일 때만 마이크·STT를 든다 (없으면 tick만 도는 상주 골격)
+    session: ListenSession | None = None
+    frames = None
+    wakeword = None
+    listen_stt = None
+    if args.wakeword:
+        if not config.wakeword.ready:
+            print("[웨이크워드 설정 미비 — config.yaml ear.wakeword 확인]")
+            store.close()
+            return
+        from navi.ear import create_vad
+        from navi.ear.mic import MicListener
+        from navi.stt.fasterwhisper import FasterWhisperStt
+
+        wakeword = _build_wakeword(config.wakeword)
+        vad = create_vad("energy", threshold=args.vad_threshold) if args.vad_threshold else None
+        session = ListenSession(
+            wakeword,
+            vad=vad,
+            active_timeout_ms=(
+                int(args.active_timeout * 1000)
+                if args.active_timeout is not None
+                else config.wakeword.active_timeout_ms
+            ),
+        )
+        frames = MicListener(
+            vad, device=args.mic, sample_rate=session.sample_rate, frame_ms=session.frame_ms
+        ).frames()
+        listen_stt = FasterWhisperStt(model_size=args.stt_model)
+        print(f"[STT 모델 로딩 중… {args.stt_model}]", flush=True)
+        await asyncio.to_thread(listen_stt.warmup)
+        print("[잠든 채 호출어를 기다립니다 — stop 커맨드나 Ctrl+C로 종료]", flush=True)
+    else:
+        print("[귀 없이 상주 — tick만 돕니다. stop 커맨드나 Ctrl+C로 종료]", flush=True)
+
+    async def transcribe(utt) -> str:
+        print("[받아쓰는 중…]")
+        stt_t0 = time.perf_counter()
+        text = await _transcribe_utterance(listen_stt, utt)
+        log.info("STT %.0fms", (time.perf_counter() - stt_t0) * 1000)
+        return text
+
+    core = DaemonCore(
+        bus=bus,
+        transcribe=transcribe,
+        run_turn=run_turn,
+        session=session,
+        frames=frames,
+        tick_interval=args.tick_interval,
+        stop_requested=STOP_FILE.exists,
+    )
+
+    async def console() -> None:
+        """독립 구독자 시연 — 상태 안내는 dispatcher가 아니라 관찰자가 찍는다(GUI 자리)."""
+        queue = bus.subscribe("console")
+        while True:
+            ev = await queue.get()
+            if ev.kind == EventKind.WAKE:
+                print("[나비가 깨어났습니다 — 말하세요]", flush=True)
+            elif ev.kind == EventKind.SLEEP:
+                if ev.payload == SleepReason.TIMEOUT:
+                    print("[조용해서 다시 잠듭니다]", flush=True)
+                else:
+                    print("[나비가 잠들었습니다 — 부르면 깨어납니다]", flush=True)
+            elif ev.kind == EventKind.SHUTDOWN:
+                return
+
+    console_task = asyncio.create_task(console(), name="console")
+    try:
+        await core.run()
+    finally:
+        # 우아한 종료: 재생·생성 중단 → 귀 정리 → 기억 닫기 (arch 4.11)
+        console_task.cancel()
+        if pipeline is not None:
+            pipeline.interrupt()
+        if wakeword is not None:
+            wakeword.close()
+        store.close()
+        log.info("데몬 종료 — session=%s, %s", session_id, core.state.snapshot())
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="navi-daemon", description="companion-navi 상주 데몬")
+    parser.add_argument("command", nargs="?", choices=["run", "stop"], default="run",
+                        help="run(기본): 데몬 기동 / stop: 떠 있는 데몬에 종료 요청")
+    parser.add_argument("--brain", choices=["gemini", "anthropic", "echo"],
+                        help="config.yaml의 brain.vendor를 이번 실행만 덮어쓴다")
+    parser.add_argument("--voice", action="store_true",
+                        help="음성 모드 — 나비가 음성으로 답변(.venv-voice 필요)")
+    parser.add_argument("--wakeword", action="store_true",
+                        help="청취축 켜기 — 마이크+호출어로 대화(.venv-voice 필요)")
+    parser.add_argument("--mouth", choices=["fake", "supertonic", "gptsovits"],
+                        help="mouth.vendor 덮어쓰기 (--voice와 함께)")
+    parser.add_argument("--mic", type=int, metavar="INDEX", help="입력 장치 번호")
+    parser.add_argument("--vad-threshold", type=float, metavar="RMS", help="발화 RMS 임계")
+    parser.add_argument("--stt-model", default="large-v3-turbo", metavar="SIZE",
+                        help="faster-whisper 모델 크기")
+    parser.add_argument("--active-timeout", type=float, metavar="SEC",
+                        help="ACTIVE 유지 시간(무음 기준)")
+    parser.add_argument("--tick-interval", type=float, default=10.0, metavar="SEC",
+                        help="TICK 발행 주기 (기본 10초)")
+    parser.add_argument("--db", help="기억 DB 경로 덮어쓰기(테스트용)")
+    parser.add_argument("-v", "--verbose", action="count", default=0)
+    args = parser.parse_args()
+
+    # 상주 프로세스는 출력이 파일로 리다이렉트되기 쉽다(Windows 기본 cp949) — 인코딩 불가
+    # 문자로 죽지 않게 replace로 완화한다. 콘솔 인코딩 자체는 건드리지 않는다.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+    if args.command == "stop":
+        raise SystemExit(cmd_stop())
+
+    from dataclasses import replace
+
+    from navi.config import load_config
+
+    _setup_logging(args.verbose)
+    config = load_config(mouth_vendor=args.mouth)
+    if args.brain:
+        config = replace(config, brain=replace(config.brain, vendor=args.brain))
+    if args.db:
+        config = replace(config, db_path=Path(args.db))
+
+    if not acquire_pidfile():
+        print(f"이미 실행 중입니다 (PID {_read_pid(PID_FILE)}) — stop으로 먼저 내리세요")
+        raise SystemExit(1)
+    STOP_FILE.unlink(missing_ok=True)  # 이전 실행의 잔여 센티널 제거
+    try:
+        asyncio.run(_run(config, args))
+    except KeyboardInterrupt:
+        print("\n(나비 데몬 내려감)")
+    finally:
+        release_pidfile()
+        if args.voice:
+            # cli.py os._exit(0)과 동일 사유 — torch/PortAudio 잔여 스레드가 종료를 막는다
+            os._exit(0)
+
+
+if __name__ == "__main__":
+    main()
