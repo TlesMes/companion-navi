@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from navi.persona.voice import PersonaVoice
+
 
 @dataclass(frozen=True)
 class PersonaProfile:
@@ -29,9 +31,14 @@ class PersonaProfile:
 class CharacterCard:
     character: str
     profiles: tuple[PersonaProfile, ...]  # min_intimacy 오름차순
+    # 목소리 번들(voice.py) — 음색·톤은 페르소나 소유(2026.07.10 결정).
+    # 옵셔널: 섹션 없는 카드는 config mouth.voice 폴백(하위호환).
+    voice: PersonaVoice | None = None
 
     @classmethod
-    def load(cls, path: Path | str) -> CharacterCard:
+    def load(cls, path: Path | str, *, root: Path | None = None) -> CharacterCard:
+        """카드 로드. root는 voice 섹션의 상대경로(wav·ckpt) 절대화 기준 —
+        gptsovits 웜업이 os.chdir를 하므로 파싱 시점에 고정해야 한다(voice.py)."""
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         profiles = sorted(
             (
@@ -50,7 +57,12 @@ class CharacterCard:
         )
         if not profiles:
             raise ValueError(f"캐릭터 카드에 프로필이 없습니다: {path}")
-        return cls(character=raw["character"], profiles=tuple(profiles))
+        voice = (
+            PersonaVoice.parse(raw["voice"], root=root) if raw.get("voice") else None
+        )
+        return cls(
+            character=raw["character"], profiles=tuple(profiles), voice=voice
+        )
 
     def profile_for(self, intimacy: float) -> PersonaProfile:
         """min_intimacy ≤ 친밀도인 프로필 중 가장 높은 단계. 미달이면 첫 단계."""

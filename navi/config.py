@@ -107,6 +107,9 @@ class ControlConfig:
 
 @dataclass(frozen=True)
 class Config:
+    # 리포 루트 — persona 카드 voice 섹션 등 런타임에 상대경로를 풀 때의 기준.
+    # gptsovits 웜업이 os.chdir를 하므로 "그때 가서 CWD 기준"은 성립하지 않는다.
+    root: Path
     brain: BrainConfig
     mouth: MouthConfig
     wakeword: WakeWordConfig
@@ -210,6 +213,7 @@ def load_config(
     if mouth_vendor:
         raw.setdefault("mouth", {})["vendor"] = mouth_vendor
     return Config(
+        root=root.resolve(),
         brain=BrainConfig(
             vendor=raw["brain"]["vendor"],
             models=dict(raw["brain"]["models"]),

@@ -4,6 +4,15 @@
 
 character: 나비
 
+# 목소리 번들 — 음색(가중치)·톤(레퍼런스)은 페르소나 소유 (2026.07.10 결정, gui.md PR ②).
+# 나비 전용 fine-tune은 아직 없음 → supertonic 프리셋(F1)만. gptsovits 섹션은 확보 시 추가.
+voice:
+  name: navi
+  speed: 1.0
+  supertonic:
+    tones:
+      - { name: 기본, icon: mood-smile, voice_id: F1 }
+
 profiles:
   # 친밀도 단계별 프로필. Phase 1은 1단계만 — 단계 추가는 Phase 4(페르소나 전환).
   - name: 새 식구

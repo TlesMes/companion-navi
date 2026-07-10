@@ -21,6 +21,7 @@ MODELS = {
 
 def make_config(tmp_path, vendor: str = "echo") -> Config:
     return Config(
+        root=tmp_path,
         brain=BrainConfig(vendor=vendor, models=MODELS),
         mouth=MouthConfig(
             vendor="fake",
@@ -72,6 +73,31 @@ def test_build_request_assembles_persona_memory_trigger(tmp_path):
     assert [m.text for m in request.messages] == ["어제 한 얘기", "응 들었어", "오늘 트리거"]
     assert request.messages[-1].role == "user"  # 트리거는 항상 마지막 user 메시지
     assert request.model == "echo"
+
+
+def test_set_card_swaps_persona_from_next_request(tmp_path):
+    """페르소나 카드 교체(Stage 15-②) — 다음 build_request의 system이 새 카드로.
+
+    aris.yaml은 gitignore(저작권 로컬 전용)라 인라인 미니 카드로 검증한다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+    assert "나비" in conductor.build_request("x", user_id=uid, session_id="s").system
+
+    other = tmp_path / "other.yaml"
+    other.write_text(
+        "character: 다른애\n"
+        "profiles:\n"
+        "  - {name: 기본, min_intimacy: 0, background: 배경, traits: 성격,\n"
+        "     example_dialogues: [{user: u, assistant: a}]}\n",
+        encoding="utf-8",
+    )
+    card = CharacterCard.load(other)
+    conductor.set_card(card)
+    assert conductor.card is card
+    request = conductor.build_request("y", user_id=uid, session_id="s")
+    assert "다른애" in request.system
+    assert "나비" not in request.system.split("\n")[0]  # 첫 줄(정체성 선언)이 교체됨
 
 
 def test_recent_turns_window_respected(tmp_path):
