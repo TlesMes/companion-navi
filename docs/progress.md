@@ -7,6 +7,24 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15-① — 컨트롤 플레인: STAGE 계측 + HTTP/WS 서버 (2026.07.10, `feat/core-control-plane`):**
+- **STAGE 계측([navi/bus.py](../navi/bus.py)·[navi/pipeline.py](../navi/pipeline.py)):** `EventKind.STAGE`
+  payload=(stage, phase, detail) — stt·gate는 데몬이 직접 발행, brain 첫 토큰(TTFT)·tts
+  진입/종료는 TurnPipeline `on_stage` 콜백으로(파이프라인은 버스를 모름 — 데몬이 연결).
+  부수 이득: Stage 12 수동 측정하던 구간별 지연이 상시 기록 → D8(GPU) 재측정 재료.
+- **컨트롤 플레인([navi/control/server.py](../navi/control/server.py)):** FastAPI+uvicorn을 데몬
+  이벤트 루프의 태스크로(gui.md 아키텍처 그대로). `/status`·`/mode/{cmd}`·`/mode/window`·
+  `/shutdown`·`WS /events`(링버퍼 50 백필 → 라이브). GUI 버튼은 음성 명령(검문①)과 같은
+  `DaemonCore.command_mode()` 단일 진입점 — 결정론 게이트는 데몬 소유. config `control:`
+  (enabled·port 8765), 바인딩 127.0.0.1 고정, 서버 태스크 예외는 데몬이 삼킨다.
+- **구현 중 결정 2건:** ① 엔드포인트 전부 async def — FastAPI가 동기 def를 스레드풀로 돌려
+  SQLite 영속화의 단일 스레드 규약이 깨지는 것(500)을 E2E에서 실측, 루프 실행으로 해소.
+  ② uvicorn 시그널 가로채기 무력화(`_DaemonServer`) — Ctrl+C는 데몬 소유,
+  install_signal_handlers·capture_signals 양쪽 오버라이드.
+- **검증:** 유닛 164개 green(control 10·pipeline 2 신규, TestClient — 서버·마이크·키 불필요).
+  오프라인 E2E(echo 두뇌): curl로 snooze→dnd→취침창 변경(즉시 sleep 반영)→`mode_state`
+  영속화·MODE_CHANGED 콘솔 수신→POST /shutdown 종료(exit 0·pid 정리) 실측.
+
 **Stage 15 준비 — 최소 GUI 설계 확정 (2026.07.10, 구현 착수 전):**
 - **상세 설계·구현 계획·확정 목업: [docs/design/gui.md](./design/gui.md) +
   [gui_mockup.html](./design/gui_mockup.html)** — 아래는 요지.
@@ -99,7 +117,7 @@
 - **다음 갈림길: Phase 3 착수 순서 (2026.07.08 합의)** — 목표 재정의 중 "호출 즉답 ≤0.5s"는 D7로 충족, "명령 답변 ≤3s"는 D8 대기.
   1. ✅ **데몬화(Daemon Core, arch 4.11)** — 완료(Stage 13). 이벤트 버스=경량 pub/sub 자작, 상주=콘솔+명시적 실행/종료, GUI용은 상태 스냅샷 객체까지(HTTP/WS는 3번에서).
   2. ✅ **모드 상태머신 + 결정론 게이트(arch 5장, 검문②)** — 완료(Stage 14). SLEEP/ACTIVE/DND/SNOOZE + `can_speak_now` 게이트, 음성 명령·영속화·MODE_CHANGED 배선까지. GUI 전이(같은 command API)·취침창 런타임 변경은 3번에서 소비.
-  3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저. **← 다음 작업 — 설계 확정, 상단 "Stage 15 준비" 참조**
+  3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저. **← 진행 중 — PR ①(컨트롤 플레인) 완료, ②(음성 교체)·③(GUI 앱) 남음. 설계는 상단 "Stage 15 준비" 참조**
   4. **Heartbeat 2·3층(arch 4.4)** — 타이밍(가중치+jitter) + 주제 도출 → 첫 선제 발화. interaction_log 수집 시작.
   5. **감정 태그→레퍼런스 전환** — Brain이 감정 태그 출력, Mouth가 감정별 레퍼런스 오디오 선택(D3 "톤=레퍼런스 제어" 활용). D9 친밀도 산식 없이 얹는 1차 감정선.
   - Schedule(D11)·Feed(D13)는 위 순서 진행 중 결정 시점 도래 시 D번호로 처리.
