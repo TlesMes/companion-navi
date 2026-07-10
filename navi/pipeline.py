@@ -34,11 +34,16 @@ class TurnPipeline:
         mouth: MouthAdapter,
         conductor: Conductor,
         voice: VoiceProfile,
+        on_stage: Callable[[str, str, dict | None], None] | None = None,
     ) -> None:
         self._brain = brain
         self._mouth = mouth
         self._conductor = conductor
         self._voice = voice
+        # 단계 계측 콜백 (stage, phase, detail) — 파이프라인은 버스를 모른다(계층 분리),
+        # 데몬이 bus.publish로 연결한다(Stage 15). 1차는 brain 첫 토큰·tts 진입/종료만,
+        # TTFA(첫 오디오)는 어댑터 확장이 필요해 후속.
+        self._on_stage = on_stage or (lambda stage, phase, detail=None: None)
 
     async def run_turn(
         self,
@@ -56,17 +61,34 @@ class TurnPipeline:
         request = self._conductor.build_request(
             trigger_text, user_id=user_id, session_id=session_id
         )
+        self._on_stage("brain", "start", None)
         tts_t0 = time.perf_counter()
-        tokens = self._tee(self._brain.generate_stream(request), echo)
+        tokens = self._tee(self._brain.generate_stream(request), echo, brain_t0=tts_t0)
+        # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
+        self._on_stage("tts", "start", None)
         await self._mouth.speak_stream(tokens, self._voice)
-        log.info("TTS(합성+재생) %.0fms", (time.perf_counter() - tts_t0) * 1000)
+        tts_ms = (time.perf_counter() - tts_t0) * 1000
+        self._on_stage("tts", "done", {"ms": round(tts_ms)})
+        log.info("TTS(합성+재생) %.0fms", tts_ms)
         return self._brain.last_result
 
     async def _tee(
-        self, source: AsyncIterator[str], sink: Callable[[str], None] | None
+        self,
+        source: AsyncIterator[str],
+        sink: Callable[[str], None] | None,
+        *,
+        brain_t0: float,
     ) -> AsyncIterator[str]:
-        """토큰을 Mouth로 흘리며 동시에 sink(화면)에도 내보낸다 — 변환 없이 통과만."""
+        """토큰을 Mouth로 흘리며 동시에 sink(화면)에도 내보낸다 — 변환 없이 통과만.
+
+        첫 토큰에서 brain done을 계측한다(TTFT) — 이후 토큰은 tts 구간과 겹쳐 흐른다.
+        """
+        first = True
         async for token in source:
+            if first:
+                first = False
+                ttft_ms = (time.perf_counter() - brain_t0) * 1000
+                self._on_stage("brain", "done", {"ttft_ms": round(ttft_ms)})
             if sink is not None:
                 sink(token)
             yield token

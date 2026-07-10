@@ -29,6 +29,9 @@ class EventKind(Enum):
     TURN_STARTED = auto()  # 턴 처리 시작 (payload=트리거 텍스트)
     TURN_ENDED = auto()    # 턴 처리 종료 (payload=트리거 텍스트)
     MODE_CHANGED = auto()  # 능동축 모드 전이 (payload=(이전, 이후) 모드 문자열) — Stage 14
+    STAGE = auto()         # 턴 파이프라인 단계 계측 (payload=(stage, phase, detail)) — Stage 15
+    #   stage ∈ {stt, gate, brain, tts}, phase ∈ {start, done}, detail=소요 ms·게이트 결과 등.
+    #   GUI 노드 점등 재료이자 구간별 지연의 상시 기록(D8 재측정 재료).
     SHUTDOWN = auto()      # 데몬 종료 — 전 구독자에게 마지막 인사
 
 
