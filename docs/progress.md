@@ -8,6 +8,8 @@
 ## Phase 3 — 능동성 (진행 중)
 
 **Stage 15 준비 — 최소 GUI 설계 확정 (2026.07.10, 구현 착수 전):**
+- **상세 설계·구현 계획·확정 목업: [docs/design/gui.md](./design/gui.md) +
+  [gui_mockup.html](./design/gui_mockup.html)** — 아래는 요지.
 - **스택:** 컨트롤 플레인 = FastAPI+uvicorn을 **데몬 프로세스 안 asyncio 태스크**로(버스가
   프로세스 내 pub/sub이라 서버는 데몬에 얹는 게 유일한 구독 경로 — "느린 구독자 격리"는 버스
   층이 이미 보장). GUI = **pywebview 별도 프로세스**(`python -m navi.gui`, Edge WebView2 네이티브
@@ -31,9 +33,9 @@
   음색 가중치 교체(change_*_weights 재호출 — 재생 중 금지+로딩 중 턴 차단 유예 필요) 모두 가능.
   ref_text가 어댑터 생성자에 박혀 있어 VoiceProfile로 옮기는 소규모 리팩터 동반. 엔진 핫스왑만
   불가(아래 백로그).
-- **PR 분할:** ① `feat/core-control-plane`(STAGE 계측 + HTTP/WS 서버 — TestClient 유닛 + curl
-  검증) → ② `feat/gui-app`(pywebview 창 + 프런트 — 실기 버튼 전이 검증). 상세 구현 계획은
-  착수 세션에서 수립.
+- **PR 분할(3개):** ① `feat/core-control-plane`(STAGE 계측 + HTTP/WS 서버) →
+  ② `feat/mouth-voice-swap`(페르소나·톤 런타임 교체 — VoiceProfile.ref_text 리팩터 포함) →
+  ③ `feat/gui-app`(pywebview 창 + 프런트). 각 PR의 범위·검증 방법은 gui.md에 확정.
 
 **Stage 14 — 모드 상태머신 + 검문②(선톡축, arch 5장) (2026.07.09, `feat/heartbeat-mode`):**
 - **선톡축 상태머신([navi/heartbeat/mode.py](../navi/heartbeat/mode.py)):** SLEEP/ACTIVE/DND/SNOOZE

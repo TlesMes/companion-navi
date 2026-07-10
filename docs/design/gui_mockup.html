@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>나비 GUI 목업 v3 (확정, 2026.07.10)</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+  :root {
+    --surface-1: #262521; --surface-2: #2d2b27; --surface-3: #34322d;
+    --border: #3d3a34; --border-strong: #4a463f; --border-stronger: #6a6459;
+    --text-primary: #ece9e2; --text-secondary: #a8a396; --text-muted: #7a756a;
+    --bg-accent: #1e3a5f; --text-accent: #8ec2f2; --border-accent: #3b82d0; --fill-accent: #4a9eea;
+    --bg-success: #1d3b2a; --text-success: #7fd6a4;
+    --bg-pro: #3a2f5b;
+    --radius: 8px; --font-mono: Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem; background: #1f1e1b; color: var(--text-primary);
+    font-family: "Malgun Gothic", system-ui, sans-serif; font-size: 14px;
+  }
+  p { margin: 0; }
+  button {
+    background: transparent; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+    color: var(--text-primary); font-family: inherit; cursor: pointer;
+  }
+  button:hover { background: var(--surface-1); }
+  @keyframes navipulse { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
+  .frame-label { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+  .nvnode { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .nvlink { flex: 1; height: 2px; background: var(--border-strong); }
+  .nvtone { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .wave { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .wave span { width: 3px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<!-- 목업 확정본 (v3) — 설계 문서: gui.md. 세 프레임: 메인 창 / 페르소나·톤 패널 / 로그 다이얼로그 -->
+<div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; justify-content: center;">
+
+  <!-- ── 메인 창 ── -->
+  <div>
+    <p class="frame-label">메인 창 (360×640 pywebview) — 두뇌 단계 점등 상태</p>
+    <div style="width: 340px; background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 12px; overflow: hidden;">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px;">
+        <div style="width: 28px; height: 28px; border-radius: 50%; background: var(--bg-accent); display: flex; align-items: center; justify-content: center; color: var(--text-accent); font-size: 12px; font-weight: 500;">나</div>
+        <p style="font-size: 14px; font-weight: 500; flex: 1;">나비</p>
+        <span style="font-size: 11px; padding: 3px 10px; border-radius: 999px; background: var(--bg-success); color: var(--text-success); font-weight: 500;"><i class="ti ti-message-circle" style="font-size: 12px; vertical-align: -2px;"></i> ACTIVE</span>
+        <i class="ti ti-list" style="font-size: 17px; color: var(--text-muted);" title="로그 다이얼로그"></i>
+        <i class="ti ti-x" style="font-size: 17px; color: var(--text-muted);"></i>
+      </div>
+      <div style="padding: 14px 18px 4px;">
+        <div style="display: flex; align-items: center;">
+          <div class="nvnode" style="background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);"><i class="ti ti-ear" style="font-size: 18px;"></i></div>
+          <div class="nvlink"></div>
+          <div class="nvnode" style="background: var(--surface-1); border: 0.5px solid var(--border-strong); color: var(--text-secondary);"><i class="ti ti-abc" style="font-size: 18px;"></i></div>
+          <div class="nvlink"></div>
+          <div class="nvnode" style="background: var(--surface-1); border: 0.5px solid var(--border-strong); color: var(--text-secondary);"><i class="ti ti-shield" style="font-size: 18px;"></i></div>
+          <div class="nvlink"></div>
+          <div style="border: 2px solid var(--border-accent); border-radius: 50%; padding: 3px; animation: navipulse 1.6s ease-in-out infinite;">
+            <div class="nvnode" style="background: var(--bg-accent); color: var(--text-accent);"><i class="ti ti-brain" style="font-size: 19px;"></i></div>
+          </div>
+          <div class="nvlink" style="background: var(--border);"></div>
+          <div class="nvnode" style="background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);"><i class="ti ti-volume" style="font-size: 18px;"></i></div>
+        </div>
+        <p style="margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-align: center;">생각 중… <span style="color: var(--text-muted);">"오늘 날씨 어때"</span></p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px; padding: 12px 16px 0;">
+        <div style="display: flex; align-items: center; gap: 8px; flex: 1; background: var(--surface-1); border-radius: 999px; padding: 5px 12px 5px 6px;">
+          <div style="width: 26px; height: 26px; border-radius: 50%; background: var(--bg-accent); display: flex; align-items: center; justify-content: center; color: var(--text-accent); font-size: 11px; font-weight: 500;">나</div>
+          <span style="font-size: 12px; font-weight: 500;">나비</span>
+          <i class="ti ti-chevron-down" style="font-size: 14px; color: var(--text-muted); margin-left: auto;"></i>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <div class="nvtone" style="background: var(--bg-accent); border: 2px solid var(--border-accent); color: var(--text-accent);"><i class="ti ti-mood-smile"></i></div>
+          <div class="nvtone" style="background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);"><i class="ti ti-mood-happy"></i></div>
+          <div class="nvtone" style="background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);"><i class="ti ti-moon-stars"></i></div>
+          <div class="nvtone" style="background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);"><i class="ti ti-flare"></i></div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; padding: 12px 16px 0;">
+        <button style="font-size: 12px; padding: 7px 2px;"><i class="ti ti-sun" style="font-size: 14px; vertical-align: -2px;"></i> 기상</button>
+        <button style="font-size: 12px; padding: 7px 2px;"><i class="ti ti-clock" style="font-size: 14px; vertical-align: -2px;"></i> 스누즈</button>
+        <button style="font-size: 12px; padding: 7px 2px;"><i class="ti ti-bell-off" style="font-size: 14px; vertical-align: -2px;"></i> DND</button>
+        <button style="font-size: 12px; padding: 7px 2px;"><i class="ti ti-moon" style="font-size: 14px; vertical-align: -2px;"></i> 재우기</button>
+      </div>
+      <div style="padding: 14px 16px 14px;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+          <i class="ti ti-moon" style="font-size: 13px; color: var(--text-muted);"></i>
+          <span style="font-size: 11px; color: var(--text-secondary);">취침창</span>
+          <span style="font-size: 11px; font-family: var(--font-mono);">23:00 – 07:00</span>
+          <span style="font-size: 11px; color: var(--text-muted); margin-left: auto;">클릭해 편집</span>
+        </div>
+        <div style="position: relative; height: 14px; border-radius: 7px; background: var(--surface-1); border: 0.5px solid var(--border); overflow: hidden;">
+          <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 29%; background: var(--bg-pro);"></div>
+          <div style="position: absolute; right: 0; top: 0; bottom: 0; width: 4.2%; background: var(--bg-pro);"></div>
+          <div style="position: absolute; left: 59%; top: -1px; bottom: -1px; width: 2px; background: var(--fill-accent);"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 3px; font-family: var(--font-mono);">
+          <span>0</span><span>6</span><span>12</span><span>18</span><span>24</span>
+        </div>
+        <div style="display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-muted);">
+          <span><i class="ti ti-clock-hour-3" style="font-size: 12px; vertical-align: -2px;"></i> 2h 13m</span>
+          <span><i class="ti ti-messages" style="font-size: 12px; vertical-align: -2px;"></i> 턴 14회</span>
+          <span style="margin-left: auto;"><i class="ti ti-plug-connected" style="font-size: 12px; vertical-align: -2px; color: var(--text-success);"></i> 데몬 연결됨</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 페르소나·톤 패널 ── -->
+  <div>
+    <p class="frame-label">페르소나·톤 선택 — 칩 클릭 시 펼침</p>
+    <div style="width: 300px; background: var(--surface-3); border: 0.5px solid var(--border-strong); border-radius: 12px; padding: 12px 14px;">
+      <p style="margin-bottom: 8px; font-size: 11px; color: var(--text-secondary);"><i class="ti ti-id-badge-2" style="font-size: 13px; vertical-align: -2px;"></i> 페르소나 카드</p>
+      <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+        <div style="flex: 1; border: 2px solid var(--border-accent); border-radius: var(--radius); padding: 10px 8px; text-align: center;">
+          <div style="width: 34px; height: 34px; border-radius: 50%; background: var(--bg-accent); color: var(--text-accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; margin: 0 auto 6px;">나</div>
+          <p style="font-size: 12px; font-weight: 500;">나비</p>
+          <p style="font-size: 10px; color: var(--text-muted);">navi.yaml</p>
+        </div>
+        <div style="flex: 1; border: 0.5px solid var(--border); border-radius: var(--radius); padding: 10px 8px; text-align: center;">
+          <div style="width: 34px; height: 34px; border-radius: 50%; background: var(--surface-1); color: var(--text-muted); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 500; margin: 0 auto 6px;">아</div>
+          <p style="font-size: 12px;">아리스</p>
+          <p style="font-size: 10px; color: var(--text-muted);">arisu.yaml</p>
+        </div>
+        <div style="flex: 1; border: 0.5px dashed var(--border-strong); border-radius: var(--radius); padding: 10px 8px; text-align: center; color: var(--text-muted);">
+          <div style="width: 34px; height: 34px; border-radius: 50%; border: 0.5px dashed var(--border-strong); display: flex; align-items: center; justify-content: center; margin: 0 auto 6px;"><i class="ti ti-plus" style="font-size: 15px;"></i></div>
+          <p style="font-size: 11px;">카드 추가</p>
+        </div>
+      </div>
+      <p style="margin-bottom: 8px; font-size: 11px; color: var(--text-secondary);"><i class="ti ti-wave-sine" style="font-size: 13px; vertical-align: -2px;"></i> 목소리 톤 — 레퍼런스 오디오</p>
+      <div style="display: flex; flex-direction: column; gap: 6px;">
+        <div style="display: flex; align-items: center; gap: 10px; background: var(--bg-accent); border-radius: var(--radius); padding: 7px 10px;">
+          <i class="ti ti-mood-smile" style="font-size: 17px; color: var(--text-accent);"></i>
+          <span style="font-size: 12px; font-weight: 500; color: var(--text-accent); flex: 1;">기본</span>
+          <span class="wave"><span style="height: 6px; background: var(--text-accent);"></span><span style="height: 12px; background: var(--text-accent);"></span><span style="height: 8px; background: var(--text-accent);"></span><span style="height: 13px; background: var(--text-accent);"></span><span style="height: 5px; background: var(--text-accent);"></span></span>
+          <i class="ti ti-player-play" style="font-size: 15px; color: var(--text-accent);"></i>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; background: var(--surface-2); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 7px 10px;">
+          <i class="ti ti-mood-happy" style="font-size: 17px; color: var(--text-secondary);"></i>
+          <span style="font-size: 12px; color: var(--text-secondary); flex: 1;">신남</span>
+          <span class="wave"><span style="height: 10px; background: var(--border-stronger);"></span><span style="height: 14px; background: var(--border-stronger);"></span><span style="height: 7px; background: var(--border-stronger);"></span><span style="height: 12px; background: var(--border-stronger);"></span><span style="height: 9px; background: var(--border-stronger);"></span></span>
+          <i class="ti ti-player-play" style="font-size: 15px; color: var(--text-muted);"></i>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; background: var(--surface-2); border: 0.5px solid var(--border); border-radius: var(--radius); padding: 7px 10px;">
+          <i class="ti ti-moon-stars" style="font-size: 17px; color: var(--text-secondary);"></i>
+          <span style="font-size: 12px; color: var(--text-secondary); flex: 1;">차분</span>
+          <span class="wave"><span style="height: 5px; background: var(--border-stronger);"></span><span style="height: 8px; background: var(--border-stronger);"></span><span style="height: 6px; background: var(--border-stronger);"></span><span style="height: 7px; background: var(--border-stronger);"></span><span style="height: 4px; background: var(--border-stronger);"></span></span>
+          <i class="ti ti-player-play" style="font-size: 15px; color: var(--text-muted);"></i>
+        </div>
+      </div>
+      <p style="margin-top: 10px; font-size: 10.5px; color: var(--text-muted);"><i class="ti ti-info-circle" style="font-size: 12px; vertical-align: -2px;"></i> 교체는 다음 턴부터 적용 · 재생 중엔 대기<br>
+      <i class="ti ti-pin" style="font-size: 12px; vertical-align: -2px;"></i> 최종형: 두뇌가 고른 톤이 자동 점등, 클릭=핀 고정 (Phase 3-5)</p>
+    </div>
+  </div>
+
+  <!-- ── 로그 다이얼로그 ── -->
+  <div>
+    <p class="frame-label">로그 다이얼로그 — 헤더의 <i class="ti ti-list"></i> 클릭 시</p>
+    <div style="width: 300px; background: var(--surface-3); border: 0.5px solid var(--border-strong); border-radius: 12px; overflow: hidden;">
+      <div style="display: flex; align-items: center; padding: 10px 14px; border-bottom: 0.5px solid var(--border);">
+        <p style="font-size: 13px; font-weight: 500; flex: 1;">이벤트 로그</p>
+        <span style="font-size: 11px; color: var(--text-muted); margin-right: 10px;">라이브</span>
+        <i class="ti ti-x" style="font-size: 16px; color: var(--text-muted);"></i>
+      </div>
+      <div style="font-family: var(--font-mono); font-size: 11.5px; line-height: 2; color: var(--text-secondary); padding: 10px 14px;">
+        <div><span style="color: var(--text-muted);">14:02:31</span> STAGE brain <span style="color: var(--text-accent);">시작</span></div>
+        <div><span style="color: var(--text-muted);">14:02:31</span> STAGE gate <span style="color: var(--text-muted);">통과</span></div>
+        <div><span style="color: var(--text-muted);">14:02:29</span> STAGE stt <span style="color: var(--text-muted);">1.7s "오늘 날씨 어때"</span></div>
+        <div><span style="color: var(--text-muted);">14:02:27</span> UTTERANCE <span style="color: var(--text-muted);">3.1s</span></div>
+        <div><span style="color: var(--text-muted);">14:02:20</span> WAKE <span style="color: var(--text-muted);">「나비야」 0.63</span></div>
+        <div><span style="color: var(--text-muted);">14:00:05</span> MODE_CHANGED <span style="color: var(--text-muted);">snooze → active</span></div>
+        <div><span style="color: var(--text-muted);">13:58:44</span> TURN_ENDED <span style="color: var(--text-muted);">e2e 9.4s</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
