@@ -40,8 +40,8 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
 | `PUT /mode/window` | `ModeMachine.set_window()` | 취침창 런타임 변경 (Stage 14 예고) |
 | `POST /shutdown` | `bus.publish(SHUTDOWN)` | 센티널 파일(`logs/navi.stop`) 방식 대체 (Stage 13 예고) |
 | `WS /events` | `bus.subscribe("gui")` | 접속 시 `last_events` 링버퍼(50)로 초기 채움 후 라이브 |
-| `GET /voices` · `POST /voice` | `TurnPipeline.set_voice()` | 톤(레퍼런스) 교체 — 재생 중(`is_playing`)이면 409 |
-| `GET /personas` · `POST /persona` | `Conductor.set_card()` | `personas/*.yaml` 스캔·reload — 다음 턴부터 적용 |
+| `GET /voices` · `POST /voice` | `TurnPipeline.set_voice()` | **현재 페르소나의** 톤(레퍼런스) 목록·선택 — 재생 중(`is_playing`)이면 409 |
+| `GET /personas` · `POST /persona` | `SwapRuntime.swap_persona()` | 페르소나 **번들** 교체(카드 즉시, 가중치는 후속) — 재생 중 409 |
 
 ## PR 분할 (검증 단위 3개)
 
@@ -64,20 +64,37 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
 
 ### PR ② `feat/mouth-voice-swap` — 페르소나·톤 런타임 교체
 
+- **페르소나-음색 번들 (2026.07.10 결정, 원안 개정)**: 페르소나 = 카드(성격·말투) +
+  음색(fine-tune 가중치) + 톤 목록(그 음색의 레퍼런스 wav). 톤 레퍼런스는 해당 fine-tune
+  화자의 녹음이라 다른 가중치에 교차 적용하면 목소리 연속성 원칙 위반 — 전역 config
+  `mouth.tones:` 안은 폐기하고 **persona yaml이 `voice:` 섹션으로 소유**(아래 config 절 스키마).
+  런타임 독립 축은 "현재 페르소나 안의 톤 선택" 하나뿐, POST /persona가 번들 교체의 진입점.
 - **`VoiceProfile.ref_text: str = ""` 추가** ([navi/models.py](../../navi/models.py)):
   gptsovits `speak_stream`이 `voice.ref_text` 우선, 빈값이면 생성자 `ref_text`(하위호환).
   근거: 레퍼런스 wav(`vendor_voice_id`)는 이미 매 턴 인자인데 전사만 어댑터에 박혀 있어
   톤 교체가 막힘 — 2026.07.10 실사(progress.md 백로그 항목 참조).
-- **config `mouth.tones:`** — `[{name, icon, voice_id, ref_text}]` 목록. 기본 톤 = 기존 voice.
-- **`TurnPipeline.set_voice(profile)` / `current_voice`** — 다음 턴부터 적용(턴 중 교체 없음).
+- **persona yaml `voice:` 섹션**(옵셔널 — 없으면 config `mouth.voice` 폴백): `name`·`speed` +
+  벤더명 하위 섹션(config `_load_mouth` 관례와 동일). gptsovits는 `gpt_ckpt`/`sovits_ckpt`/
+  `ref_lang`/`gen_lang`(전방호환 — 이번 PR은 파싱만, 런타임 적용은 가중치 교체 후속 PR과 한 몸)
+  + `tones:`(첫 항목이 기본 톤). **부팅 시에도 번들 우선** — 카드에 활성 벤더 섹션이 있으면
+  mouth options(ckpt류)·초기 VoiceProfile을 카드에서 만든다.
+- **`TurnPipeline.set_voice(profile)` / `current_voice` / `is_playing()`** — 다음 턴부터
+  적용(턴 중 교체 없음), is_playing은 mouth 위임.
 - **`Conductor.set_card(card)`** + 데몬 `run_turn`의 `card.character` 클로저 캡처를 동적 참조로.
-- API: 위 표의 /voices·/voice·/personas·/persona.
+- **`SwapRuntime` 파사드**(navi/control/runtime.py 신설) — conductor·pipeline(텍스트 모드면
+  None)·personas 디렉토리를 들고 스캔·교체·409 판정 담당, `create_app(swap=...)` 옵셔널
+  주입(미주입 503 — DaemonCore 비대화 방지, PR ① 테스트 보존). **`persona_id`(카드 주인)와
+  `voice_persona_id`(톤 세트 주인)를 분리 추적** — 가중치 불일치 페르소나로 교체하면 카드만
+  바뀌고 톤 세트·VoiceProfile은 유지(`voice_swapped: false`), 가중치 교체 후속 PR이 이 분열을
+  해소하며 두 id를 다시 합친다.
+- API: 위 표의 /voices·/voice·/personas·/persona. **/persona도 재생 중 409**(voice 교체 내포).
 - 톤 칩 최종형 메모: Phase 3-5(감정 태그)에서 STAGE tts payload에 tone을 실어 **자동 점등**,
   클릭은 **핀(고정) 오버라이드**로 승격 — 이번 PR은 수동 선택(=핀만 있는 상태)으로 시작.
 - 음색(fine-tune 가중치) 교체 API는 **후속**(가능 확인됨 — `change_*_weights` 재호출,
-  재생 중 금지 + 로딩 중 턴 차단 유예 필요). 엔진 핫스왑은 불가(백로그).
+  재생 중 금지 + 로딩 중 턴 차단 유예 필요). 엔진 핫스왑은 안 함(아래 결정).
 - **검증**: fake mouth 유닛(ref_text 우선순위·재생 중 409) · echo E2E — /voice 교체 후
-  다음 턴 VoiceProfile 반영·/persona reload 후 시스템 프롬프트 교체 확인.
+  다음 턴 VoiceProfile 반영·/persona 교체 후 시스템 프롬프트 교체 확인. 실기 E2E는
+  PR ③ 이후 Stage 15 전체를 한 번에(2026.07.10 합의).
 
 ### PR ③ `feat/gui-app` — pywebview 창 + 프런트
 
@@ -96,22 +113,40 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
   실측 ② GUI 버튼 전이가 MODE_CHANGED로 라이브 반영 ③ GUI 강제 종료 후 음성 대화 무영향
   ④ 취침창 변경이 재기동 후 유지(영속화는 데몬 소유 아님 — config 반영 여부는 이 PR에서 결정).
 
-## config.yaml 추가안
+## config.yaml · persona yaml 추가안
 
 ```yaml
+# config.yaml — PR ①에서 추가됨
 control:
   enabled: true      # 컨트롤 플레인 서버 (데몬 내 태스크)
   port: 8765         # 127.0.0.1 고정 바인딩
+```
 
-mouth:
-  tones:             # PR ② — 톤(레퍼런스) 목록, 첫 항목이 기본
-    - { name: 기본, icon: mood-smile, voice_id: secrets/voice_ref/base.wav, ref_text: "..." }
-    - { name: 신남, icon: mood-happy, voice_id: secrets/voice_ref/happy.wav, ref_text: "..." }
-    - { name: 차분, icon: moon-stars, voice_id: secrets/voice_ref/calm.wav, ref_text: "..." }
+```yaml
+# personas/*.yaml — PR ② 번들 모델: 음색·톤은 페르소나 소유 (옵셔널, 없으면 config mouth.voice 폴백)
+voice:
+  name: navi          # VoiceProfile.name (논리적 정체성)
+  speed: 1.0
+  gptsovits:          # 벤더명 하위 섹션 — config _load_mouth 관례와 동일
+    gpt_ckpt: secrets/voice_ref/....ckpt    # 루트 기준 상대경로 — 가중치 교체는 후속 PR
+    sovits_ckpt: secrets/voice_ref/....pth
+    ref_lang: ko      # 전방호환 — 런타임 적용은 후속 PR
+    gen_lang: ko
+    tones:            # 첫 항목이 기본 톤
+      - { name: 기본, icon: mood-smile, voice_id: secrets/voice_ref/base.wav, ref_text: "..." }
+      - { name: 신남, icon: mood-happy, voice_id: secrets/voice_ref/happy.wav, ref_text: "..." }
 ```
 
 ## 보류·후순위
 
+- 엔진 핫스왑(Supertonic↔GPT-SoVITS) — **안 함으로 결정(2026.07.10)**. 모델(STT·TTS·KWS)은
+  시작 1회 웜업·무교체가 원칙, 런타임 교체 범위는 **가중치(음색)·톤·페르소나까지**.
+  근거: 엔진 전환의 가치는 CPU 속도 우회인데 D8(GPU)로 소멸하는 한시적 문제 + 엔진 간
+  목소리가 달라 연속성 원칙과 상충 + `VoiceProfile` 의미가 엔진별로 갈라져 API 계약 복잡화.
 - 톤 자동 점등(감정 태그 연동) — Phase 3-5에서 이 GUI를 확장.
-- 음색 가중치 교체 API — 유예 처리 포함 후속 PR.
+- 음색 가중치 교체 API — 유예 처리 포함 후속 PR. `change_*_weights`는 CPU에서 수 초~수십 초
+  걸리므로 **로딩 상태를 GUI에 노출**한다: `/status`에 `mouth.state(ready|loading)` 필드 추가 +
+  전이 시점 WS `/events` 발행 → GUI는 스피너 표시·톤/음색 컨트롤 비활성화. (2026.07.10 합의 —
+  톤(레퍼런스) 교체는 매 턴 인자라 로드 시간이 없어 해당 없음. 다중 가중치 프리로드는
+  inference_webui가 프로세스당 1세트 싱글턴 + 베이스 모델 중복이라 D8(GPU) 이후 재검토.)
 - 트레이 상주(pystray)·Tauri 래핑·라이트 테마 — 써보고 아쉬우면.
