@@ -7,6 +7,31 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15-③ — pywebview GUI 앱 (2026.07.11, `feat/gui-app`):**
+- **GUI 프로세스([navi/gui/__main__.py](../navi/gui/__main__.py)):** `python -m navi.gui` —
+  pywebview 창(360×640 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면
+  대기 화면을 띄우고 1초 폴링으로 자동 진입. 헤더 ✕는 js_api로 네이티브 창 닫기.
+  의존성 `pywebview`는 기본 venv(음성 스택 불필요 — GUI는 오디오를 만지지 않는다).
+- **단일 파일 프런트([navi/gui/static/index.html](../navi/gui/static/index.html)):** 목업 v3
+  구현 — 5노드 파이프라인 점등(STAGE 구독, 대기 중 귀 숨쉬기·청취축 SLEEP 소등), 능동축 필 +
+  오버라이드 버튼 4개(DND 중엔 해제로 토글), 취침창 24h 스트립(자정 넘김 양끝 음영 + 현재
+  마커 + 클릭 인라인 편집), 페르소나·톤 바텀시트, 로그 다이얼로그. WS 자동 재연결(1.5s) —
+  링버퍼 백필은 로그로만 넣고 점등은 최근 3초 이벤트만(재접속 시 과거 재생 방지). **외부 CDN
+  0** — 목업의 tabler 웹폰트 대신 인라인 SVG 아이콘(오프라인·pywebview 무의존).
+- **컨트롤 플레인 GUI 표면 4건(서버 소폭 확장):** ① `GET /` 프런트 정적 서빙(같은 오리진 —
+  CORS 없음) ② `/status`에 `sleep_window`(스트립 초기 렌더 재료 — ModeMachine.window 신설)
+  ③ WS 이벤트에 `wall_ts`(ts는 monotonic이라 GUI가 시각으로 못 읽음 — 직렬화 시점 두 시계
+  차로 근사) ④ `GET /voices/{name}/audio` 톤 시청취(재생은 GUI `<audio>` — 데몬 스피커 미사용,
+  `SwapRuntime.tone_file`이 파일 아닌 voice_id(프리셋명)는 404).
+- **결정 — 취침창 변경은 런타임 전용(gui.md 검증 ④):** 데몬이 config.yaml을 쓰지 않는다 —
+  영구 변경은 config 수동 편집. GUI 토스트에 "이번 실행 동안 유지"로 명시.
+- **검증:** 유닛 192개 green(+5: sleep_window·wall_ts·GET /·시청취). 오프라인 E2E(echo 데몬 +
+  브라우저 실측): 모드 버튼 전이가 MODE_CHANGED로 라이브 반영·페르소나 교체(navi↔example)
+  헤더 즉시 반영·취침창 편집 즉시 전이(창 밖 되자 잠복 DND 오버라이드 표면화까지 확인)·
+  데몬 종료→"연결 끊김"→재기동 자동 재연결·STAGE 전 단계 점등 흐름(이벤트 재생) 확인.
+  **실기 E2E(--voice --wakeword + gptsovits base zero-shot ~250MB 다운로드 포함)는 계획대로
+  Stage 15 전체를 한 번에** — gui.md PR ③ 검증 절.
+
 **Stage 15-② — 페르소나·톤 런타임 교체 (2026.07.11, `feat/mouth-voice-swap`):**
 - **페르소나-음색 번들 결정(2026.07.10, 원안 개정):** 페르소나 = 카드(성격) + 음색(fine-tune
   가중치) + 톤 목록(그 음색의 레퍼런스 wav). 톤 레퍼런스는 해당 fine-tune 화자의 녹음이라
