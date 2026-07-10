@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from navi.bus import Event, EventBus, EventKind
+from navi.control.runtime import SwapBusy, SwapRuntime
 from navi.daemon import DaemonCore
 from navi.heartbeat import Mode, ModeCommand, SleepWindow
 
@@ -41,6 +42,14 @@ _COMMANDS = {
 class WindowBody(BaseModel):
     start: str  # "HH:MM"
     end: str
+
+
+class PersonaBody(BaseModel):
+    id: str  # personas/<id>.yaml 파일명 stem
+
+
+class VoiceBody(BaseModel):
+    name: str  # 현재 페르소나 톤 목록의 name
 
 
 def _payload_json(payload) -> object:
@@ -64,7 +73,9 @@ def event_json(event: Event) -> dict:
     }
 
 
-def create_app(*, core: DaemonCore, bus: EventBus) -> FastAPI:
+def create_app(
+    *, core: DaemonCore, bus: EventBus, swap: SwapRuntime | None = None
+) -> FastAPI:
     """DaemonCore·버스를 주입받아 FastAPI 앱 구성 — 테스트는 가짜 부품으로 같은 앱을 만든다."""
     # 엔드포인트는 전부 async — FastAPI는 동기 def를 스레드풀로 돌려서 SQLite 영속화
     # (persist_mode)의 단일 스레드 규약이 깨진다. 호출은 전부 논블로킹이라 루프 실행이 맞다.
@@ -96,6 +107,44 @@ def create_app(*, core: DaemonCore, bus: EventBus) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(503, str(exc)) from exc
         return {"mode": mode.value, "start": body.start, "end": body.end}
+
+    # --- 페르소나·톤 교체 (Stage 15-②) — 판정은 SwapRuntime, 여긴 HTTP 번역만 ---
+
+    def _swap() -> SwapRuntime:
+        if swap is None:  # 미구성 → 503 (command_mode의 상태머신 미구성 패턴과 동일)
+            raise HTTPException(503, "페르소나 런타임 미구성")
+        return swap
+
+    @app.get("/personas")
+    async def personas() -> list[dict]:
+        return _swap().list_personas()
+
+    @app.post("/persona")
+    async def persona(body: PersonaBody) -> dict:
+        try:
+            return _swap().swap_persona(body.id)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except SwapBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/voices")
+    async def voices() -> list[dict]:
+        try:
+            return _swap().list_voices()
+        except RuntimeError as exc:  # 파이프라인 없음(텍스트 모드)
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.post("/voice")
+    async def voice(body: VoiceBody) -> dict:
+        try:
+            return _swap().set_voice(body.name)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except SwapBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except RuntimeError as exc:  # 파이프라인 없음(텍스트 모드)
+            raise HTTPException(503, str(exc)) from exc
 
     @app.post("/shutdown")
     async def shutdown() -> dict:

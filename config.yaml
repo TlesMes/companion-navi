@@ -29,7 +29,10 @@ mouth:
     lang: ko
     total_steps: 8
   gptsovits:                        # vendor가 gptsovits일 때만 읽힘
-    voice_id: dataset/arisu/wavs/Arisu_Maid_LogIn_1.wav  # 레퍼런스 wav(톤·억양 제어, ref_text와 한 쌍)
+    # ⚠ 음색·톤은 페르소나 번들 소유(2026.07.10 결정) — 카드에 voice: 섹션이 있으면
+    # 가중치·레퍼런스·언어는 카드 값이 이긴다(personas/aris.yaml 참조). 아래 voice_id/
+    # ckpt/ref_*는 voice 섹션 없는 카드용 폴백. repo_path(엔진 위치)만 항상 여기.
+    voice_id: dataset/arisu/wavs/Arisu_Maid_LogIn_1.wav  # 폴백 레퍼런스 wav(ref_text와 한 쌍)
     repo_path: C:\gptsovits         # ASCII 경로 (GPT-SoVITS repo)
     gpt_ckpt: voice_ref/arisu-e15.ckpt
     sovits_ckpt: voice_ref/arisu_e8_s352.pth
