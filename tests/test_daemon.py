@@ -107,12 +107,19 @@ async def test_full_cycle_wake_turn_sleep():
     bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
     await asyncio.wait_for(task, timeout=2)
 
-    kinds = []
+    events = []
     while not observer.empty():
-        kinds.append(observer.get_nowait().kind)
+        events.append(observer.get_nowait())
+    kinds = [e.kind for e in events]
     assert EventKind.WAKE in kinds
     assert EventKind.TURN_STARTED in kinds and EventKind.TURN_ENDED in kinds
     assert EventKind.SLEEP in kinds
+    # STAGE 계측(Stage 15) — 발화마다 stt start/done, 게이트 판정 결과가 실린다
+    stages = [e.payload for e in events if e.kind == EventKind.STAGE]
+    assert ("stt", "start", None) in stages
+    assert any(s == "stt" and p == "done" and "ms" in d for s, p, d in stages)
+    gate_results = [d["result"] for s, p, d in stages if s == "gate"]
+    assert gate_results == ["PASS", "SLEEP"]  # 발화1=일반 대화, 발화2=수면 명령
 
 
 @pytest.mark.asyncio

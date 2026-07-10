@@ -12,8 +12,9 @@ dispatcher가 TurnPipeline로 넘긴다. cli.py는 개발 도구로 보존하고
 (Brain/Mouth/Conductor/TurnPipeline/ListenSession)을 새로 조립만 한다.
 
 생명주기(Windows, systemd 없음): 시작 시 logs/navi.pid로 단일 인스턴스 가드. 종료는
-Ctrl+C 또는 stop 서브커맨드가 만드는 센티널 파일(logs/navi.stop) — Windows에서 프로세스 간
-시그널이 불안정해 파일 방식을 쓴다(3단계 HTTP 컨트롤 플레인이 생기면 POST /shutdown으로 대체).
+Ctrl+C, stop 서브커맨드의 센티널 파일(logs/navi.stop — Windows 프로세스 간 시그널 불안정),
+또는 컨트롤 플레인 POST /shutdown(Stage 15, navi/control/). GUI 관찰·제어는 컨트롤 플레인이
+같은 루프의 태스크로 담당한다 — 서버가 죽어도 데몬 본체는 산다.
 """
 
 from __future__ import annotations
@@ -185,6 +186,27 @@ class DaemonCore:
                     self._apply_mode(self._machine.tick())  # 시간 전이(창 진입·만료)
                 log.debug("tick — %s", self.state.snapshot(now=self._now))
 
+    def command_mode(self, cmd: ModeCommand) -> Mode:
+        """능동축 명령의 단일 진입점 — 음성(검문①)과 GUI 버튼(컨트롤 플레인)이 공유.
+
+        명령 경로는 겉모드 무변화여도 오버라이드가 생길 수 있어 항상 영속화한다.
+        상태머신이 구성 안 됐으면 RuntimeError — 호출자(서버는 503)가 처리한다.
+        """
+        if self._machine is None:
+            raise RuntimeError("모드 상태머신이 구성되지 않았습니다")
+        mode = self._machine.command(cmd)
+        self._apply_mode(mode, force_persist=True)
+        return mode
+
+    def set_sleep_window(self, window) -> Mode:
+        """취침창 런타임 변경(Stage 14 예고) — 변경 즉시 시간 전이를 재평가한다."""
+        if self._machine is None:
+            raise RuntimeError("모드 상태머신이 구성되지 않았습니다")
+        self._machine.set_window(window)
+        mode = self._machine.tick()
+        self._apply_mode(mode)
+        return mode
+
     def _apply_mode(self, mode: Mode, *, force_persist: bool = False) -> None:
         """능동축 모드를 스냅샷에 반영 — 바뀌었을 때만 MODE_CHANGED 발행.
 
@@ -203,23 +225,29 @@ class DaemonCore:
         if (changed or force_persist) and self._persist_mode is not None:
             self._persist_mode(*self._machine.export_state())
 
+    def _stage(self, stage: str, phase: str, detail: dict | None = None) -> None:
+        """STAGE 계측 발행(Stage 15) — GUI 노드 점등 재료 + 구간별 지연 상시 기록."""
+        self._bus.publish(Event(EventKind.STAGE, self._now(), (stage, phase, detail)))
+
     async def _handle_utterance(self, utterance) -> None:
         """UTTERANCE → STT → 검문①(결정론) → 통과 시 한 턴. cli의 루프 몸통과 같은 순서."""
+        self._stage("stt", "start")
+        stt_t0 = time.perf_counter()
         text = await self._transcribe(utterance)
+        self._stage("stt", "done", {"ms": round((time.perf_counter() - stt_t0) * 1000)})
         if not text:
             print("[인식 결과 없음 — 다시 말하세요]")
             return
         print(f"나> {text}")
         gate = check_gate(text)
+        self._stage("gate", "done", {"result": gate.name})  # 게이트는 즉답 — done만
         if gate == GateResult.SLEEP:
             # 두 축을 함께 재운다 — 청취축은 세션 종료, 능동축은 다음 기상까지 SLEEP
             log.info("검문① SLEEP — %r", text)
             if self._session is not None:
                 self._session.request_sleep()
             if self._machine is not None:
-                self._apply_mode(
-                    self._machine.command(ModeCommand.SLEEP), force_persist=True
-                )
+                self.command_mode(ModeCommand.SLEEP)
             return
         if gate != GateResult.PASS:
             # 능동축 명령(Stage 14) — LLM 미경유, 상태머신 없으면(구성 안 됨) 무시 안내
@@ -227,9 +255,7 @@ class DaemonCore:
             if self._machine is None:
                 print("[모드 상태머신이 꺼져 있어 무시합니다]")
                 return
-            self._apply_mode(
-                self._machine.command(_GATE_TO_COMMAND[gate]), force_persist=True
-            )
+            self.command_mode(_GATE_TO_COMMAND[gate])
             print(_GATE_ACK[gate], flush=True)
             return
         self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), text))
@@ -342,7 +368,14 @@ async def _run(config, args) -> None:
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(
-            brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
+            brain=brain,
+            mouth=mouth,
+            conductor=conductor,
+            voice=config.mouth.voice,
+            # 파이프라인은 버스를 모른다 — STAGE 발행은 여기서 연결(Stage 15)
+            on_stage=lambda stage, phase, detail: bus.publish(
+                Event(EventKind.STAGE, time.monotonic(), (stage, phase, detail))
+            ),
         )
 
     async def run_turn(text: str) -> None:
@@ -431,6 +464,24 @@ async def _run(config, args) -> None:
         persist_mode=lambda mode, until: store.set_mode_state(user_id, mode, until),
     )
 
+    # 컨트롤 플레인(Stage 15) — 같은 이벤트 루프의 태스크로 기동. 예외는 삼킨다:
+    # 서버가 죽어도 데몬 본체(오디오 핫패스)는 산다.
+    control_server = None
+    control_task: asyncio.Task | None = None
+    if config.control.enabled:
+        from navi.control import create_app, create_server
+
+        control_server = create_server(create_app(core=core, bus=bus), config.control.port)
+
+        async def serve_control() -> None:
+            try:
+                await control_server.serve()
+            except Exception:
+                log.exception("컨트롤 플레인 서버 예외 — 데몬 본체는 계속 돈다")
+
+        control_task = asyncio.create_task(serve_control(), name="control")
+        log.info("컨트롤 플레인 — http://127.0.0.1:%d", config.control.port)
+
     async def console() -> None:
         """독립 구독자 시연 — 상태 안내는 dispatcher가 아니라 관찰자가 찍는다(GUI 자리)."""
         queue = bus.subscribe("console")
@@ -453,8 +504,14 @@ async def _run(config, args) -> None:
     try:
         await core.run()
     finally:
-        # 우아한 종료: 재생·생성 중단 → 귀 정리 → 기억 닫기 (arch 4.11)
+        # 우아한 종료: 서버 내림 → 재생·생성 중단 → 귀 정리 → 기억 닫기 (arch 4.11)
         console_task.cancel()
+        if control_server is not None:
+            control_server.should_exit = True
+            try:
+                await asyncio.wait_for(control_task, timeout=3)
+            except (TimeoutError, asyncio.CancelledError):
+                control_task.cancel()
         if pipeline is not None:
             pipeline.interrupt()
         if wakeword is not None:

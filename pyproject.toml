@@ -9,6 +9,8 @@ dependencies = [
     "anthropic",
     "pyyaml",
     "python-dotenv",
+    "fastapi",         # 컨트롤 플레인 (Stage 15 PR ①) — 데몬 내 HTTP/WS 서버
+    "uvicorn",
 ]
 
 [project.optional-dependencies]

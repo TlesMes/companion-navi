@@ -67,6 +67,12 @@ mode:
     end: "07:00"        # 기상 → ACTIVE 복귀
   snooze_minutes: 30    # "더 잘래" 유예 — 재발화 시 30분씩 연장
 
+control:
+  # 컨트롤 플레인(Stage 15) — 데몬 안 HTTP/WS 서버, GUI(별도 프로세스)의 관찰·제어 통로.
+  # 바인딩은 127.0.0.1 고정(설정 불가) — localhost 밖 노출 없음.
+  enabled: true
+  port: 8765
+
 db:
   path: navi.db
 

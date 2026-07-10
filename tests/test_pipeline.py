@@ -81,6 +81,38 @@ async def test_run_turn_without_echo_still_synthesizes():
     assert mouth.spoken == ["하나."]
 
 
+# --- on_stage: STAGE 계측(Stage 15) — brain 첫 토큰(TTFT)·tts 진입/종료 ---
+
+
+async def test_on_stage_emits_brain_ttft_and_tts_span():
+    stages: list[tuple] = []
+    brain = _FakeBrain(["안", "녕"])
+    pipe = TurnPipeline(
+        brain=brain,
+        mouth=FakeMouth(),
+        conductor=_StubConductor(),
+        voice=VOICE,
+        on_stage=lambda s, p, d: stages.append((s, p, d)),
+    )
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    # 토큰은 speak_stream이 당길 때 흐른다(_tee는 lazy) — brain done은 tts start 뒤
+    assert [(s, p) for s, p, _ in stages] == [
+        ("brain", "start"),
+        ("tts", "start"),
+        ("brain", "done"),
+        ("tts", "done"),
+    ]
+    detail = {(s, p): d for s, p, d in stages}
+    assert detail[("brain", "done")]["ttft_ms"] >= 0  # 첫 토큰 지연 기록
+    assert detail[("tts", "done")]["ms"] >= 0  # 합성+재생 전체 구간
+
+
+async def test_no_on_stage_is_silent_noop():
+    pipe, _brain, mouth, _conductor = _build(["하나."])
+    await pipe.run_turn("x", user_id=1, session_id="s")  # 콜백 없이도 동작 불변
+    assert mouth.spoken == ["하나."]
+
+
 # --- interrupt(): barge-in = 재생 하드스톱 + LLM 생성 취소를 동시에 ---
 
 

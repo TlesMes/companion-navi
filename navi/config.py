@@ -98,11 +98,20 @@ class ModeConfig:
 
 
 @dataclass(frozen=True)
+class ControlConfig:
+    """컨트롤 플레인(Stage 15) — 데몬 안 HTTP/WS 서버. 섹션이 없어도 기본값으로 뜬다."""
+
+    enabled: bool
+    port: int  # 127.0.0.1 고정 바인딩 — 호스트는 설정 대상이 아니다(gui.md 원칙)
+
+
+@dataclass(frozen=True)
 class Config:
     brain: BrainConfig
     mouth: MouthConfig
     wakeword: WakeWordConfig
     mode: ModeConfig
+    control: ControlConfig
     db_path: Path
     recent_turns: int
     persona_card_path: Path
@@ -166,6 +175,14 @@ def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
     )
 
 
+def _load_control(raw: dict[str, Any]) -> ControlConfig:
+    c = raw.get("control", {})
+    return ControlConfig(
+        enabled=bool(c.get("enabled", True)),
+        port=int(c.get("port", 8765)),
+    )
+
+
 def _load_mode(raw: dict[str, Any]) -> ModeConfig:
     m = raw.get("mode", {})
     window = m.get("sleep_window", {})
@@ -200,6 +217,7 @@ def load_config(
         mouth=_load_mouth(root, raw),
         wakeword=_load_wakeword(root, raw),
         mode=_load_mode(raw),
+        control=_load_control(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
         persona_card_path=root / (persona_card or raw["persona"]["card_path"]),

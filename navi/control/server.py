@@ -1,0 +1,143 @@
+"""컨트롤 플레인 서버 — GUI(별도 프로세스)가 데몬을 관찰·조작하는 유일한 통로 (Stage 15 PR ①).
+
+버스가 프로세스 내 pub/sub이라 서버는 데몬 이벤트 루프의 태스크로 돈다(밖에선 구독 불가).
+판정 로직은 갖지 않는다 — 버튼은 음성 명령과 같은 DaemonCore.command_mode()를 부를 뿐
+(결정론 게이트는 데몬 소유, gui.md 원칙). 바인딩 127.0.0.1 고정 — localhost 밖 노출 없음.
+
+GUI 죽어도 나비는 산다: WS 구독자는 버스의 유한 큐 + 논블로킹 publish로 격리되고,
+서버 태스크 예외는 데몬(_run)이 삼킨다 — 서버가 죽어도 오디오 핫패스는 무사하다.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import time as dtime
+from enum import Enum
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+
+from navi.bus import Event, EventBus, EventKind
+from navi.daemon import DaemonCore
+from navi.heartbeat import Mode, ModeCommand, SleepWindow
+
+log = logging.getLogger(__name__)
+
+# URL 조각 → 명령 (gui.md API 표면). 음성 구절(검문①)과 어휘가 같다 — 같은 상태머신 API.
+_COMMANDS = {
+    "wake": ModeCommand.WAKE,
+    "snooze": ModeCommand.SNOOZE,
+    "dnd": ModeCommand.DND,
+    "dnd_clear": ModeCommand.DND_CLEAR,
+    "sleep": ModeCommand.SLEEP,
+}
+
+
+class WindowBody(BaseModel):
+    start: str  # "HH:MM"
+    end: str
+
+
+def _payload_json(payload) -> object:
+    """이벤트 payload를 JSON 가능한 형태로 — 원문 객체(Utterance 등)는 str 요약만."""
+    if payload is None or isinstance(payload, (str, int, float, bool)):
+        return payload
+    if isinstance(payload, Enum):
+        return payload.name
+    if isinstance(payload, (tuple, list)):
+        return [_payload_json(item) for item in payload]
+    if isinstance(payload, dict):
+        return {key: _payload_json(value) for key, value in payload.items()}
+    return str(payload)
+
+
+def event_json(event: Event) -> dict:
+    return {
+        "kind": event.kind.name,
+        "ts": event.ts,
+        "payload": _payload_json(event.payload),
+    }
+
+
+def create_app(*, core: DaemonCore, bus: EventBus) -> FastAPI:
+    """DaemonCore·버스를 주입받아 FastAPI 앱 구성 — 테스트는 가짜 부품으로 같은 앱을 만든다."""
+    # 엔드포인트는 전부 async — FastAPI는 동기 def를 스레드풀로 돌려서 SQLite 영속화
+    # (persist_mode)의 단일 스레드 규약이 깨진다. 호출은 전부 논블로킹이라 루프 실행이 맞다.
+    app = FastAPI(title="navi-control", docs_url=None, redoc_url=None)
+
+    @app.get("/status")
+    async def status() -> dict:
+        return core.state.snapshot()
+
+    @app.post("/mode/{cmd}")
+    async def mode_command(cmd: str) -> dict:
+        command = _COMMANDS.get(cmd)
+        if command is None:
+            raise HTTPException(404, f"지원하지 않는 명령: {cmd!r} (wake·snooze·dnd·dnd_clear·sleep)")
+        try:
+            mode = core.command_mode(command)
+        except RuntimeError as exc:  # 상태머신 미구성
+            raise HTTPException(503, str(exc)) from exc
+        return {"mode": mode.value, "can_speak": mode is Mode.ACTIVE}
+
+    @app.put("/mode/window")
+    async def mode_window(body: WindowBody) -> dict:
+        try:
+            window = SleepWindow(dtime.fromisoformat(body.start), dtime.fromisoformat(body.end))
+        except ValueError as exc:
+            raise HTTPException(422, f"HH:MM 형식이 아닙니다: {exc}") from exc
+        try:
+            mode = core.set_sleep_window(window)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return {"mode": mode.value, "start": body.start, "end": body.end}
+
+    @app.post("/shutdown")
+    async def shutdown() -> dict:
+        # 센티널 파일(logs/navi.stop) 방식 대체(Stage 13 예고) — SHUTDOWN이 전 구독자에 퍼진다
+        bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
+        return {"ok": True}
+
+    @app.websocket("/events")
+    async def events(ws: WebSocket) -> None:
+        await ws.accept()
+        name = f"gui-{uuid.uuid4().hex[:8]}"  # 창 여러 개·재접속 대비 구독자명 유일화
+        queue = bus.subscribe(name)
+        try:
+            for past in list(core.state.last_events):  # 링버퍼(50)로 초기 채움
+                await ws.send_json(event_json(past))
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except TimeoutError:
+                    continue  # 폴링 재개 — 타 스레드 publish의 웨이크업 누락도 흡수
+                await ws.send_json(event_json(event))
+                if event.kind is EventKind.SHUTDOWN:
+                    return
+        except (WebSocketDisconnect, RuntimeError):
+            pass  # 클라이언트가 끊었다 — GUI 죽어도 나비는 산다
+        finally:
+            bus.unsubscribe(name)
+
+    return app
+
+
+class _DaemonServer(uvicorn.Server):
+    """시그널은 데몬이 소유한다(Ctrl+C = KeyboardInterrupt) — uvicorn 가로채기 무력화."""
+
+    def install_signal_handlers(self) -> None:
+        pass
+
+    @contextmanager
+    def capture_signals(self):  # uvicorn 0.29+ 경로 — 컨텍스트만 통과시킨다
+        yield
+
+
+def create_server(app: FastAPI, port: int) -> uvicorn.Server:
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    return _DaemonServer(config)
