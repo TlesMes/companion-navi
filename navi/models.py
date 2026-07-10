@@ -88,3 +88,4 @@ class VoiceProfile:
     name: str  # 논리적 정체성 (로깅·식별)
     vendor_voice_id: str  # 현재 TTS 벤더의 음색 id
     speed: float = 1.0
+    ref_text: str = ""  # 레퍼런스 오디오 전사 — vendor_voice_id(wav)와 한 쌍 (gptsovits 전용)

@@ -223,6 +223,9 @@ class GPTSoVITSMouth(MouthAdapter):
     ) -> None:
         tts_fn = await asyncio.to_thread(self._ensure_engine)
         ref_path = voice.vendor_voice_id
+        # 톤(레퍼런스) 교체 지원: 전사는 wav와 한 쌍이므로 VoiceProfile이 우선,
+        # 빈값이면 생성자 ref_text(하위호환 — 카드에 voice 섹션 없는 구 config).
+        ref_text = voice.ref_text or self._ref_text
 
         self._stopped = False
         self._playing = True
@@ -235,7 +238,7 @@ class GPTSoVITSMouth(MouthAdapter):
 
         def _synth(text: str) -> Any:
             return _synth_one(
-                tts_fn, ref_path, self._ref_text, text,
+                tts_fn, ref_path, ref_text, text,
                 self._prompt_lang, self._text_lang, self._how_to_cut,
             )
 

@@ -93,6 +93,22 @@ class TurnPipeline:
                 sink(token)
             yield token
 
+    def set_voice(self, voice: VoiceProfile) -> None:
+        """목소리(톤) 교체 — 다음 턴부터 적용된다. 진행 중인 턴은 건드리지 않는다.
+
+        재생 중 거부(409)는 호출부(컨트롤 플레인)의 몫 — 여기서는 교체만 한다.
+        """
+        log.info("목소리 교체: %s → %s", self._voice.name, voice.name)
+        self._voice = voice
+
+    @property
+    def current_voice(self) -> VoiceProfile:
+        return self._voice
+
+    def is_playing(self) -> bool:
+        """재생 중 여부 — mouth 위임 (컨트롤 플레인의 교체 가드용)."""
+        return self._mouth.is_playing()
+
     def interrupt(self) -> None:
         """barge-in — 재생 즉시 중단 + LLM 생성 취소를 동시에(kill switch)."""
         log.info("barge-in — 재생 중단 + 생성 취소")

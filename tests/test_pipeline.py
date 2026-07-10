@@ -113,6 +113,30 @@ async def test_no_on_stage_is_silent_noop():
     assert mouth.spoken == ["하나."]
 
 
+# --- set_voice(): 톤 교체 — 다음 턴부터 적용 (Stage 15-②) ---
+
+
+async def test_set_voice_applies_from_next_turn():
+    pipe, _brain, mouth, _conductor = _build(["하나."])
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    assert mouth.last_voice is VOICE  # 턴1은 기존 목소리
+
+    new_voice = VoiceProfile(
+        name="navi", vendor_voice_id="happy.wav", ref_text="신나는 전사"
+    )
+    pipe.set_voice(new_voice)
+    assert pipe.current_voice is new_voice
+    await pipe.run_turn("y", user_id=1, session_id="s")
+    assert mouth.last_voice is new_voice  # 턴2부터 새 목소리
+
+
+def test_is_playing_delegates_to_mouth():
+    pipe, _brain, mouth, _conductor = _build(["하나."])
+    assert not pipe.is_playing()
+    mouth._playing = True  # FakeMouth 내부 플래그 — 재생 중 시뮬레이션
+    assert pipe.is_playing()
+
+
 # --- interrupt(): barge-in = 재생 하드스톱 + LLM 생성 취소를 동시에 ---
 
 
