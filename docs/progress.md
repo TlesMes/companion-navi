@@ -7,6 +7,34 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15 준비 — 최소 GUI 설계 확정 (2026.07.10, 구현 착수 전):**
+- **스택:** 컨트롤 플레인 = FastAPI+uvicorn을 **데몬 프로세스 안 asyncio 태스크**로(버스가
+  프로세스 내 pub/sub이라 서버는 데몬에 얹는 게 유일한 구독 경로 — "느린 구독자 격리"는 버스
+  층이 이미 보장). GUI = **pywebview 별도 프로세스**(`python -m navi.gui`, Edge WebView2 네이티브
+  창 약 360폭)가 localhost를 로드. 프런트는 정적 HTML/JS 단일 파일 — Node 툴체인·빌드 스텝 0,
+  추후 Tauri 래핑 경로 보존. 바인딩 127.0.0.1 고정.
+- **API 표면:** `GET /status`(DaemonState.snapshot) · `POST /mode/{cmd}`(ModeMachine.command —
+  wake/snooze/dnd/dnd_clear/sleep) · `PUT /mode/window`(set_window) · `POST /shutdown`(센티널
+  파일 방식 대체) · `WS /events`(버스 "gui" 구독, 접속 시 링버퍼 50개 초기 채움) ·
+  `POST /persona`(카드 reload — Conductor 카드 교체) · `POST /voice`(톤=레퍼런스 VoiceProfile 교체).
+  노드별 점등을 위해 **TurnPipeline에 STAGE 이벤트 계측**(stt/gate/brain/tts 시작·완료 — 부수
+  이득: Stage 12 수동 측정하던 구간별 지연이 로그에 상시 기록, D8 재측정 재료).
+- **UI 확정(목업 v3):** ① 5노드 파이프라인(귀→받아쓰기→검문→두뇌→목소리) — 현재 단계만
+  은은히 점멸, 대기 중엔 귀 노드만 숨쉬기, 청취축 SLEEP이면 귀도 소등(상태 카드 대체).
+  ② 선톡축은 헤더 필 1개(ACTIVE=초록/SLEEP=회색/DND=주황/SNOOZE=파랑) + 오버라이드 버튼
+  4개(기상·스누즈·DND·재우기). ③ 이벤트 원문은 로그 다이얼로그에서만(메인 창은 캡션 한 줄).
+  ④ 취침창은 24시간 스트립 시각화(자정 넘김 양끝 음영 + 현재 시각 마커), 클릭 인라인 편집.
+  ⑤ 페르소나 = 카드 그리드(personas/*.yaml 아바타 칩), 톤 = 레퍼런스별 아이콘 칩(미니 파형 +
+  시청취). **톤 칩의 최종형은 표시 UI** — Phase 3-5(감정 태그) 후 두뇌 선택을 따라 자동 점등,
+  클릭은 핀(고정) 오버라이드("사용자 오버라이드 > 자동 판단" 원칙). 이번 PR에선 수동 선택으로 시작.
+- **런타임 교체 실사 결과(2026.07.10):** 페르소나 reload(유예 불필요)·톤 교체(매 턴 인자, 즉시)·
+  음색 가중치 교체(change_*_weights 재호출 — 재생 중 금지+로딩 중 턴 차단 유예 필요) 모두 가능.
+  ref_text가 어댑터 생성자에 박혀 있어 VoiceProfile로 옮기는 소규모 리팩터 동반. 엔진 핫스왑만
+  불가(아래 백로그).
+- **PR 분할:** ① `feat/core-control-plane`(STAGE 계측 + HTTP/WS 서버 — TestClient 유닛 + curl
+  검증) → ② `feat/gui-app`(pywebview 창 + 프런트 — 실기 버튼 전이 검증). 상세 구현 계획은
+  착수 세션에서 수립.
+
 **Stage 14 — 모드 상태머신 + 검문②(선톡축, arch 5장) (2026.07.09, `feat/heartbeat-mode`):**
 - **선톡축 상태머신([navi/heartbeat/mode.py](../navi/heartbeat/mode.py)):** SLEEP/ACTIVE/DND/SNOOZE
   — "나비가 먼저 말해도 되는가"를 결정론 규칙으로 판정(LLM 개입 0). `can_speak_now`(ACTIVE만
@@ -69,10 +97,14 @@
 - **다음 갈림길: Phase 3 착수 순서 (2026.07.08 합의)** — 목표 재정의 중 "호출 즉답 ≤0.5s"는 D7로 충족, "명령 답변 ≤3s"는 D8 대기.
   1. ✅ **데몬화(Daemon Core, arch 4.11)** — 완료(Stage 13). 이벤트 버스=경량 pub/sub 자작, 상주=콘솔+명시적 실행/종료, GUI용은 상태 스냅샷 객체까지(HTTP/WS는 3번에서).
   2. ✅ **모드 상태머신 + 결정론 게이트(arch 5장, 검문②)** — 완료(Stage 14). SLEEP/ACTIVE/DND/SNOOZE + `can_speak_now` 게이트, 음성 명령·영속화·MODE_CHANGED 배선까지. GUI 전이(같은 command API)·취침창 런타임 변경은 3번에서 소비.
-  3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저. **← 다음 작업**
+  3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저. **← 다음 작업 — 설계 확정, 상단 "Stage 15 준비" 참조**
   4. **Heartbeat 2·3층(arch 4.4)** — 타이밍(가중치+jitter) + 주제 도출 → 첫 선톡. interaction_log 수집 시작.
   5. **감정 태그→레퍼런스 전환** — Brain이 감정 태그 출력, Mouth가 감정별 레퍼런스 오디오 선택(D3 "톤=레퍼런스 제어" 활용). D9 친밀도 산식 없이 얹는 1차 감정선.
   - Schedule(D11)·Feed(D13)는 위 순서 진행 중 결정 시점 도래 시 D번호로 처리.
+  - **백로그(2026.07.10):** TTS *엔진* 핫스왑(gptsovits↔타 어댑터)은 재기동 필요 — in-process
+    로드가 sys.path·CWD·env를 전역 오염시켜 프로세스 내 교체 불가(엔진은 D3 확정이라 실익 낮음).
+    반면 **페르소나(카드 reload)·톤(레퍼런스 오디오=VoiceProfile)·음색(가중치 change_*_weights)은
+    런타임 교체 가능** — 배선만 없음. 가중치 교체는 로드 유예(재생 중 금지 + 로딩 중 턴 차단) 필요.
 
 **Stage 12 — Claude 브레인 실호출 검증 + 병목 이동 확정 (2026.07.08):**
 - **Anthropic API 결제·키 적재 → Haiku 4.5 실호출 검증.** brain 격리 TTFT 0.7~1.3s로 안정(429 없음,
