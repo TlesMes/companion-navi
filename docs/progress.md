@@ -7,6 +7,30 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15-② — 페르소나·톤 런타임 교체 (2026.07.11, `feat/mouth-voice-swap`):**
+- **페르소나-음색 번들 결정(2026.07.10, 원안 개정):** 페르소나 = 카드(성격) + 음색(fine-tune
+  가중치) + 톤 목록(그 음색의 레퍼런스 wav). 톤 레퍼런스는 해당 fine-tune 화자의 녹음이라
+  다른 가중치에 교차 적용하면 목소리 연속성 원칙 위반 → 전역 config `mouth.tones:` 안을 폐기하고
+  **persona yaml `voice:` 섹션**([navi/persona/voice.py](../navi/persona/voice.py))이 소유. 런타임
+  독립 축은 "현재 페르소나 안의 톤 선택"뿐, `/persona`가 번들 교체 진입점.
+- **`VoiceProfile.ref_text` 신설:** 레퍼런스 wav는 이미 매 턴 인자인데 전사만 gptsovits 생성자에
+  박혀 톤 교체가 막혔음 — 전사를 VoiceProfile로 올려 wav와 한 쌍으로(빈값이면 생성자 폴백,
+  하위호환). `TurnPipeline.set_voice`는 다음 턴부터 적용, 재생 중 거부(409)는 컨트롤 플레인 몫.
+- **SwapRuntime 파사드([navi/control/runtime.py](../navi/control/runtime.py)):** DaemonCore는
+  conductor·pipeline을 안 들어(전부 `_run` 지역변수) 교체 명령이 닿을 손잡이가 없음 — 생성자
+  비대화 대신 파사드가 손잡이를 모아 들고 `create_app(swap=)` 옵셔널 주입(미주입 503 → PR ①
+  테스트 무수정 보존). **persona_id(카드 주인)/voice_persona_id(톤 세트 주인) 분리 추적** —
+  가중치 불일치 교체는 카드만 바꾸고 톤 세트 유지(`voice_swapped: false`), 후속 가중치 교체
+  PR이 이 분열을 해소. 부팅도 번들 우선(카드 voice 섹션이 mouth options·초기 톤을 덮음).
+- **경로 해석 제약:** gptsovits 웜업이 `os.chdir(repo)`를 해 이후 CWD가 리포 루트가 아님 →
+  persona yaml 상대경로는 `load(root=)`가 파싱 시점에 절대화. 기준 root를 `Config.root`로 신설.
+- **API:** `GET/POST /personas·/persona·/voices·/voice`. /persona도 재생 중 409(voice 교체 내포).
+  판정은 파사드, server는 HTTP 번역만(LookupError→404·SwapBusy→409·RuntimeError→503).
+- **검증:** 유닛 186개 green(persona·pipeline·control 신규, aris.yaml은 gitignore라 테스트는
+  navi + tmp 인라인 카드만). 오프라인 E2E(echo+fake): curl로 /personas 스캔→/persona 교체
+  (character 전환·voice_swapped false)→404→원복→/shutdown, 로그 "카드 교체" 실측. 실기 E2E는
+  PR ③ 이후 Stage 15 전체를 한 번에.
+
 **Stage 15-① — 컨트롤 플레인: STAGE 계측 + HTTP/WS 서버 (2026.07.10, `feat/core-control-plane`):**
 - **STAGE 계측([navi/bus.py](../navi/bus.py)·[navi/pipeline.py](../navi/pipeline.py)):** `EventKind.STAGE`
   payload=(stage, phase, detail) — stt·gate는 데몬이 직접 발행, brain 첫 토큰(TTFT)·tts
