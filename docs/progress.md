@@ -26,10 +26,19 @@
   persona yaml 상대경로는 `load(root=)`가 파싱 시점에 절대화. 기준 root를 `Config.root`로 신설.
 - **API:** `GET/POST /personas·/persona·/voices·/voice`. /persona도 재생 중 409(voice 교체 내포).
   판정은 파사드, server는 HTTP 번역만(LookupError→404·SwapBusy→409·RuntimeError→503).
-- **검증:** 유닛 186개 green(persona·pipeline·control 신규, aris.yaml은 gitignore라 테스트는
-  navi + tmp 인라인 카드만). 오프라인 E2E(echo+fake): curl로 /personas 스캔→/persona 교체
-  (character 전환·voice_swapped false)→404→원복→/shutdown, 로그 "카드 교체" 실측. 실기 E2E는
-  PR ③ 이후 Stage 15 전체를 한 번에.
+- **공개 예시 카드([personas/example.yaml](../personas/example.yaml)):** aris.yaml은 저작권·
+  gitignore(로컬 전용)라 오프라인 E2E·테스트를 커밋 자산으로 재현 불가 → fine-tune ckpt 없이
+  **gptsovits base(zero-shot)**로 도는 중립 예시 카드를 공개 자산으로(`!personas/example.yaml`).
+  navi↔example 전환이 커밋 자산만으로 재현된다. 어댑터는 이미 base zero-shot 지원(ckpt 옵셔널 →
+  inference_webui가 base 폴백, 확인함). **위상 못박음: base zero-shot은 GUI 전환 시연 전용 데모
+  자산 — 제품 음성 경로가 아니다.** 제품 정체성은 fine-tune 음색(연속성)이라 실사용자 배포엔
+  base도 example 카드도 불필요, base 다운로드는 오직 우리가 GUI 전환을 실물로 검증하기 위한 것. **base s1/s2 실물 다운로드(~250MB) + zero-shot 발화 +
+  부팅 base-선택 로직(카드 ckpt 부재 시 config arisu 폴백 충돌 해소)은 PR ③ GUI 검증에 포함**
+  (실기 자원 공유·GUI 버튼으로 검증이 편함 — 2026.07.11 합의).
+- **검증:** 유닛 187개 green(persona·pipeline·control 신규, aris.yaml gitignore라 테스트는
+  navi·example 공개 카드 + tmp 인라인만). 오프라인 E2E(echo+fake): curl로 /personas 스캔→
+  /persona 교체(navi↔example, character 전환·voice_swapped false)→404→원복→/shutdown, 로그
+  "카드 교체" 실측. 실기 E2E는 PR ③ 이후 Stage 15 전체를 한 번에.
 
 **Stage 15-① — 컨트롤 플레인: STAGE 계측 + HTTP/WS 서버 (2026.07.10, `feat/core-control-plane`):**
 - **STAGE 계측([navi/bus.py](../navi/bus.py)·[navi/pipeline.py](../navi/pipeline.py)):** `EventKind.STAGE`

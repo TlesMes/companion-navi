@@ -53,6 +53,23 @@ def test_real_navi_card_carries_voice_bundle():
     assert navi.voice.default_tone("supertonic").voice_id == "F1"
 
 
+def test_example_card_is_gptsovits_zero_shot_bundle():
+    """공개 예시 카드 — fine-tune ckpt 없이 base(zero-shot). aris를 대신하는 재현 자산.
+
+    커밋된 실파일로 gptsovits 번들 로더 경로(ckpt 부재·레퍼런스 경로 절대화)를 커버한다.
+    """
+    root = PERSONAS_DIR.parent
+    card = CharacterCard.load(PERSONAS_DIR / "example.yaml", root=root)
+    assert card.voice is not None and card.voice.name == "example"
+    vv = card.voice.vendor("gptsovits")
+    assert vv.ckpts == ("", "")  # ckpt 생략 = base zero-shot
+    assert (vv.ref_lang, vv.gen_lang) == ("ko", "ko")
+    tone = card.voice.default_tone("gptsovits")
+    assert tone.ref_text  # 레퍼런스 wav와 한 쌍인 전사
+    assert Path(tone.voice_id).is_absolute()  # root로 절대화됨
+    assert tone.voice_id.endswith("example_ref.wav")
+
+
 def test_card_without_voice_section_is_none(tmp_path):
     """하위호환 — voice 섹션 없는 카드는 voice=None (config mouth.voice 폴백 경로)."""
     p = tmp_path / "old.yaml"
