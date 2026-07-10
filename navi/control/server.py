@@ -18,8 +18,11 @@ from contextlib import contextmanager
 from datetime import time as dtime
 from enum import Enum
 
+from pathlib import Path
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from navi.bus import Event, EventBus, EventKind
@@ -69,8 +72,15 @@ def event_json(event: Event) -> dict:
     return {
         "kind": event.kind.name,
         "ts": event.ts,
+        # 이벤트 ts는 monotonic이라 GUI가 시각으로 못 읽는다 — 직렬화 시점의
+        # 두 시계 차로 벽시계 근사치를 실어 보낸다(백필 이벤트도 원래 시각 유지).
+        "wall_ts": time.time() - (time.monotonic() - event.ts),
         "payload": _payload_json(event.payload),
     }
+
+
+# GUI 단일 파일 프런트(gui.md PR ③) — 같은 오리진으로 서빙해 CORS 없이 API를 부른다.
+_INDEX_HTML = Path(__file__).resolve().parents[1] / "gui" / "static" / "index.html"
 
 
 def create_app(
@@ -81,9 +91,22 @@ def create_app(
     # (persist_mode)의 단일 스레드 규약이 깨진다. 호출은 전부 논블로킹이라 루프 실행이 맞다.
     app = FastAPI(title="navi-control", docs_url=None, redoc_url=None)
 
+    @app.get("/")
+    async def index() -> FileResponse:
+        if not _INDEX_HTML.is_file():
+            raise HTTPException(404, "GUI 프런트 없음 — navi/gui/static/index.html")
+        return FileResponse(_INDEX_HTML, media_type="text/html")
+
     @app.get("/status")
     async def status() -> dict:
-        return core.state.snapshot()
+        body = core.state.snapshot()
+        window = core.sleep_window()
+        body["sleep_window"] = (
+            {"start": window.start.strftime("%H:%M"), "end": window.end.strftime("%H:%M")}
+            if window is not None
+            else None
+        )
+        return body
 
     @app.post("/mode/{cmd}")
     async def mode_command(cmd: str) -> dict:
@@ -134,6 +157,14 @@ def create_app(
             return _swap().list_voices()
         except RuntimeError as exc:  # 파이프라인 없음(텍스트 모드)
             raise HTTPException(503, str(exc)) from exc
+
+    @app.get("/voices/{name}/audio")
+    async def voice_audio(name: str) -> FileResponse:
+        """톤 레퍼런스 wav 시청취 — 재생은 GUI(<audio>)가 한다, 데몬 스피커 미사용."""
+        path = _swap().tone_file(name)
+        if path is None:
+            raise HTTPException(404, f"시청취할 파일 없음: {name!r}")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.post("/voice")
     async def voice(body: VoiceBody) -> dict:

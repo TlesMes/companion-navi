@@ -135,6 +135,20 @@ class SwapRuntime:
         pipeline.set_voice(self._voice.profile(tone))
         return {"name": name, "applied": "next_turn"}
 
+    def tone_file(self, name: str) -> Path | None:
+        """톤 레퍼런스 wav 경로 — GUI 시청취용. 파일이 아니면(프리셋명 등) None.
+
+        재생은 GUI(WebView <audio>)가 한다 — 데몬 오디오 핫패스와 무관한 정적 전송.
+        """
+        vendor_voice = self._voice.vendor(self._vendor) if self._voice else None
+        if vendor_voice is None:
+            return None
+        tone = next((t for t in vendor_voice.tones if t.name == name), None)
+        if tone is None or not tone.voice_id:
+            return None
+        path = Path(tone.voice_id)
+        return path if path.is_file() else None
+
     # --- 가드 -----------------------------------------------------------
 
     def _require_pipeline(self) -> TurnPipeline:

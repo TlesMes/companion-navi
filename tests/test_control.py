@@ -129,6 +129,28 @@ def test_status_returns_snapshot():
     assert "uptime_s" in body and "last_events" in body
 
 
+def test_status_includes_sleep_window_for_gui_strip():
+    client, _core, _bus, _p = _make()
+    body = client.get("/status").json()
+    assert body["sleep_window"] == {"start": "23:00", "end": "07:00"}
+
+
+def test_status_sleep_window_null_without_machine():
+    client, _core, _bus, _p = _make(with_machine=False)
+    assert client.get("/status").json()["sleep_window"] is None
+
+
+# --- GET /: GUI 단일 파일 프런트 — 같은 오리진 서빙(CORS 없음) ---
+
+
+def test_index_serves_gui_frontend():
+    client, _core, _bus, _p = _make()
+    res = client.get("/")
+    assert res.status_code == 200
+    assert "text/html" in res.headers["content-type"]
+    assert "나비" in res.text
+
+
 # --- POST /mode/{cmd}: 음성 명령과 같은 command_mode 경로 ---
 
 
@@ -207,6 +229,15 @@ def test_ws_backfills_ring_buffer_then_streams_live():
         live = ws.receive_json()
         assert live["kind"] == "STAGE"
         assert live["payload"] == ["stt", "done", {"ms": 842}]
+
+
+def test_ws_event_carries_wall_clock_timestamp():
+    """이벤트 ts(monotonic)는 GUI가 시각으로 못 읽는다 — wall_ts 근사치 동봉."""
+    client, core, _bus, _p = _make()
+    core.state.record(Event(EventKind.WAKE, time.monotonic() - 10.0))  # 10초 전 이벤트
+    with client.websocket_connect("/events") as ws:
+        body = ws.receive_json()
+        assert abs(body["wall_ts"] - (time.time() - 10.0)) < 2.0
 
 
 def test_ws_serializes_opaque_payload_as_str():
@@ -289,6 +320,41 @@ def test_voice_swap_unknown_tone_is_404(tmp_path):
     swap, _ = _make_swap(tmp_path)
     client, *_ = _make(swap=swap)
     assert client.post("/voice", json={"name": "없는톤"}).status_code == 404
+
+
+def test_voice_audio_preview_serves_tone_file(tmp_path):
+    """GET /voices/{name}/audio — 시청취(GUI <audio>). 파일이면 200, 프리셋명이면 404."""
+    wav = tmp_path / "ref.wav"
+    wav.write_bytes(b"RIFFfake")
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    _write_card(
+        personas / "navi.yaml",
+        "나비",
+        voice_block=(
+            "voice:\n"
+            "  name: navi\n"
+            "  supertonic:\n"
+            f"    tones:\n"
+            f"      - {{name: 기본, voice_id: {wav.as_posix()}}}\n"
+            "      - {name: 신남, voice_id: F2}\n"
+        ),
+    )
+    card = CharacterCard.load(personas / "navi.yaml", root=tmp_path)
+    swap = SwapRuntime(
+        conductor=_StubConductor(card),
+        pipeline=None,
+        personas_dir=personas,
+        root=tmp_path,
+        vendor="supertonic",
+        persona_id="navi",
+        loaded_ckpts=("", ""),
+    )
+    client, *_ = _make(swap=swap)
+    res = client.get("/voices/기본/audio")
+    assert res.status_code == 200 and res.content == b"RIFFfake"
+    assert client.get("/voices/신남/audio").status_code == 404  # 프리셋명 — 파일 아님
+    assert client.get("/voices/없는톤/audio").status_code == 404
 
 
 def test_swap_while_playing_is_409(tmp_path):

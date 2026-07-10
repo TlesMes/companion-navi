@@ -198,6 +198,10 @@ class DaemonCore:
         self._apply_mode(mode, force_persist=True)
         return mode
 
+    def sleep_window(self):
+        """현재 취침창 — 상태머신 미구성이면 None. GET /status가 GUI 스트립에 싣는다."""
+        return self._machine.window if self._machine is not None else None
+
     def set_sleep_window(self, window) -> Mode:
         """취침창 런타임 변경(Stage 14 예고) — 변경 즉시 시간 전이를 재평가한다."""
         if self._machine is None:
