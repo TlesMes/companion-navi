@@ -344,7 +344,9 @@ async def _run(config, args) -> None:
     from navi.schedule import ConfigSchedule
 
     store = MemoryStore(config.db_path)
-    card = CharacterCard.load(config.persona_card_path)
+    # root= 로 voice 섹션의 상대경로(wav·ckpt)를 지금 절대화 — gptsovits 웜업이
+    # os.chdir를 하므로 지연 해석은 깨진다(persona/voice.py).
+    card = CharacterCard.load(config.persona_card_path, root=config.root)
     brain = create_brain(config)
     conductor = Conductor(card=card, memory=store, config=config)
     user_id = store.ensure_user(display_name="친구")
@@ -360,27 +362,67 @@ async def _run(config, args) -> None:
     log.info("능동축 모드 — %s (복원=%s)", machine.tick().value, saved is not None)
     log.info("데몬 시작 — session=%s, vendor=%s, pid=%d", session_id, config.brain.vendor, os.getpid())
 
+    # 페르소나 번들(gui.md PR ②) — 활성 벤더의 목소리 섹션. 부팅도 번들 우선:
+    # 카드에 섹션이 있으면 가중치·초기 톤을 카드에서, 없으면 config mouth 폴백(하위호환).
+    vendor_voice = card.voice.vendor(config.mouth.vendor) if card.voice else None
+
     pipeline: TurnPipeline | None = None
     if args.voice:
         from navi.mouth import create_mouth
 
-        mouth = create_mouth(config.mouth.vendor, **config.mouth.options)
+        mouth_options = dict(config.mouth.options)
+        initial_voice = config.mouth.voice
+        if vendor_voice is not None:
+            for key, value in (
+                ("gpt_ckpt", vendor_voice.gpt_ckpt),
+                ("sovits_ckpt", vendor_voice.sovits_ckpt),
+                ("ref_lang", vendor_voice.ref_lang),
+                ("gen_lang", vendor_voice.gen_lang),
+            ):
+                if value:
+                    mouth_options[key] = value
+        default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
+        if default_tone is not None:
+            initial_voice = card.voice.profile(default_tone)
+        mouth = create_mouth(config.mouth.vendor, **mouth_options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(
             brain=brain,
             mouth=mouth,
             conductor=conductor,
-            voice=config.mouth.voice,
+            voice=initial_voice,
             # 파이프라인은 버스를 모른다 — STAGE 발행은 여기서 연결(Stage 15)
             on_stage=lambda stage, phase, detail: bus.publish(
                 Event(EventKind.STAGE, time.monotonic(), (stage, phase, detail))
             ),
         )
 
+    # 페르소나·톤 교체 파사드(Stage 15-②) — 텍스트 모드(pipeline=None)에서도
+    # 카드 교체는 되므로 항상 만든다. 컨트롤 플레인과 run_turn 프롬프트가 쓴다.
+    from navi.control.runtime import SwapRuntime
+
+    swap = SwapRuntime(
+        conductor=conductor,
+        pipeline=pipeline,
+        personas_dir=config.persona_card_path.parent,
+        root=config.root,
+        vendor=config.mouth.vendor,
+        persona_id=config.persona_card_path.stem,
+        loaded_ckpts=(
+            vendor_voice.ckpts
+            if vendor_voice is not None
+            else (
+                config.mouth.options.get("gpt_ckpt", ""),
+                config.mouth.options.get("sovits_ckpt", ""),
+            )
+        ),
+    )
+
     async def run_turn(text: str) -> None:
         started = time.perf_counter()
-        print(f"{card.character}> ", end="", flush=True)
+        # 캐릭터명은 파사드에서 동적으로 — 페르소나 교체 후에도 새 이름으로 찍힌다
+        print(f"{swap.character}> ", end="", flush=True)
 
         def _echo(token: str) -> None:
             print(token, end="", flush=True)
@@ -471,7 +513,9 @@ async def _run(config, args) -> None:
     if config.control.enabled:
         from navi.control import create_app, create_server
 
-        control_server = create_server(create_app(core=core, bus=bus), config.control.port)
+        control_server = create_server(
+            create_app(core=core, bus=bus, swap=swap), config.control.port
+        )
 
         async def serve_control() -> None:
             try:

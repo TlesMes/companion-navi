@@ -92,9 +92,15 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
   클릭은 **핀(고정) 오버라이드**로 승격 — 이번 PR은 수동 선택(=핀만 있는 상태)으로 시작.
 - 음색(fine-tune 가중치) 교체 API는 **후속**(가능 확인됨 — `change_*_weights` 재호출,
   재생 중 금지 + 로딩 중 턴 차단 유예 필요). 엔진 핫스왑은 안 함(아래 결정).
-- **검증**: fake mouth 유닛(ref_text 우선순위·재생 중 409) · echo E2E — /voice 교체 후
-  다음 턴 VoiceProfile 반영·/persona 교체 후 시스템 프롬프트 교체 확인. 실기 E2E는
-  PR ③ 이후 Stage 15 전체를 한 번에(2026.07.10 합의).
+- **공개 예시 카드([personas/example.yaml](../../personas/example.yaml))**: aris.yaml은
+  저작권·gitignore(로컬 전용)라 오프라인 E2E·테스트를 커밋 자산으로 재현할 수 없었음 —
+  fine-tune ckpt 없이 **gptsovits base(zero-shot)**로 도는 중립 예시 카드를 공개 자산으로 추가
+  (`!personas/example.yaml` 예외). navi↔example 전환이 커밋 자산만으로 재현된다.
+- **검증**: fake mouth 유닛(ref_text 우선순위·재생 중 409·번들 로더) · echo E2E — /voice 교체 후
+  다음 턴 VoiceProfile 반영·/persona 교체(navi↔example) 후 시스템 프롬프트 교체 확인. 실기 E2E는
+  PR ③ 이후 Stage 15 전체를 한 번에(2026.07.10 합의) — **gptsovits base zero-shot 실물 발화 +
+  부팅 base-선택 로직(카드 ckpt 부재 시 config arisu 폴백 충돌 해소)도 여기 포함**(base s1/s2
+  다운로드가 게이트라 이 PR에선 유예, gptsovits.py setup 참조).
 
 ### PR ③ `feat/gui-app` — pywebview 창 + 프런트
 

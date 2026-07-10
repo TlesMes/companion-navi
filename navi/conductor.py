@@ -23,6 +23,18 @@ class Conductor:
         self._memory = memory
         self._config = config
 
+    def set_card(self, card: CharacterCard) -> None:
+        """페르소나 카드 교체 — 다음 build_request부터 적용.
+
+        system_prompt는 매 턴 재조립(캐시 없음)이라 재할당만으로 충분하다.
+        """
+        log.info("카드 교체: %s → %s", self._card.character, card.character)
+        self._card = card
+
+    @property
+    def card(self) -> CharacterCard:
+        return self._card
+
     def build_request(
         self, trigger_text: str, user_id: int, session_id: str
     ) -> LlmRequest:

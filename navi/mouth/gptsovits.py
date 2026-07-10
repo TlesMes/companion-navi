@@ -15,6 +15,10 @@ Windows에서 동일 동작 → WSL 유지 이유 없음). GPU 백엔드(CUDA/Di
   # 베이스 모델: huggingface_hub.snapshot_download("lj1995/GPT-SoVITS",
   #   allow_patterns=["chinese-hubert-base/*","chinese-roberta-wwm-ext-large/*"],
   #   local_dir="C:\\gptsovits\\GPT_SoVITS\\pretrained_models")
+  #   ↑ hubert/roberta는 전처리(feature/BERT)일 뿐 — TTS 가중치가 아니다.
+  #   fine-tune 없이 base(zero-shot)로 돌리려면 s1(GPT)·s2(SoVITS) pretrained 가중치도
+  #   같은 repo에서 받아야 한다(약 250MB, gsv-v2 계열 pretrained 하위). ckpt를 안 넘기면
+  #   inference_webui가 이 base로 폴백(66~67행) — personas/example.yaml이 그 경로.
   # mkdir C:\\gptsovits\\GPT_SoVITS\\pretrained_models\\fast_langdetect  (lid.176.bin 다운로드 대비)
 
 사용:
@@ -223,6 +227,9 @@ class GPTSoVITSMouth(MouthAdapter):
     ) -> None:
         tts_fn = await asyncio.to_thread(self._ensure_engine)
         ref_path = voice.vendor_voice_id
+        # 톤(레퍼런스) 교체 지원: 전사는 wav와 한 쌍이므로 VoiceProfile이 우선,
+        # 빈값이면 생성자 ref_text(하위호환 — 카드에 voice 섹션 없는 구 config).
+        ref_text = voice.ref_text or self._ref_text
 
         self._stopped = False
         self._playing = True
@@ -235,7 +242,7 @@ class GPTSoVITSMouth(MouthAdapter):
 
         def _synth(text: str) -> Any:
             return _synth_one(
-                tts_fn, ref_path, self._ref_text, text,
+                tts_fn, ref_path, ref_text, text,
                 self._prompt_lang, self._text_lang, self._how_to_cut,
             )
 

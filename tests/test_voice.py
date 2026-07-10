@@ -150,14 +150,14 @@ class _FakeGptSovits:
     """get_tts_wav 흉내 — 합성 호출 인자를 기록하고 (sr, int16) 청크를 yield."""
 
     def __init__(self) -> None:
-        # (text, prompt_language, text_language, how_to_cut)
+        # (text, prompt_language, text_language, how_to_cut, prompt_text)
         self.calls: list[tuple] = []
 
     def __call__(self, *, ref_wav_path, prompt_text, prompt_language, text,
                  text_language, how_to_cut):
         import numpy as np
 
-        self.calls.append((text, prompt_language, text_language, how_to_cut))
+        self.calls.append((text, prompt_language, text_language, how_to_cut, prompt_text))
         yield (32000, np.zeros(8, dtype=np.int16))
 
 
@@ -207,6 +207,23 @@ async def test_gptsovits_passes_language_and_cut_args():
     assert fake.calls[0][1] == "日文"  # prompt_language (ref=ja)
     assert fake.calls[0][2] == "韩文"  # text_language (gen=ko)
     assert fake.calls[0][3] == "不切"  # how_to_cut — 청킹은 우리가 함
+
+
+async def test_gptsovits_voice_ref_text_overrides_constructor():
+    """톤(레퍼런스) 교체 지원 — 전사는 wav와 한 쌍이므로 VoiceProfile.ref_text가 우선."""
+    mouth, fake, _ = _build_gptsovits()
+    voice = VoiceProfile(
+        name="navi", vendor_voice_id="happy.wav", ref_text="うれしいてきすと"
+    )
+    await mouth.speak_stream(_stream("ひとつ."), voice)
+    assert fake.calls[0][4] == "うれしいてきすと"  # 생성자 れいてきすと를 덮음
+
+
+async def test_gptsovits_empty_voice_ref_text_falls_back_to_constructor():
+    """하위호환 — 카드에 voice 섹션 없는 구 config는 생성자 ref_text로."""
+    mouth, fake, _ = _build_gptsovits()
+    await mouth.speak_stream(_stream("ひとつ."), VOICE)  # VOICE.ref_text == ""
+    assert fake.calls[0][4] == "れいてきすと"
 
 
 async def test_gptsovits_stop_halts_synthesis_mid_stream():
