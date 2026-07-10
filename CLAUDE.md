@@ -34,18 +34,18 @@ type(scope): 제목 (한국어, 50자 내)
 - **scope(선택):** 모듈명 소문자 — `ear` `turntaking` `stt` `heartbeat` `memory` `conductor` `brain` `mouth` `schedule` `core` / 문서는 `plan` `arch` `cost`
 - 예: `docs(arch): 턴테이킹 모듈 계약 추가 (D4 결정 반영)`, `feat(memory): 단기기억 SQLite 적재 구현`
 
-## PR 규칙 (하이브리드 — 2026.06.13 합의)
+## PR 규칙 (하이브리드 — 2026.06.13 합의, 크기 기준 2026.07.09 개정)
 
 - **PR 1개 = 독립적으로 검증 가능한 작업 한 덩어리** — 모듈 1개 / D번호 결정 1개 / 거동을 바꾸는 튜닝 1건
 - **PR 필수:** `feat` `fix` `refactor` `research`(결정 반영) / **main 직커밋 허용:** `docs` `chore` 단독 변경
-- 크기: 커밋 1~6개, diff ~300줄 내(리뷰 10분 분량). 넘으면 쪼갠다
+- 크기: 커밋 1~6개. 줄 수 제한 없음 — 쪼개는 기준은 **검증 단위**. 독립 검증 가능한 덩어리가 2개 이상이면 쪼갠다 (기존 "~300줄" 기준은 13개 PR 전수가 초과·무해해 폐기)
 - 머지 조건: 테스트 green + PR 본문에 이 단위의 **검증 방법**과 관련 D번호·완료 기준
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
-## 현재 상태 (2026.07.08)
+## 현재 상태 (2026.07.09)
 
-Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결**, **Phase 3(능동성) 진행 중 — 1/5 데몬화 완료(Stage 13).** 데몬: `python -m navi.daemon [--voice --wakeword]` 상주 — 이벤트 버스([navi/bus.py](./navi/bus.py)) + 데몬 코어([navi/daemon.py](./navi/daemon.py)), 종료는 `stop` 서브커맨드/Ctrl+C. 다음 작업: **모드 상태머신 + 검문②** — 착수 순서 5단계는 [docs/progress.md](./docs/progress.md) 상단 "다음 갈림길" 참조.
+Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결**, **Phase 3(능동성) 진행 중 — 2/5 완료(Stage 13 데몬화 + Stage 14 모드 상태머신).** 데몬: `python -m navi.daemon [--voice --wakeword]` 상주 — 이벤트 버스([navi/bus.py](./navi/bus.py)) + 데몬 코어([navi/daemon.py](./navi/daemon.py)), 종료는 `stop` 서브커맨드/Ctrl+C. 선톡축: SLEEP/ACTIVE/DND/SNOOZE 상태머신([navi/heartbeat/mode.py](./navi/heartbeat/mode.py)) — 검문②=`can_speak_now`(취침창 23:00~07:00 config 기본값), 음성 명령은 검문① 확장([navi/gatekeeper.py](./navi/gatekeeper.py)), `mode_state` 영속화. 다음 작업: **최소 GUI(관찰·제어 플레인)** — 착수 순서 5단계는 [docs/progress.md](./docs/progress.md) 상단 "다음 갈림길" 참조.
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).

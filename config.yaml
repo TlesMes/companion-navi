@@ -59,6 +59,14 @@ ear:
       model_path: secrets/porcupine_params_ko.pv
       sensitivity: 0.5
 
+mode:
+  # 선톡축(arch 5장, D16) 기본값 — GUI(Phase 3 순서 3)가 생기면 런타임 변경 예정.
+  # 취침창 안에서는 나비가 절대 먼저 말 걸지 않는다(검문②). 응답은 모드 무관 항상 됨.
+  sleep_window:
+    start: "23:00"      # 취침창 진입 → SLEEP (자정 넘김 지원)
+    end: "07:00"        # 기상 → ACTIVE 복귀
+  snooze_minutes: 30    # "더 잘래" 유예 — 재발화 시 30분씩 연장
+
 db:
   path: navi.db
 

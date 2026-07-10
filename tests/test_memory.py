@@ -68,3 +68,20 @@ def test_usage_log_written_as_json(tmp_path):
     assert row[0] == "llm"
     assert json.loads(row[1]) == {"input": 120, "output": 45}
     assert row[2] is None  # 단가표 확정 전
+
+
+def test_mode_state_roundtrip_and_upsert(tmp_path):
+    """Stage 14 — 선톡축 오버라이드가 재기동을 견딘다 (mode_state)."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    uid = store.ensure_user("친구")
+    assert store.get_mode_state(uid) is None  # 첫 기동 — 저장된 모드 없음
+
+    store.set_mode_state(uid, "snooze", "2026-07-10T07:35:00")
+    assert store.get_mode_state(uid) == ("snooze", "2026-07-10T07:35:00")
+
+    store.set_mode_state(uid, "dnd", None)  # 전이마다 upsert — 행은 사용자당 1개
+    store.close()
+
+    reopened = MemoryStore(db)  # 데몬 재시작 시뮬레이션
+    assert reopened.get_mode_state(uid) == ("dnd", None)

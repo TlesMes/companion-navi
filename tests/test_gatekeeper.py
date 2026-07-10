@@ -6,7 +6,7 @@
 
 import pytest
 
-from navi.gatekeeper import GateResult, _SLEEP_COMMANDS, check_gate
+from navi.gatekeeper import GateResult, _COMMANDS, check_gate
 
 
 # --- PASS: 일반 대화는 통과 ---
@@ -32,11 +32,28 @@ def test_sleep_phrase_in_sentence_passes():
     assert check_gate("이제 그만 잘게라고 말했어") == GateResult.PASS
 
 
-# --- SLEEP: 등록된 명령 구절은 가로챈다 (집합 전수) ---
+# --- 등록된 명령 구절은 결과까지 정확히 가로챈다 (집합 전수) ---
 
-@pytest.mark.parametrize("text", sorted(_SLEEP_COMMANDS))
-def test_sleep_commands_are_caught(text: str):
-    assert check_gate(text) == GateResult.SLEEP
+@pytest.mark.parametrize(
+    ("text", "expected"), sorted(_COMMANDS.items(), key=lambda kv: kv[0])
+)
+def test_registered_commands_are_caught(text: str, expected: GateResult):
+    assert check_gate(text) == expected
+
+
+# --- 선톡축 명령(Stage 14): 자연 발화 형태 그대로 매칭 ---
+
+def test_mode_commands_natural_forms():
+    assert check_gate("나 조금만 더 잘래.") == GateResult.SNOOZE
+    assert check_gate("잘 잤어, 나비!") == GateResult.WAKE
+    assert check_gate("지금은 방해하지 마") == GateResult.DND
+    assert check_gate("이제 말 걸어도 돼~") == GateResult.DND_CLEAR
+
+
+def test_mode_phrase_in_sentence_passes():
+    # 부분 일치는 안 잡는다 — "더 잘래"류가 문장에 묻히면 일반 대화
+    assert check_gate("어제는 조금만 더 잘래 하고 말았지") == GateResult.PASS
+    assert check_gate("방해하지 마라는 말 들었어") == GateResult.PASS
 
 
 # --- 정규화: STT 출력의 양끝 부호·공백을 흡수한다 ---

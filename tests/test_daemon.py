@@ -180,3 +180,115 @@ def test_cmd_stop_without_daemon(tmp_path, capsys):
     assert cmd_stop(pid_file, stop_file) == 1
     assert not pid_file.exists()
     assert "떠 있지 않습니다" in capsys.readouterr().out
+
+
+# ── Stage 14: 선톡축 모드 배선 ──
+
+from datetime import datetime, time as dtime  # noqa: E402
+
+from navi.heartbeat import ModeMachine, SleepWindow  # noqa: E402
+
+WINDOW = SleepWindow(start=dtime(23, 0), end=dtime(7, 0))
+
+
+class _Clock:
+    def __init__(self, at: datetime):
+        self.at = at
+
+    def __call__(self) -> datetime:
+        return self.at
+
+
+def _mode_core(clock: _Clock, bus: EventBus, persisted: list, **kw):
+    machine = ModeMachine(WINDOW, 30, now=clock)
+    core = DaemonCore(
+        bus=bus,
+        transcribe=kw.pop("transcribe", None),
+        run_turn=kw.pop("run_turn", None),
+        tick_interval=kw.pop("tick_interval", 999),
+        stop_poll=999,
+        mode_machine=machine,
+        persist_mode=lambda mode, until: persisted.append((mode, until)),
+        **kw,
+    )
+    return core, machine
+
+
+@pytest.mark.asyncio
+async def test_tick_drives_time_transition_and_persists():
+    # 시계가 취침창에 들어가면 TICK이 SLEEP 전이를 굴리고, MODE_CHANGED·영속화가 따라온다
+    bus = EventBus()
+    observer = bus.subscribe("observer", maxsize=256)
+    clock = _Clock(datetime(2026, 7, 9, 22, 59))
+    persisted: list = []
+    core, _ = _mode_core(clock, bus, persisted, tick_interval=0.01)
+    task = asyncio.create_task(core.run())
+
+    await _wait(lambda: core.state.snapshot()["uptime_s"] >= 0)  # 기동 대기
+    assert core.state.proactive_mode == "active"
+
+    clock.at = datetime(2026, 7, 9, 23, 0)  # 취침창 진입
+    await _wait(lambda: core.state.proactive_mode == "sleep")
+    # 창SLEEP은 시계에서 파생 — 저장(export)엔 오버라이드 근원(active/None)이 남는다
+    assert persisted and persisted[-1] == ("active", None)
+
+    clock.at = datetime(2026, 7, 10, 7, 0)  # 기상
+    await _wait(lambda: core.state.proactive_mode == "active")
+
+    bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
+    await asyncio.wait_for(task, timeout=2)
+    kinds = []
+    while not observer.empty():
+        kinds.append(observer.get_nowait().kind)
+    assert kinds.count(EventKind.MODE_CHANGED) == 2  # SLEEP 진입 + ACTIVE 복귀
+
+
+@pytest.mark.asyncio
+async def test_snooze_command_via_gate_sets_mode_without_turn():
+    # "나 조금만 더 잘래" → 검문①이 가로채 SNOOZE 전이, LLM(턴)으로는 안 간다
+    bus = EventBus()
+    frame_q: asyncio.Queue = asyncio.Queue()
+    turns: list[str] = []
+    persisted: list = []
+    script = iter(["나 조금만 더 잘래"])
+
+    async def transcribe(_utt) -> str:
+        return next(script)
+
+    async def run_turn(text: str) -> None:
+        turns.append(text)
+
+    clock = _Clock(datetime(2026, 7, 10, 7, 5))  # 창 밖(기상 직후) — 스누즈의 전형
+    core, _ = _mode_core(
+        clock,
+        bus,
+        persisted,
+        transcribe=transcribe,
+        run_turn=run_turn,
+        session=_session(),
+        frames=_frames_from(frame_q),
+    )
+    task = asyncio.create_task(core.run())
+
+    frame_q.put_nowait(SPEECH)  # 깨움
+    await _wait(lambda: core.state.listening_mode == "active")
+    for f in [SPEECH, SPEECH, SILENCE, SILENCE]:  # 발화 = 스누즈 명령
+        frame_q.put_nowait(f)
+    await _wait(lambda: core.state.proactive_mode == "snooze")
+
+    assert turns == []  # 결정론 게이트 — LLM 미경유
+    assert persisted[-1][0] == "snooze"
+    assert core.state.snapshot()["can_speak"] is False  # 검문② — 선톡 금지
+
+    bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
+    await asyncio.wait_for(task, timeout=2)
+
+
+def test_snapshot_exposes_proactive_mode_for_gui():
+    # 3단계 GUI GET /status 재료 — 두 축이 나란히 실린다 (D16)
+    from navi.daemon import DaemonState
+
+    snap = DaemonState(started_at=time.monotonic()).snapshot()
+    assert snap["proactive_mode"] == "active"
+    assert snap["can_speak"] is True
+    assert "listening_mode" in snap

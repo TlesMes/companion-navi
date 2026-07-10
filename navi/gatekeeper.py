@@ -1,7 +1,8 @@
 """검문① — STT 결과를 LLM에 보내기 전에 결정론적으로 가로채는 키워드 게이트.
 
 "언제는 규칙, 무엇은 모델" 원칙의 첫 번째 실체. LLM을 거치지 않고 즉시 처리할 수 있는
-모드 명령(수면 진입)을 여기서 판정한다 — LLM 비용·레이턴시 없이, 수면 중에도 작동.
+모드 명령(수면·강제기상·스누즈·DND — Stage 14에서 선톡축 명령 확장)을 여기서 판정한다 —
+LLM 비용·레이턴시 없이, 수면 중에도 작동.
 
 명령어 = 긴 구절 (2026.06.25 실측 반영):
   짧은 단어("자라"·"꺼")는 Whisper STT가 문맥 없이 오인식·환각으로 전멸했다(실측 0/12,
@@ -28,8 +29,12 @@ from enum import Enum, auto
 
 
 class GateResult(Enum):
-    PASS = auto()   # LLM으로 통과 — 일반 대화
-    SLEEP = auto()  # 수면 진입 — 마이크 루프 종료
+    PASS = auto()       # LLM으로 통과 — 일반 대화
+    SLEEP = auto()      # 수면 — 청취축 세션 종료 + 선톡축 SLEEP(Stage 14)
+    WAKE = auto()       # 강제기상 — 선톡축 SLEEP/SNOOZE 해제 (arch 5장)
+    SNOOZE = auto()     # "더 잘래" — 선톡축 유예
+    DND = auto()        # 방해 금지 — 선톡축 DND
+    DND_CLEAR = auto()  # DND 해제
 
 
 # 띄어쓰기·문장부호 정규화 — 공백을 전부 제거(한국어 STT의 들쭉날쭉한 단어 경계 흡수)하고
@@ -42,27 +47,51 @@ def _normalize(text: str) -> str:
     return _STRIP.sub("", text)
 
 
-# 수면 명령 구절 집합 (정규화된 형태, 발화 전체 일치만)
-_SLEEP_COMMANDS: frozenset[str] = frozenset(
-    _normalize(phrase)
-    for phrase in (
-        "이제 그만 잘게",
-        "이제 그만 잘래",
-        "오늘은 그만 잘래",
-        "이제 자러 갈게",
-        "나비 이제 잘게",
-        "잘 자 나비",
-        "그만 자자",
-    )
-)
+# 명령 구절 → 게이트 결과 (정규화된 형태, 발화 전체 일치만). 사용자가 외우는 고정 명령이며
+# 선톡축 명령(Stage 14)도 같은 원칙 — 짧은 단어는 STT 오인식 전멸 실측(모듈 docstring)이라
+# 전부 2어절 이상 구절이다. 선톡축의 GUI 조작은 이 게이트를 거치지 않고 ModeMachine을 직접 부른다.
+_COMMANDS: dict[str, GateResult] = {
+    _normalize(phrase): result
+    for result, phrases in {
+        GateResult.SLEEP: (
+            "이제 그만 잘게",
+            "이제 그만 잘래",
+            "오늘은 그만 잘래",
+            "이제 자러 갈게",
+            "나비 이제 잘게",
+            "잘 자 나비",
+            "그만 자자",
+        ),
+        GateResult.WAKE: (
+            "나비 나 일어났어",
+            "나 일어났어",
+            "잘 잤어 나비",
+            "나비 좋은 아침",
+        ),
+        GateResult.SNOOZE: (
+            "나 조금만 더 잘래",
+            "조금만 더 잘게",
+            "나 더 잘래",
+            "더 잘래 나비",
+        ),
+        GateResult.DND: (
+            "지금은 방해하지 마",
+            "나비 방해하지 마",
+            "방해하지 말아 줘",
+        ),
+        GateResult.DND_CLEAR: (
+            "이제 말 걸어도 돼",
+            "나비 방해 끝",
+        ),
+    }.items()
+    for phrase in phrases
+}
 
 
 def check_gate(text: str) -> GateResult:
-    """STT 텍스트가 수면 명령이면 GateResult.SLEEP, 아니면 PASS.
+    """STT 텍스트가 모드 명령이면 해당 GateResult, 아니면 PASS.
 
     양끝 문장부호·공백을 정규화한 뒤 명령 구절과 완전 일치를 본다 — 한국어는 대소문자가
     없으니 소문자 변환은 하지 않는다.
     """
-    if _normalize(text) in _SLEEP_COMMANDS:
-        return GateResult.SLEEP
-    return GateResult.PASS
+    return _COMMANDS.get(_normalize(text), GateResult.PASS)
