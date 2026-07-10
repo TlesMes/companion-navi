@@ -265,7 +265,7 @@ async def _input_loop(
                 log.info("검문① SLEEP — %r", text)
                 break
             if gate != GateResult.PASS:
-                # 선톡축 명령(Stage 14)은 상태머신이 있는 데몬 전용 — LLM엔 안 보낸다
+                # 능동축 명령(Stage 14)은 상태머신이 있는 데몬 전용 — LLM엔 안 보낸다
                 print("[모드 명령은 데몬 전용 — cli에선 무시]")
                 continue
         else:
@@ -381,7 +381,7 @@ async def _listen_wakeword(
                     session.request_sleep()
                     continue
                 if gate != GateResult.PASS:
-                    # 선톡축 명령(Stage 14)은 상태머신이 있는 데몬 전용
+                    # 능동축 명령(Stage 14)은 상태머신이 있는 데몬 전용
                     print("[모드 명령은 데몬 전용 — cli에선 무시]")
                     continue
                 await run_turn(text)

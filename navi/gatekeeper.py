@@ -1,7 +1,7 @@
 """검문① — STT 결과를 LLM에 보내기 전에 결정론적으로 가로채는 키워드 게이트.
 
 "언제는 규칙, 무엇은 모델" 원칙의 첫 번째 실체. LLM을 거치지 않고 즉시 처리할 수 있는
-모드 명령(수면·강제기상·스누즈·DND — Stage 14에서 선톡축 명령 확장)을 여기서 판정한다 —
+모드 명령(수면·강제기상·스누즈·DND — Stage 14에서 능동축 명령 확장)을 여기서 판정한다 —
 LLM 비용·레이턴시 없이, 수면 중에도 작동.
 
 명령어 = 긴 구절 (2026.06.25 실측 반영):
@@ -30,10 +30,10 @@ from enum import Enum, auto
 
 class GateResult(Enum):
     PASS = auto()       # LLM으로 통과 — 일반 대화
-    SLEEP = auto()      # 수면 — 청취축 세션 종료 + 선톡축 SLEEP(Stage 14)
-    WAKE = auto()       # 강제기상 — 선톡축 SLEEP/SNOOZE 해제 (arch 5장)
-    SNOOZE = auto()     # "더 잘래" — 선톡축 유예
-    DND = auto()        # 방해 금지 — 선톡축 DND
+    SLEEP = auto()      # 수면 — 청취축 세션 종료 + 능동축 SLEEP(Stage 14)
+    WAKE = auto()       # 강제기상 — 능동축 SLEEP/SNOOZE 해제 (arch 5장)
+    SNOOZE = auto()     # "더 잘래" — 능동축 유예
+    DND = auto()        # 방해 금지 — 능동축 DND
     DND_CLEAR = auto()  # DND 해제
 
 
@@ -48,8 +48,8 @@ def _normalize(text: str) -> str:
 
 
 # 명령 구절 → 게이트 결과 (정규화된 형태, 발화 전체 일치만). 사용자가 외우는 고정 명령이며
-# 선톡축 명령(Stage 14)도 같은 원칙 — 짧은 단어는 STT 오인식 전멸 실측(모듈 docstring)이라
-# 전부 2어절 이상 구절이다. 선톡축의 GUI 조작은 이 게이트를 거치지 않고 ModeMachine을 직접 부른다.
+# 능동축 명령(Stage 14)도 같은 원칙 — 짧은 단어는 STT 오인식 전멸 실측(모듈 docstring)이라
+# 전부 2어절 이상 구절이다. 능동축의 GUI 조작은 이 게이트를 거치지 않고 ModeMachine을 직접 부른다.
 _COMMANDS: dict[str, GateResult] = {
     _normalize(phrase): result
     for result, phrases in {

@@ -1,4 +1,4 @@
-"""선톡축 모드 상태머신 검증 — fake clock으로 전 전이를 결정론 재현 (arch 5장, Stage 14).
+"""능동축 모드 상태머신 검증 — fake clock으로 전 전이를 결정론 재현 (arch 5장, Stage 14).
 
 시계는 주입식이라 실제 시간 대기 없이 창 진입·만료·우선순위를 전부 고정한다.
 취침창 23:00~07:00(자정 넘김)을 기준 픽스처로 쓴다.
@@ -67,7 +67,7 @@ def test_window_entry_and_exit_via_tick():
     assert machine.tick(_dt(9, 22, 59)) is Mode.ACTIVE
     assert machine.tick(_dt(9, 23, 0)) is Mode.SLEEP    # 취침창 진입
     clock.at = _dt(9, 23, 30)
-    assert not machine.can_speak_now                     # 자는 시간 — 절대 선톡 금지
+    assert not machine.can_speak_now                     # 자는 시간 — 절대 선제 발화 금지
     assert machine.tick(_dt(10, 7, 0)) is Mode.ACTIVE   # 기상
 
 

@@ -23,7 +23,7 @@
   이득: Stage 12 수동 측정하던 구간별 지연이 로그에 상시 기록, D8 재측정 재료).
 - **UI 확정(목업 v3):** ① 5노드 파이프라인(귀→받아쓰기→검문→두뇌→목소리) — 현재 단계만
   은은히 점멸, 대기 중엔 귀 노드만 숨쉬기, 청취축 SLEEP이면 귀도 소등(상태 카드 대체).
-  ② 선톡축은 헤더 필 1개(ACTIVE=초록/SLEEP=회색/DND=주황/SNOOZE=파랑) + 오버라이드 버튼
+  ② 능동축은 헤더 필 1개(ACTIVE=초록/SLEEP=회색/DND=주황/SNOOZE=파랑) + 오버라이드 버튼
   4개(기상·스누즈·DND·재우기). ③ 이벤트 원문은 로그 다이얼로그에서만(메인 창은 캡션 한 줄).
   ④ 취침창은 24시간 스트립 시각화(자정 넘김 양끝 음영 + 현재 시각 마커), 클릭 인라인 편집.
   ⑤ 페르소나 = 카드 그리드(personas/*.yaml 아바타 칩), 톤 = 레퍼런스별 아이콘 칩(미니 파형 +
@@ -37,10 +37,10 @@
   ② `feat/mouth-voice-swap`(페르소나·톤 런타임 교체 — VoiceProfile.ref_text 리팩터 포함) →
   ③ `feat/gui-app`(pywebview 창 + 프런트). 각 PR의 범위·검증 방법은 gui.md에 확정.
 
-**Stage 14 — 모드 상태머신 + 검문②(선톡축, arch 5장) (2026.07.09, `feat/heartbeat-mode`):**
-- **선톡축 상태머신([navi/heartbeat/mode.py](../navi/heartbeat/mode.py)):** SLEEP/ACTIVE/DND/SNOOZE
+**Stage 14 — 모드 상태머신 + 검문②(능동축, arch 5장) (2026.07.09, `feat/heartbeat-mode`):**
+- **능동축 상태머신([navi/heartbeat/mode.py](../navi/heartbeat/mode.py)):** SLEEP/ACTIVE/DND/SNOOZE
   — "나비가 먼저 말해도 되는가"를 결정론 규칙으로 판정(LLM 개입 0). `can_speak_now`(ACTIVE만
-  True)가 **검문②의 본체** — Heartbeat 선톡(4단계)의 유일한 출입문. 청취축과 직교(D16):
+  True)가 **검문②의 본체** — Heartbeat 선제 발화(4단계)의 유일한 출입문. 청취축과 직교(D16):
   어떤 모드에서도 웨이크워드 호출·응답은 동일 동작, 금지는 능동 발화뿐.
 - **수치·전이:** 취침창 23:00~07:00(config `mode:` 기본값, 자정 넘김 지원 — GUI에서 런타임
   변경 예정, `set_window`) · 스누즈 30분(재발화 연장) · DND는 명시 해제만(강제기상 안 통함).
@@ -57,7 +57,7 @@
   (창 안 스누즈 코너).
 - **데몬 배선:** TICK 구독이 시간 전이(창 진입·만료)를 굴리고, `EventKind.MODE_CHANGED`
   발행 + `DaemonState.proactive_mode`/`can_speak` 스냅샷 노출(3단계 GUI GET /status 재료).
-  수면 명령은 두 축을 함께 재움(청취축 세션 종료 + 선톡축 SLEEP).
+  수면 명령은 두 축을 함께 재움(청취축 세션 종료 + 능동축 SLEEP).
 - **검증:** 유닛 152개 green(mode 20·게이트/데몬/메모리 확장). 오프라인 E2E(echo 두뇌):
   취침창을 실시각 ±분으로 잡아 ACTIVE→SLEEP→ACTIVE 창 전이·MODE_CHANGED·영속화 실측.
 - **남음(후순위, 2026.07.09 합의):** 음성 명령 구절의 STT 실측은 보류 — 오인식이 잦으면
@@ -100,7 +100,7 @@
   1. ✅ **데몬화(Daemon Core, arch 4.11)** — 완료(Stage 13). 이벤트 버스=경량 pub/sub 자작, 상주=콘솔+명시적 실행/종료, GUI용은 상태 스냅샷 객체까지(HTTP/WS는 3번에서).
   2. ✅ **모드 상태머신 + 결정론 게이트(arch 5장, 검문②)** — 완료(Stage 14). SLEEP/ACTIVE/DND/SNOOZE + `can_speak_now` 게이트, 음성 명령·영속화·MODE_CHANGED 배선까지. GUI 전이(같은 command API)·취침창 런타임 변경은 3번에서 소비.
   3. **최소 GUI(관찰·제어 플레인)** — 데몬과 별도 프로세스, localhost HTTP/WS 구독(모드·로그·오버라이드 버튼). 오디오 경로에 절대 불개입(GUI 죽어도 나비는 산다). FastAPI+웹 우선, 추후 Tauri 래핑 가능. D11(스케줄 빌려오기)의 "컴패니언 앱" 선택지를 겸할 수 있음. 하트비트 튜닝의 관찰 도구라 4번보다 먼저. **← 다음 작업 — 설계 확정, 상단 "Stage 15 준비" 참조**
-  4. **Heartbeat 2·3층(arch 4.4)** — 타이밍(가중치+jitter) + 주제 도출 → 첫 선톡. interaction_log 수집 시작.
+  4. **Heartbeat 2·3층(arch 4.4)** — 타이밍(가중치+jitter) + 주제 도출 → 첫 선제 발화. interaction_log 수집 시작.
   5. **감정 태그→레퍼런스 전환** — Brain이 감정 태그 출력, Mouth가 감정별 레퍼런스 오디오 선택(D3 "톤=레퍼런스 제어" 활용). D9 친밀도 산식 없이 얹는 1차 감정선.
   - Schedule(D11)·Feed(D13)는 위 순서 진행 중 결정 시점 도래 시 D번호로 처리.
   - **백로그(2026.07.10):** TTS *엔진* 핫스왑(gptsovits↔타 어댑터)은 재기동 필요 — in-process

@@ -41,7 +41,7 @@ def test_registered_commands_are_caught(text: str, expected: GateResult):
     assert check_gate(text) == expected
 
 
-# --- 선톡축 명령(Stage 14): 자연 발화 형태 그대로 매칭 ---
+# --- 능동축 명령(Stage 14): 자연 발화 형태 그대로 매칭 ---
 
 def test_mode_commands_natural_forms():
     assert check_gate("나 조금만 더 잘래.") == GateResult.SNOOZE

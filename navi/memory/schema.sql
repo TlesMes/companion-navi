@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS conversation_turn (
 CREATE INDEX IF NOT EXISTS idx_turn_user_time ON conversation_turn (user_id, turn_id);
 CREATE INDEX IF NOT EXISTS idx_turn_session   ON conversation_turn (session_id, turn_id);
 
--- 선톡축 모드(Stage 14) — 재기동해도 오버라이드("더 잘래" 등)가 살아남는다.
+-- 능동축 모드(Stage 14) — 재기동해도 오버라이드("더 잘래" 등)가 살아남는다.
 -- current_mode는 저장 상태(오버라이드의 근원)이고, 겉으로 보이는 모드는
 -- ModeMachine이 시계와 합성해 판정한다 (navi/heartbeat/mode.py).
 CREATE TABLE IF NOT EXISTS mode_state (

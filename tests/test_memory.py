@@ -71,7 +71,7 @@ def test_usage_log_written_as_json(tmp_path):
 
 
 def test_mode_state_roundtrip_and_upsert(tmp_path):
-    """Stage 14 — 선톡축 오버라이드가 재기동을 견딘다 (mode_state)."""
+    """Stage 14 — 능동축 오버라이드가 재기동을 견딘다 (mode_state)."""
     db = tmp_path / "t.db"
     store = MemoryStore(db)
     uid = store.ensure_user("친구")

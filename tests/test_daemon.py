@@ -182,7 +182,7 @@ def test_cmd_stop_without_daemon(tmp_path, capsys):
     assert "떠 있지 않습니다" in capsys.readouterr().out
 
 
-# ── Stage 14: 선톡축 모드 배선 ──
+# ── Stage 14: 능동축 모드 배선 ──
 
 from datetime import datetime, time as dtime  # noqa: E402
 
@@ -278,7 +278,7 @@ async def test_snooze_command_via_gate_sets_mode_without_turn():
 
     assert turns == []  # 결정론 게이트 — LLM 미경유
     assert persisted[-1][0] == "snooze"
-    assert core.state.snapshot()["can_speak"] is False  # 검문② — 선톡 금지
+    assert core.state.snapshot()["can_speak"] is False  # 검문② — 선제 발화 금지
 
     bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
     await asyncio.wait_for(task, timeout=2)

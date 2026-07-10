@@ -3,7 +3,7 @@
 실행: python -m navi.daemon [--voice --wakeword ...]   종료: Ctrl+C 또는 `python -m navi.daemon stop`
 
 CLI(navi/cli.py)가 "켜서 대화하고 끄는" 단발 세션이라면, 데몬은 한 번 띄우면 상주한다 —
-잘 때는 호출어만 기다리고, 시계(TICK)가 흘러 이후 Heartbeat(선톡)·모드 판정의 원료가 된다.
+잘 때는 호출어만 기다리고, 시계(TICK)가 흘러 이후 Heartbeat(선제 발화)·모드 판정의 원료가 된다.
 구조는 발행자(ear_task·tick_task)와 구독자(dispatcher·console)로 갈라져 있어 Phase 3의
 나머지(모드 상태머신·GUI·Heartbeat)가 구독자 추가만으로 붙는다.
 
@@ -49,7 +49,7 @@ _LISTEN_TO_BUS = {
     ListenKind.SLEEP: EventKind.SLEEP,
 }
 
-# 검문① 결과 → 선톡축 명령 (Stage 14). SLEEP은 청취축 처리와 겸해 별도 분기.
+# 검문① 결과 → 능동축 명령 (Stage 14). SLEEP은 청취축 처리와 겸해 별도 분기.
 _GATE_TO_COMMAND = {
     GateResult.WAKE: ModeCommand.WAKE,
     GateResult.SNOOZE: ModeCommand.SNOOZE,
@@ -72,7 +72,7 @@ class DaemonState:
 
     started_at: float
     listening_mode: str = "sleep"  # sleep | active — 청취축(마이크, D16)
-    proactive_mode: str = "active"  # sleep | active | dnd | snooze — 선톡축(먼저 말 걸기)
+    proactive_mode: str = "active"  # sleep | active | dnd | snooze — 능동축(먼저 말 걸기)
     turns_count: int = 0
     last_events: deque[Event] = field(default_factory=lambda: deque(maxlen=50))
 
@@ -186,7 +186,7 @@ class DaemonCore:
                 log.debug("tick — %s", self.state.snapshot(now=self._now))
 
     def _apply_mode(self, mode: Mode, *, force_persist: bool = False) -> None:
-        """선톡축 모드를 스냅샷에 반영 — 바뀌었을 때만 MODE_CHANGED 발행.
+        """능동축 모드를 스냅샷에 반영 — 바뀌었을 때만 MODE_CHANGED 발행.
 
         영속화 대상은 겉모드가 아니라 저장 상태(오버라이드 근원 — 창SLEEP은 시계에서
         파생이라 저장 안 됨). 명령 경로는 겉모드가 안 바뀌어도 오버라이드가 생길 수
@@ -196,7 +196,7 @@ class DaemonCore:
         changed = mode.value != old
         if changed:
             self.state.proactive_mode = mode.value
-            log.info("선톡축 %s → %s", old, mode.value)
+            log.info("능동축 %s → %s", old, mode.value)
             self._bus.publish(
                 Event(EventKind.MODE_CHANGED, self._now(), (old, mode.value))
             )
@@ -212,7 +212,7 @@ class DaemonCore:
         print(f"나> {text}")
         gate = check_gate(text)
         if gate == GateResult.SLEEP:
-            # 두 축을 함께 재운다 — 청취축은 세션 종료, 선톡축은 다음 기상까지 SLEEP
+            # 두 축을 함께 재운다 — 청취축은 세션 종료, 능동축은 다음 기상까지 SLEEP
             log.info("검문① SLEEP — %r", text)
             if self._session is not None:
                 self._session.request_sleep()
@@ -222,7 +222,7 @@ class DaemonCore:
                 )
             return
         if gate != GateResult.PASS:
-            # 선톡축 명령(Stage 14) — LLM 미경유, 상태머신 없으면(구성 안 됨) 무시 안내
+            # 능동축 명령(Stage 14) — LLM 미경유, 상태머신 없으면(구성 안 됨) 무시 안내
             log.info("검문① %s — %r", gate.name, text)
             if self._machine is None:
                 print("[모드 상태머신이 꺼져 있어 무시합니다]")
@@ -325,13 +325,13 @@ async def _run(config, args) -> None:
     session_id = uuid.uuid4().hex
     bus = EventBus()
 
-    # 선톡축 상태머신(Stage 14) — 재기동 시 mode_state 복원(만료 오버라이드는 tick이 정리)
+    # 능동축 상태머신(Stage 14) — 재기동 시 mode_state 복원(만료 오버라이드는 tick이 정리)
     schedule = ConfigSchedule(config.mode.sleep_start, config.mode.sleep_end)
     machine = ModeMachine(schedule.get_sleep_window(), config.mode.snooze_minutes)
     saved = store.get_mode_state(user_id)
     if saved is not None:
         machine.restore_state(*saved)
-    log.info("선톡축 모드 — %s (복원=%s)", machine.tick().value, saved is not None)
+    log.info("능동축 모드 — %s (복원=%s)", machine.tick().value, saved is not None)
     log.info("데몬 시작 — session=%s, vendor=%s, pid=%d", session_id, config.brain.vendor, os.getpid())
 
     pipeline: TurnPipeline | None = None
@@ -445,7 +445,7 @@ async def _run(config, args) -> None:
                     print("[나비가 잠들었습니다 — 부르면 깨어납니다]", flush=True)
             elif ev.kind == EventKind.MODE_CHANGED:
                 old_mode, new_mode = ev.payload
-                print(f"[선톡 모드: {old_mode} → {new_mode}]", flush=True)
+                print(f"[능동축: {old_mode} → {new_mode}]", flush=True)
             elif ev.kind == EventKind.SHUTDOWN:
                 return
 

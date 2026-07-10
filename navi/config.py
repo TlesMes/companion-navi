@@ -87,7 +87,7 @@ class WakeWordConfig:
 
 @dataclass(frozen=True)
 class ModeConfig:
-    """선톡축(arch 5장) 기본값 — GUI(3단계)가 생기면 런타임 변경, 여긴 부팅 기본값.
+    """능동축(arch 5장) 기본값 — GUI(3단계)가 생기면 런타임 변경, 여긴 부팅 기본값.
 
     섹션이 없어도 기본값(23:00~07:00, 30분)으로 뜬다 — 기존 config.yaml 하위호환.
     """

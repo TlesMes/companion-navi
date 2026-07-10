@@ -110,7 +110,7 @@ class MemoryStore:
         self._conn.commit()
         return self.get_intimacy(user_id)
 
-    # ─── 선톡축 모드 (Stage 14) ───────────────────────────────
+    # ─── 능동축 모드 (Stage 14) ───────────────────────────────
 
     def get_mode_state(self, user_id: int) -> tuple[str, str | None] | None:
         """저장된 (current_mode, override_until) — 없으면 None(첫 기동)."""

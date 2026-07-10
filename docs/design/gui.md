@@ -87,7 +87,7 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
 - **`navi/gui/static/index.html`** (단일 파일, 목업 gui_mockup.html이 기준):
   - 5노드 파이프라인(귀→받아쓰기→검문→두뇌→목소리) — STAGE 이벤트로 현재 단계만 점멸,
     대기 중엔 귀 노드 숨쉬기, 청취축 SLEEP이면 귀 소등.
-  - 헤더: 선톡축 필(ACTIVE=초록·SLEEP=회색·DND=주황·SNOOZE=파랑) + 로그 다이얼로그 버튼.
+  - 헤더: 능동축 필(ACTIVE=초록·SLEEP=회색·DND=주황·SNOOZE=파랑) + 로그 다이얼로그 버튼.
   - 오버라이드 버튼 4개(기상·스누즈·DND·재우기) → POST /mode/*.
   - 취침창 24시간 스트립(자정 넘김 양끝 음영 + 현재 시각 마커) — 클릭 인라인 편집 → PUT.
   - 페르소나 카드 그리드 + 톤 칩(아이콘·미니 파형·시청취) → /persona·/voice.

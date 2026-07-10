@@ -1,8 +1,9 @@
-"""선톡축 모드 상태머신 — "지금 먼저 말 걸어도 되는가"의 결정론 판정 (arch 5장·4.4 1층, D16).
+"""능동축 모드 상태머신 — "지금 먼저 말 걸어도 되는가"의 결정론 판정 (arch 5장·4.4 1층, D16).
 
 모드는 두 직교 축이다(D16). 청취축(navi/ear/listening.py)은 마이크→STT 문이고,
-여기는 선톡축 — 나비가 *먼저* 말하는지를 가른다. 어떤 선톡 모드에서도 웨이크워드
-호출·응답은 막지 않는다(사용자 오버라이드는 항상 자동 판단을 이긴다).
+여기는 **능동축**(선제 발화 여부, 코드명 proactive) — 나비가 *먼저* 말하는지를 가른다.
+어떤 능동축 모드에서도 웨이크워드 호출·응답은 막지 않는다(사용자 오버라이드는 항상
+자동 판단을 이긴다). 구 명칭 "선톡축"은 2026.07.10 능동축으로 개칭.
 
 SLEEP/SNOOZE/DND는 게이트 효과가 동일하다(can_speak_now=False) — 셋을 가르는 건
 수명(끝나는 방식)뿐이다: SLEEP=시계(기상)/강제기상, SNOOZE=타이머/강제기상,
@@ -27,7 +28,7 @@ from typing import Callable
 
 
 class Mode(str, Enum):
-    """선톡축 4모드. str 상속 — DB(mode_state)·GUI JSON에 값 그대로 실린다."""
+    """능동축 4모드. str 상속 — DB(mode_state)·GUI JSON에 값 그대로 실린다."""
 
     SLEEP = "sleep"
     ACTIVE = "active"
@@ -66,7 +67,7 @@ class SleepWindow:
 
 
 class ModeMachine:
-    """선톡축 상태머신. 저장 상태는 (mode, override_until) 두 값 — arch 6 mode_state와 1:1.
+    """능동축 상태머신. 저장 상태는 (mode, override_until) 두 값 — arch 6 mode_state와 1:1.
 
     tick()이 시간 전이(창 진입·이탈, 만료)를, command()가 명령 전이를 굴린다.
     겉으로 보이는 모드는 저장 상태 + 시계의 순수 함수(_effective)라 tick 사이에도
