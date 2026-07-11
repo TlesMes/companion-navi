@@ -16,13 +16,19 @@ import urllib.request
 _WAITING_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>
 body { margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center;
        justify-content: center; gap: 14px; background: #262521; color: #a8a396;
-       font-family: "Malgun Gothic", system-ui, sans-serif; font-size: 13px; }
+       font-family: "Malgun Gothic", system-ui, sans-serif; font-size: 13px; user-select: none; }
+.bar { position: fixed; top: 0; left: 0; right: 34px; height: 34px; }  /* frameless 드래그 영역 */
+.x { position: fixed; top: 0; right: 0; width: 34px; height: 34px; border: 0; cursor: pointer;
+     background: transparent; color: #7a756a; font-size: 15px; }
+.x:hover { color: #ece9e2; }
 .dot { width: 46px; height: 46px; border-radius: 50%; background: #1e3a5f; color: #8ec2f2;
        display: flex; align-items: center; justify-content: center; font-size: 18px;
        animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
 code { font-family: Consolas, monospace; color: #7a756a; font-size: 12px; }
 </style></head><body>
+<div class="bar pywebview-drag-region"></div>
+<button class="x" onclick="pywebview.api.close()">&#10005;</button>
 <div class="dot">나</div>
 <p>데몬을 기다리는 중…</p>
 <code>python -m navi.daemon 으로 먼저 띄워 주세요</code>
@@ -38,14 +44,23 @@ def _daemon_up(base_url: str) -> bool:
 
 
 class _Api:
-    """프런트 헤더의 ✕ 버튼용 — 브라우저 JS로는 네이티브 창을 못 닫는다."""
+    """프런트 헤더의 ─·✕ 버튼용 — frameless 창이라 OS 제목줄이 없다(브라우저 JS로는 불가).
+
+    창 참조는 반드시 비공개(_window)로 든다: pywebview는 js_api의 공개 속성을
+    재귀 직렬화해 JS 브리지를 만드는데, Window.native(WinForms)가 걸리면
+    AccessibilityObject.Bounds.Empty… 무한 재귀로 메인 스레드가 멎는다(실측).
+    """
 
     def __init__(self) -> None:
-        self.window = None
+        self._window = None
 
     def close(self) -> None:
-        if self.window is not None:
-            self.window.destroy()
+        if self._window is not None:
+            self._window.destroy()
+
+    def minimize(self) -> None:
+        if self._window is not None:
+            self._window.minimize()
 
 
 def _control_port() -> int:
@@ -68,16 +83,20 @@ def main() -> None:
     base_url = f"http://127.0.0.1:{args.port or _control_port()}"
     up = _daemon_up(base_url)
     api = _Api()
+    # frameless — OS 제목줄 없이 앱 헤더가 제목줄 역할(드래그 영역은 프런트가
+    # pywebview-drag-region 클래스로 지정, 창 조작은 js_api로).
     window = webview.create_window(
         "나비",
         url=base_url if up else None,
         html=None if up else _WAITING_HTML,
         js_api=api,
         width=360,
-        height=640,
+        height=420,  # 콘텐츠 실측 ~350px + 취침창 편집 행(~40px) 여유. 패널·로그는 오버레이
         resizable=False,
+        frameless=True,
+        easy_drag=False,
     )
-    api.window = window
+    api._window = window
 
     def wait_for_daemon() -> None:
         while True:
