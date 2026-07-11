@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>나비</title>
+<!-- 단일 파일 프런트 (gui.md PR ③, 목업 gui_mockup.html 기준) — 빌드 스텝 0, 외부 CDN 0.
+     컨트롤 플레인 GET / 로 서빙된다(같은 오리진 — API·WS를 CORS 없이 부른다).
+     GUI는 관찰·제어만: 판정은 전부 데몬(POST /mode/* → ModeMachine), 여긴 버튼과 표시뿐. -->
+<style>
+  :root {
+    --surface-1: #262521; --surface-2: #2d2b27; --surface-3: #34322d;
+    --border: #3d3a34; --border-strong: #4a463f; --border-stronger: #6a6459;
+    --text-primary: #ece9e2; --text-secondary: #a8a396; --text-muted: #7a756a;
+    /* 앱 액센트 = Claude 코랄/러스트 (웜 다크 표면과 조화) — 파이프라인 점등·톤칩·페르소나 강조 */
+    --bg-accent: #402a20; --text-accent: #edad8e; --border-accent: #cc7351; --fill-accent: #d97757;
+    --bg-snooze: #1e3a5f; --text-snooze: #8ec2f2;  /* 스누즈 필 전용 — 4모드 색 구분(초록·회색·주황·파랑) 유지 */
+    --bg-success: #1d3b2a; --text-success: #7fd6a4;
+    --bg-warn: #4a2c15; --text-warn: #f0a868;
+    --bg-pro: #3a2f5b;
+    --radius: 8px; --font-mono: Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--surface-2); color: var(--text-primary);
+    font-family: "Malgun Gothic", system-ui, sans-serif; font-size: 14px;
+    overflow: hidden; user-select: none;
+  }
+  p { margin: 0; }
+  button {
+    background: transparent; border: 0.5px solid var(--border-strong); border-radius: var(--radius);
+    color: var(--text-primary); font-family: inherit; cursor: pointer;
+  }
+  button:hover { background: var(--surface-1); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  svg { display: block; }
+
+  /* ── 헤더 ── */
+  header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+  .avatar {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--bg-accent);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-accent); font-size: 12px; font-weight: 500; flex-shrink: 0;
+  }
+  #char-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .pill {
+    font-size: 11px; padding: 3px 10px; border-radius: 999px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  }
+  .pill.active { background: var(--bg-success); color: var(--text-success); }
+  .pill.sleep  { background: var(--surface-1); color: var(--text-muted); }
+  .pill.dnd    { background: var(--bg-warn); color: var(--text-warn); }
+  .pill.snooze { background: var(--bg-snooze); color: var(--text-snooze); }
+  .iconbtn { border: none; padding: 3px; color: var(--text-muted); }
+  .iconbtn:hover { color: var(--text-primary); background: transparent; }
+
+  /* ── 파이프라인 ── */
+  .pipe-wrap { padding: 14px 18px 4px; }
+  .pipeline { display: flex; align-items: center; }
+  .link { flex: 1; height: 2px; background: var(--border-strong); }
+  .node {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-1); border: 0.5px solid var(--border-strong);
+    color: var(--text-secondary); transition: color .3s, background .3s, opacity .3s;
+  }
+  .node.off { opacity: 0.35; color: var(--text-muted); }
+  .node.done { border-color: var(--border-stronger); color: var(--text-primary); }
+  .node.active {
+    background: var(--bg-accent); color: var(--text-accent); border-color: var(--border-accent);
+    animation: glow 1.6s ease-in-out infinite;
+  }
+  .node.breathe { animation: breathe 2.6s ease-in-out infinite; color: var(--text-accent); }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(217,119,87,0.20); }
+    50%      { box-shadow: 0 0 0 3px rgba(217,119,87,0.85); }
+  }
+  @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+  #caption {
+    margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-align: center;
+    min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #caption .dim { color: var(--text-muted); }
+
+  /* ── 헤더 프로필 = 페르소나 전환 드롭다운 ── */
+  #profile-btn {
+    display: flex; align-items: center; gap: 8px; margin-right: auto; min-width: 0;
+    max-width: 210px; background: transparent; border: none; border-radius: 8px;
+    padding: 3px 6px 3px 3px;
+  }
+  #profile-btn:hover { background: var(--surface-1); }
+  #profile-chev { color: var(--text-muted); display: flex; flex-shrink: 0; transition: transform .18s; }
+  #persona-menu {
+    position: fixed; top: 50px; left: 10px; z-index: 30; min-width: 172px; max-width: 260px;
+    padding: 5px; background: var(--surface-3); border: 0.5px solid var(--border-strong);
+    border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+    display: none; flex-direction: column; gap: 2px;
+  }
+  #persona-menu.open { display: flex; }
+  .pmenu-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 9px; border: none;
+    border-radius: 7px; background: transparent; text-align: left; color: var(--text-primary);
+  }
+  .pmenu-item:hover { background: var(--surface-1); }
+  .pmenu-item .avatar { width: 26px; height: 26px; font-size: 11px; }
+  .pmenu-item .pm-name { font-size: 12.5px; font-weight: 500; flex: 1; white-space: nowrap; }
+  .pmenu-item .pm-file { font-size: 10px; color: var(--text-muted); }
+  .pmenu-item.current { background: var(--bg-accent); }
+  .pmenu-item.current .pm-name { color: var(--text-accent); }
+
+  /* ── 톤 칩 행 ── */
+  .voice-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px 0; }
+  .vlabel { font-size: 12px; font-weight: 500; color: var(--text-secondary); flex-shrink: 0; }
+  #tone-chips { display: flex; gap: 6px; flex: 1; }
+  #voice-more { color: var(--text-muted); }
+  .tone-chip {
+    width: 34px; height: 34px; border-radius: 50%; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface-1); border: 0.5px solid var(--border); color: var(--text-muted);
+  }
+  .tone-chip.current {
+    background: var(--bg-accent); border: 2px solid var(--border-accent); color: var(--text-accent);
+  }
+
+  /* ── 모드 버튼 ── */
+  .mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 12px 16px 0; }
+  .mode-grid button {
+    font-size: 12px; padding: 7px 2px; display: flex; align-items: center;
+    justify-content: center; gap: 4px;
+  }
+
+  /* ── 취침창 + 푸터 ── */
+  .sleep-block { padding: 14px 16px 14px; }
+  .sleep-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; font-size: 11px; }
+  .sleep-head .label { color: var(--text-secondary); }
+  #window-text { font-family: var(--font-mono); }
+  .sleep-head .hint { color: var(--text-muted); margin-left: auto; }
+  #strip-wrap {
+    position: relative; cursor: pointer;
+    touch-action: none; /* 핸들 드래그 — 브라우저 제스처에 안 뺏긴다 */
+  }
+  #strip {
+    position: relative; height: 14px; border-radius: 7px; background: var(--surface-1);
+    border: 0.5px solid var(--border); overflow: hidden;
+  }
+  .whandle { /* 취침·기상 경계 핸들 — 히트 판정은 wrap이 좌표로, 여긴 표시만 */
+    position: absolute; top: 50%; width: 10px; height: 22px; border-radius: 5px;
+    transform: translate(-50%, -50%); box-sizing: border-box; pointer-events: none;
+    background: var(--surface-3); border: 1px solid var(--border-stronger); z-index: 2;
+  }
+  .whandle.active { background: var(--bg-accent); border-color: var(--border-accent); }
+  .shade { position: absolute; top: 0; bottom: 0; background: var(--bg-pro); }
+  #now-marker { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--fill-accent); }
+  .scale {
+    display: flex; justify-content: space-between; font-size: 10px;
+    color: var(--text-muted); margin-top: 3px; font-family: var(--font-mono);
+  }
+  #window-edit { display: none; align-items: center; gap: 6px; margin-top: 8px; }
+  #window-edit.open { display: flex; }
+  #window-edit input[type=time] {
+    background: var(--surface-1); border: 0.5px solid var(--border-strong); border-radius: 6px;
+    color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; padding: 4px 6px;
+    color-scheme: dark; min-width: 0; flex: 1;
+  }
+  #window-edit button { font-size: 11px; padding: 5px 8px; white-space: nowrap; flex-shrink: 0; }
+  .footer-stats { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+  .footer-stats span { display: inline-flex; align-items: center; gap: 4px; }
+  #conn { margin-left: auto; }
+  #conn.on svg { color: var(--text-success); }
+  #conn.off svg { color: var(--text-warn); }
+
+  /* ── 오버레이 공통 (페르소나 패널 · 로그) ── */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    display: none; align-items: flex-end; z-index: 10;
+  }
+  .overlay.open { display: flex; }
+  .sheet {
+    width: 100%; max-height: 82%; background: var(--surface-3);
+    border-top: 0.5px solid var(--border-strong); border-radius: 12px 12px 0 0;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .sheet-head {
+    display: flex; align-items: center; padding: 10px 14px;
+    border-bottom: 0.5px solid var(--border); flex-shrink: 0;
+  }
+  .sheet-head p { font-size: 13px; font-weight: 500; flex: 1; }
+  .sheet-body { overflow-y: auto; padding: 12px 14px; }
+
+  /* 목소리 톤 시트 */
+  #tone-list { display: flex; flex-direction: column; gap: 6px; }
+  .tone-row {
+    display: flex; align-items: center; gap: 10px; border-radius: var(--radius);
+    padding: 7px 10px; background: var(--surface-2); border: 0.5px solid var(--border);
+    color: var(--text-secondary); text-align: left;
+  }
+  .tone-row.current { background: var(--bg-accent); border-color: var(--bg-accent); color: var(--text-accent); }
+  .tone-row .tname { font-size: 12px; flex: 1; }
+  .tone-row.current .tname { font-weight: 500; }
+  .wave { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .wave span { width: 3px; border-radius: 2px; background: var(--border-stronger); }
+  .tone-row.current .wave span { background: var(--text-accent); }
+  .tone-row .play { border: none; padding: 2px; color: inherit; background: transparent; }
+  .panel-note { margin-top: 10px; font-size: 10.5px; color: var(--text-muted); line-height: 1.7; }
+
+  /* 로그 다이얼로그 */
+  #log-list {
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 2;
+    color: var(--text-secondary); user-select: text;
+  }
+  #log-list .t { color: var(--text-muted); }
+  #log-list .k { color: var(--text-primary); }
+  #log-list .hl { color: var(--text-accent); }
+  #log-list div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 토스트 */
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    background: var(--surface-1); border: 0.5px solid var(--border-strong);
+    border-radius: 999px; padding: 7px 16px; font-size: 12px; color: var(--text-primary);
+    opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 20; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <!-- frameless 창의 제목줄 — 헤더 전체가 드래그 영역, 버튼만 제외(init에서 전파 차단) -->
+  <header class="pywebview-drag-region">
+    <button id="profile-btn" title="페르소나 전환">
+      <div class="avatar" id="char-avatar">나</div>
+      <p id="char-name">나비</p>
+      <span id="profile-chev"></span>
+    </button>
+    <span class="pill sleep" id="mode-pill">…</span>
+    <button class="iconbtn" id="btn-log" title="이벤트 로그"></button>
+    <button class="iconbtn" id="btn-min" title="최소화"></button>
+    <button class="iconbtn" id="btn-close" title="닫기"></button>
+  </header>
+  <!-- 페르소나 전환 드롭다운 (프로필 클릭 시) — 중단 전환 필을 대체 -->
+  <div id="persona-menu"></div>
+
+  <div class="pipe-wrap">
+    <div class="pipeline">
+      <div class="node" id="node-ear"></div><div class="link"></div>
+      <div class="node" id="node-stt"></div><div class="link"></div>
+      <div class="node" id="node-gate"></div><div class="link"></div>
+      <div class="node" id="node-brain"></div><div class="link"></div>
+      <div class="node" id="node-tts"></div>
+    </div>
+    <p id="caption"></p>
+  </div>
+
+  <div class="voice-row">
+    <span class="vlabel">목소리</span>
+    <div id="tone-chips"></div>
+    <button class="iconbtn" id="voice-more" title="톤 자세히 · 시청취"></button>
+  </div>
+
+  <div class="mode-grid">
+    <button data-cmd="wake" id="btn-wake"></button>
+    <button data-cmd="snooze" id="btn-snooze"></button>
+    <button data-cmd="dnd" id="btn-dnd"></button>
+    <button data-cmd="sleep" id="btn-sleep"></button>
+  </div>
+
+  <div class="sleep-block">
+    <div class="sleep-head">
+      <span class="label" id="sleep-icon"></span>
+      <span class="label">취침창</span>
+      <span id="window-text">--:-- – --:--</span>
+      <span class="hint">핸들 드래그 · 클릭해 편집</span>
+    </div>
+    <div id="strip-wrap">
+      <div id="strip">
+        <div class="shade" id="shade-a"></div>
+        <div class="shade" id="shade-b"></div>
+        <div id="now-marker"></div>
+      </div>
+      <div class="whandle" id="handle-start" title="취침 시작"></div>
+      <div class="whandle" id="handle-end" title="기상"></div>
+    </div>
+    <div class="scale"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
+    <div id="window-edit">
+      <input type="time" id="edit-start"> <span style="color:var(--text-muted); font-size:11px;">–</span>
+      <input type="time" id="edit-end">
+      <button id="edit-save">저장</button>
+      <button id="edit-cancel">취소</button>
+    </div>
+    <div class="footer-stats">
+      <span id="stat-uptime"></span>
+      <span id="stat-turns"></span>
+      <span id="conn" class="off"></span>
+    </div>
+  </div>
+</main>
+
+<!-- 목소리 톤 시트 (페르소나 전환은 헤더 드롭다운으로 이동) -->
+<div class="overlay" id="persona-panel">
+  <div class="sheet">
+    <div class="sheet-head">
+      <p>목소리 톤 — 레퍼런스 오디오</p>
+      <button class="iconbtn" data-close="persona-panel"></button>
+    </div>
+    <div class="sheet-body">
+      <div id="tone-list"></div>
+      <p class="panel-note" id="panel-note">교체는 다음 턴부터 적용 · 재생 중엔 대기<br>
+      최종형: 두뇌가 고른 톤이 자동 점등, 클릭=핀 고정 (Phase 3-5)</p>
+    </div>
+  </div>
+</div>
+
+<!-- 로그 다이얼로그 (목업 프레임 3) -->
+<div class="overlay" id="log-dialog">
+  <div class="sheet">
+    <div class="sheet-head">
+      <p>이벤트 로그</p>
+      <span style="font-size:11px; color:var(--text-muted); margin-right:10px;" id="log-live">라이브</span>
+      <button class="iconbtn" data-close="log-dialog"></button>
+    </div>
+    <div class="sheet-body"><div id="log-list"></div></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ═══ 인라인 SVG 아이콘 (외부 CDN 없이 오프라인 동작) ═══ */
+const ICONS = {
+  ear: '<path d="M6 10a6 6 0 1 1 12 0c0 4.5-2.9 5.3-4 7-.8 1.2-1 2.5-3 2.5"/><path d="M10 10a2 2 0 1 1 4 0c0 1.4-.9 1.9-.9 3.3"/>',
+  abc: '<text x="12" y="16.5" text-anchor="middle" font-size="12.5" fill="currentColor" stroke="none">가</text>',
+  shield: '<path d="M12 3l7.5 3v5.2c0 4.6-3.2 7.9-7.5 9.8-4.3-1.9-7.5-5.2-7.5-9.8V6z"/>',
+  brain: '<path d="M11 6.5a2.5 2.5 0 0 0-4.9.7 2.5 2.5 0 0 0-1.3 4 2.5 2.5 0 0 0 .8 4.2 2.6 2.6 0 0 0 5.4.1z"/><path d="M13 6.5a2.5 2.5 0 0 1 4.9.7 2.5 2.5 0 0 1 1.3 4 2.5 2.5 0 0 1-.8 4.2 2.6 2.6 0 0 1-5.4.1z"/>',
+  volume: '<path d="M11 5 6.5 9H3.5v6h3L11 19z"/><path d="M14.8 9.2a4 4 0 0 1 0 5.6"/><path d="M17.3 6.9a7.4 7.4 0 0 1 0 10.2"/>',
+  sun: '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.9 5.9l1.4 1.4M16.7 16.7l1.4 1.4M18.1 5.9l-1.4 1.4M7.3 16.7l-1.4 1.4"/>',
+  clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  'bell-off': '<path d="M9.2 5.2A4.5 4.5 0 0 1 16.5 9c0 2.5.6 4.2 2 5.5H12M7 9.3c-.3.8-.5 1.7-.5 2.7 0 2-.5 3.5-2 5H9"/><path d="M10 17.5a2 2 0 0 0 4 0"/><path d="M4 4l16 16"/>',
+  moon: '<path d="M20 13A8 8 0 1 1 11 4a6.5 6.5 0 0 0 9 9z"/>',
+  'moon-stars': '<path d="M16.5 15A6.5 6.5 0 1 1 9 7.5 5.3 5.3 0 0 0 16.5 15z"/><path d="M17 4.5h4M19 2.5v4"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/>',
+  x: '<path d="M6 6l12 12M18 6 6 18"/>',
+  minus: '<path d="M5 12h14"/>',
+  'chevron-down': '<path d="m7 10 5 5 5-5"/>',
+  message: '<path d="M12 20a8 8 0 1 0-6.9-4L4 20l4-1.1A8 8 0 0 0 12 20z"/>',
+  'mood-smile': '<circle cx="12" cy="12" r="8.5"/><path d="M9 10h.01M15 10h.01"/><path d="M9 14.3a4.3 4.3 0 0 0 6 0"/>',
+  'mood-happy': '<circle cx="12" cy="12" r="8.5"/><path d="M9 9.5h.01M15 9.5h.01"/><path d="M8.3 13.5a5.2 5.2 0 0 0 7.4 0"/>',
+  flare: '<path d="M12 3c.6 4.5 2 7.4 9 9-7 1.6-8.4 4.5-9 9-.6-4.5-2-7.4-9-9 7-1.6 8.4-4.5 9-9z"/>',
+  play: '<path d="M7.5 5.5v13l10-6.5z"/>',
+  plug: '<path d="M9.5 7V3.5M14.5 7V3.5"/><path d="M7.5 7h9v3a4.5 4.5 0 0 1-9 0z"/><path d="M12 14.5V20"/>',
+  wave: '<path d="M3 12c2.5-6 4.5-6 7 0s4.5 6 7 0"/>',
+  badge: '<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="10" r="2"/><path d="M9 16h6"/>',
+};
+function icon(name, size = 18) {
+  const body = ICONS[name] || ICONS.wave;
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none"` +
+    ` stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+}
+const $ = (id) => document.getElementById(id);
+
+/* ═══ 상태 ═══ */
+const S = {
+  mode: "active", listening: "sleep",
+  window: null,            // {start, end} — /status sleep_window
+  uptimeS: 0, uptimeAt: 0, // 마지막 /status 시점의 uptime (로컬 시계로 보간)
+  turns: 0, connected: false,
+  trigger: "",             // 현재 턴 트리거 텍스트 (TURN_STARTED)
+  brainDone: false,        // brain·tts는 스트리밍으로 겹친다 — 표시 순서 제어용
+  voices: [], personaId: null, character: "나비",
+};
+const logBuf = [];  // {wall, kind, payload} — 최신이 앞
+const MODE_LABEL = { active: "ACTIVE", sleep: "SLEEP", dnd: "DND", snooze: "SNOOZE" };
+const MODE_ICON = { active: "message", sleep: "moon", dnd: "bell-off", snooze: "clock" };
+
+/* ═══ 렌더 ═══ */
+function setCaption(html) { $("caption").innerHTML = html; }
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function renderMode() {
+  const pill = $("mode-pill");
+  pill.className = `pill ${S.mode}`;
+  pill.innerHTML = icon(MODE_ICON[S.mode] || "message", 12) + (MODE_LABEL[S.mode] || S.mode);
+  // DND 중엔 DND 버튼이 해제 버튼이 된다 — 같은 자리, 반대 명령
+  $("btn-dnd").innerHTML = S.mode === "dnd"
+    ? icon("bell-off", 14) + " 해제" : icon("bell-off", 14) + " DND";
+  $("btn-dnd").dataset.cmd = S.mode === "dnd" ? "dnd_clear" : "dnd";
+}
+
+const NODE_IDS = { ear: "node-ear", stt: "node-stt", gate: "node-gate", brain: "node-brain", tts: "node-tts" };
+function setNode(stage, cls) { const n = $(NODE_IDS[stage]); n.className = "node" + (cls ? " " + cls : ""); }
+function resetPipeline() {
+  for (const s of ["stt", "gate", "brain", "tts"]) setNode(s, "");
+  S.brainDone = false;
+  renderEar();
+  setCaption(S.listening === "active"
+    ? '듣고 있어요' : '<span class="dim">잠들어 있어요 — "나비야"로 깨우세요</span>');
+}
+function renderEar() {
+  // 대기 중엔 귀 숨쉬기, 청취축 SLEEP이면 소등 (gui.md)
+  setNode("ear", S.listening === "active" ? "breathe" : "off");
+}
+let resetTimer = null;
+function resetSoon(ms = 1200) {
+  clearTimeout(resetTimer);
+  resetTimer = setTimeout(resetPipeline, ms);
+}
+
+function renderWindow(win = S.window) { // win 지정 시 = 드래그 미리보기(커밋 아님)
+  if (!win) { $("window-text").textContent = "상태머신 없음"; return; }
+  $("window-text").textContent = `${win.start} – ${win.end}`;
+  const pct = (t) => { const [h, m] = t.split(":").map(Number); return ((h * 60 + m) / 1440) * 100; };
+  const a = $("shade-a"), b = $("shade-b");
+  const s = pct(win.start), e = pct(win.end);
+  if (s <= e) { // 같은 날
+    a.style.left = s + "%"; a.style.width = (e - s) + "%";
+    b.style.width = "0";
+  } else {      // 자정 넘김 — 양끝 음영
+    a.style.left = "0"; a.style.width = e + "%";
+    b.style.right = "0"; b.style.left = "auto"; b.style.width = (100 - s) + "%";
+  }
+  $("handle-start").style.left = s + "%";
+  $("handle-end").style.left = e + "%";
+  renderNowMarker();
+}
+function renderNowMarker() {
+  const now = new Date();
+  $("now-marker").style.left = (((now.getHours() * 60 + now.getMinutes()) / 1440) * 100) + "%";
+}
+
+function renderStats() {
+  const up = S.uptimeS + (S.uptimeAt ? (Date.now() - S.uptimeAt) / 1000 : 0);
+  const h = Math.floor(up / 3600), m = Math.floor((up % 3600) / 60);
+  $("stat-uptime").innerHTML = icon("clock", 12) + ` ${h}h ${m}m`;
+  $("stat-turns").innerHTML = icon("message", 12) + ` 턴 ${S.turns}회`;
+  const conn = $("conn");
+  conn.className = S.connected ? "on" : "off";
+  conn.innerHTML = icon("plug", 12) + (S.connected ? " 데몬 연결됨" : " 연결 끊김");
+}
+
+function renderCharacter() {
+  const ch = S.character || "나비";
+  $("char-name").textContent = ch;
+  $("char-avatar").textContent = ch[0];
+}
+
+function renderToneChips() {
+  const box = $("tone-chips");
+  box.innerHTML = "";
+  // 톤이 없으면(텍스트 모드·voice 섹션 없음) 자세히 버튼 숨김 — 열어도 빈 시트
+  $("voice-more").style.display = S.voices.length ? "" : "none";
+  for (const v of S.voices.slice(0, 4)) {
+    const b = document.createElement("button");
+    b.className = "tone-chip" + (v.current ? " current" : "");
+    b.title = v.name;
+    b.innerHTML = icon(v.icon || "wave", 16);
+    b.onclick = () => postVoice(v.name);
+    box.appendChild(b);
+  }
+}
+
+/* ═══ API ═══ */
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (_) { /* 본문 없음 */ }
+    const err = new Error(detail); err.status = res.status; throw err;
+  }
+  return res.json();
+}
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.remove("show"), 2500);
+}
+
+async function refreshStatus() {
+  const st = await api("GET", "/status");
+  S.mode = st.proactive_mode;
+  S.listening = st.listening_mode;
+  S.window = st.sleep_window;
+  S.uptimeS = st.uptime_s; S.uptimeAt = Date.now();
+  S.turns = st.turns_count;
+  renderMode(); renderWindow(); renderStats(); renderEar();
+}
+async function refreshPersonas() {
+  try {
+    const list = await api("GET", "/personas");
+    const cur = list.find((p) => p.current);
+    if (cur) { S.personaId = cur.id; S.character = cur.character; }
+    renderCharacter();
+    return list;
+  } catch (_) { return []; } // 503 = 런타임 미구성 — 표시만 기본값 유지
+}
+async function refreshVoices() {
+  try { S.voices = await api("GET", "/voices"); }
+  catch (_) { S.voices = []; } // 503 = 텍스트 모드 / 404 — 칩 숨김
+  renderToneChips();
+}
+async function postMode(cmd) {
+  try {
+    const r = await api("POST", `/mode/${cmd}`);
+    S.mode = r.mode;
+    renderMode();
+  } catch (e) { toast(e.message); }
+}
+async function postVoice(name) {
+  try {
+    await api("POST", "/voice", { name });
+    toast(`톤 「${name}」 — 다음 턴부터`);
+    await refreshVoices();
+    renderTonePanel();
+  } catch (e) { toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message); }
+}
+async function postPersona(id) {
+  try {
+    const r = await api("POST", "/persona", { id });
+    S.personaId = r.id; S.character = r.character;
+    renderCharacter();
+    toast(r.voice_swapped === false && S.voices.length
+      ? "카드만 교체 — 목소리는 유지(가중치 불일치)" : `페르소나 「${r.character}」`);
+    await refreshVoices();
+  } catch (e) { toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message); }
+}
+
+/* ═══ 페르소나 전환 드롭다운 (헤더 프로필) ═══ */
+function renderPersonaMenu(list) {
+  const menu = $("persona-menu");
+  menu.innerHTML = "";
+  if (!list.length) {
+    menu.innerHTML = '<p style="padding:8px 9px;font-size:11px;color:var(--text-muted);">페르소나 런타임 미구성</p>';
+    return;
+  }
+  for (const p of list) {
+    const item = document.createElement("button");
+    item.className = "pmenu-item" + (p.current ? " current" : "");
+    item.innerHTML = `<div class="avatar">${esc(p.character[0] || "?")}</div>` +
+      `<span class="pm-name">${esc(p.character)}</span><span class="pm-file">${esc(p.id)}.yaml</span>`;
+    item.onclick = () => { closePersonaMenu(); if (!p.current) postPersona(p.id); };
+    menu.appendChild(item);
+  }
+}
+function closePersonaMenu() {
+  $("persona-menu").classList.remove("open");
+  $("profile-chev").style.transform = "";
+}
+async function togglePersonaMenu() {
+  const menu = $("persona-menu");
+  if (menu.classList.contains("open")) { closePersonaMenu(); return; }
+  renderPersonaMenu(await refreshPersonas());
+  menu.classList.add("open");
+  $("profile-chev").style.transform = "rotate(180deg)";
+}
+
+/* ═══ 페르소나 패널 ═══ */
+let previewAudio = null;
+function playPreview(name) {
+  if (previewAudio) previewAudio.pause();
+  previewAudio = new Audio(`/voices/${encodeURIComponent(name)}/audio`);
+  previewAudio.play().catch(() => toast("시청취할 파일이 없어요"));
+}
+function renderTonePanel() {
+  const box = $("tone-list");
+  box.innerHTML = "";
+  if (!S.voices.length) {
+    box.innerHTML = '<p style="font-size:11px;color:var(--text-muted);">톤 없음 — 텍스트 모드거나 카드에 voice 섹션이 없어요</p>';
+    return;
+  }
+  for (const v of S.voices) {
+    const row = document.createElement("button");
+    row.className = "tone-row" + (v.current ? " current" : "");
+    const bars = [6, 12, 8, 13, 5].map((h) => `<span style="height:${h}px"></span>`).join("");
+    row.innerHTML = `${icon(v.icon || "wave", 17)}<span class="tname">${esc(v.name)}</span>` +
+      `<span class="wave">${bars}</span><span class="play" title="시청취">${icon("play", 15)}</span>`;
+    row.onclick = () => postVoice(v.name);
+    row.querySelector(".play").onclick = (e) => { e.stopPropagation(); playPreview(v.name); };
+    box.appendChild(row);
+  }
+}
+async function openVoiceSheet() {
+  await refreshVoices();
+  renderTonePanel();
+  $("persona-panel").classList.add("open");
+}
+
+/* ═══ 로그 ═══ */
+function payloadSummary(kind, p) {
+  if (p == null) return "";
+  if (kind === "STAGE") {
+    const [stage, phase, detail] = p;
+    return `${stage} ${phase}${detail ? " " + JSON.stringify(detail) : ""}`;
+  }
+  if (kind === "MODE_CHANGED") return `${p[0]} → ${p[1]}`;
+  const s = typeof p === "string" ? p : JSON.stringify(p);
+  return s.length > 70 ? s.slice(0, 70) + "…" : s;
+}
+function logLine(e) {
+  const t = new Date(e.wall * 1000).toTimeString().slice(0, 8);
+  const hl = e.kind === "STAGE" && e.payload && e.payload[1] === "start";
+  return `<div><span class="t">${t}</span> <span class="${hl ? "hl" : "k"}">${e.kind}</span> ` +
+    `<span>${esc(payloadSummary(e.kind, e.payload))}</span></div>`;
+}
+function renderLog() {
+  $("log-list").innerHTML = logBuf.map(logLine).join("");
+}
+function pushLog(ev) {
+  logBuf.unshift({ wall: ev.wall_ts, kind: ev.kind, payload: ev.payload });
+  if (logBuf.length > 300) logBuf.pop();
+  if ($("log-dialog").classList.contains("open")) renderLog();
+}
+
+/* ═══ 이벤트 → 파이프라인 점등 ═══ */
+function applyEvent(ev) {
+  switch (ev.kind) {
+    case "WAKE":
+      S.listening = "active";
+      resetPipeline();
+      setNode("ear", "active");
+      setCaption("듣고 있어요…");
+      break;
+    case "SLEEP":
+      S.listening = "sleep";
+      resetPipeline();
+      break;
+    case "UTTERANCE":
+      setNode("ear", "done");
+      break;
+    case "TURN_STARTED":
+      S.trigger = ev.payload || "";
+      // 텍스트 모드(brain STAGE 없음)에서도 뭔가 점등되도록 두뇌를 켠다
+      if (!$("node-brain").classList.contains("active")) setNode("brain", "active");
+      setCaption(`<span class="dim">"${esc(S.trigger)}"</span>`);
+      break;
+    case "TURN_ENDED":
+      S.turns += 1;
+      renderStats();
+      resetSoon(1500);
+      break;
+    case "MODE_CHANGED":
+      S.mode = ev.payload[1];
+      renderMode();
+      break;
+    case "STAGE":
+      applyStage(...ev.payload);
+      break;
+    case "SHUTDOWN":
+      S.connected = false;
+      renderStats();
+      setCaption('<span class="dim">데몬이 내려갔어요</span>');
+      break;
+  }
+}
+function applyStage(stage, phase, detail) {
+  clearTimeout(resetTimer);
+  if (stage === "stt") {
+    if (phase === "start") { setNode("ear", "done"); setNode("stt", "active"); setCaption("받아쓰는 중…"); }
+    else { setNode("stt", "done"); if (detail && detail.ms) setCaption(`받아쓰기 ${(detail.ms / 1000).toFixed(1)}s`); }
+  } else if (stage === "gate") {
+    setNode("gate", detail && detail.result === "PASS" ? "done" : "active");
+    if (detail && detail.result !== "PASS") { setCaption(`검문①: ${esc(detail.result)}`); resetSoon(2000); }
+  } else if (stage === "brain") {
+    if (phase === "start") {
+      setNode("gate", "done"); setNode("brain", "active"); S.brainDone = false;
+      setCaption(`생각 중… <span class="dim">"${esc(S.trigger)}"</span>`);
+    } else {
+      S.brainDone = true; setNode("brain", "done");
+      setNode("tts", "active"); setCaption("말하는 중…");
+    }
+  } else if (stage === "tts") {
+    // tts start는 brain과 동시에 온다(스트리밍 중첩) — 두뇌 첫 토큰까지는 두뇌만 점등
+    if (phase === "start") { if (S.brainDone) { setNode("tts", "active"); setCaption("말하는 중…"); } }
+    else {
+      setNode("tts", "done");
+      if (detail && detail.ms) setCaption(`응답 완료 (${(detail.ms / 1000).toFixed(1)}s)`);
+      resetSoon(2000);
+    }
+  }
+}
+
+/* ═══ WebSocket (자동 재연결) ═══ */
+let ws = null;
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/events`);
+  ws.onopen = () => {
+    S.connected = true;
+    renderStats();
+    // 재연결이면 "데몬이 내려갔어요" 캡션을 유휴 상태로 되돌린다
+    refreshStatus().then(resetPipeline).catch(() => {});
+  };
+  ws.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    pushLog(ev);
+    // 접속 직후 링버퍼 백필(과거 50건)은 로그로만 — 점등 애니메이션은 최근 3초만
+    if (Date.now() / 1000 - ev.wall_ts < 3) applyEvent(ev);
+  };
+  ws.onclose = () => {
+    if (S.connected) { S.connected = false; renderStats(); }
+    setTimeout(connectWS, 1500); // 데몬 재기동을 기다린다 — GUI는 계속 산다
+  };
+  ws.onerror = () => ws.close();
+}
+
+/* ═══ 배선 ═══ */
+function init() {
+  $("btn-log").innerHTML = icon("list", 17);
+  $("btn-min").innerHTML = icon("minus", 17);
+  $("btn-close").innerHTML = icon("x", 17);
+  $("profile-chev").innerHTML = icon("chevron-down", 14);
+  $("voice-more").innerHTML = icon("wave", 17);
+  $("sleep-icon").innerHTML = icon("moon", 13);
+  $("node-ear").innerHTML = icon("ear");
+  $("node-stt").innerHTML = icon("abc");
+  $("node-gate").innerHTML = icon("shield");
+  $("node-brain").innerHTML = icon("brain", 19);
+  $("node-tts").innerHTML = icon("volume");
+  $("btn-wake").innerHTML = icon("sun", 14) + " 기상";
+  $("btn-snooze").innerHTML = icon("clock", 14) + " 스누즈";
+  $("btn-sleep").innerHTML = icon("moon", 14) + " 재우기";
+  renderMode(); resetPipeline(); renderStats();
+
+  for (const b of document.querySelectorAll(".mode-grid button"))
+    b.onclick = () => postMode(b.dataset.cmd);
+  $("btn-close").onclick = () => {
+    if (window.pywebview) window.pywebview.api.close(); else window.close();
+  };
+  $("btn-min").onclick = () => { if (window.pywebview) window.pywebview.api.minimize(); };
+  if (!window.pywebview) $("btn-min").style.display = "none"; // 일반 브라우저(개발)에선 무의미
+  // 헤더 = 드래그 영역(pywebview-drag-region, mousedown 버블링 기반) — 클릭 버튼은 전파를
+  // 끊어 창 드래그 시작에서 제외한다. 클릭(onclick)은 버튼 자신의 것이라 영향 없음.
+  for (const id of ["profile-btn", "btn-log", "btn-min", "btn-close"])
+    for (const evt of ["mousedown", "pointerdown", "touchstart"])
+      $(id).addEventListener(evt, (e) => e.stopPropagation());
+  $("btn-log").onclick = () => { renderLog(); $("log-dialog").classList.add("open"); };
+  // 프로필 = 페르소나 전환 드롭다운, 톤 자세히 = 시청취 시트
+  $("profile-btn").onclick = () => togglePersonaMenu().catch((e) => toast(e.message));
+  $("voice-more").onclick = () => openVoiceSheet().catch((e) => toast(e.message));
+  document.addEventListener("click", (e) => { // 바깥 클릭 시 드롭다운 닫기
+    if (!$("persona-menu").classList.contains("open")) return;
+    if ($("persona-menu").contains(e.target) || $("profile-btn").contains(e.target)) return;
+    closePersonaMenu();
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePersonaMenu(); });
+  for (const b of document.querySelectorAll("[data-close]"))
+    b.onclick = () => $(b.dataset.close).classList.remove("open");
+  for (const ov of document.querySelectorAll(".overlay"))
+    ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.remove("open"); });
+
+  // 취침창 변경 — PUT /mode/window (판정·전이는 데몬).
+  // 스트립 드래그 = 범위 선택(시작점→놓는 지점, 30분 스냅, 왼쪽 드래그 = 자정 넘김),
+  // 클릭(움직임 없음) = 정밀 편집 행. 저장 로직은 둘 다 putWindow 하나로 수렴.
+  async function putWindow(start, end) {
+    try {
+      const r = await api("PUT", "/mode/window", { start, end });
+      S.window = { start: r.start, end: r.end };
+      S.mode = r.mode;
+      renderWindow(); renderMode();
+      $("window-edit").classList.remove("open");
+      toast("취침창 변경됨 — 이번 실행 동안 유지");
+    } catch (e) { toast(e.message); renderWindow(); }
+  }
+  // 핸들 2개(취침·기상)를 개별 드래그 — 창은 상시 표시, 경계만 옮긴다.
+  // 빈 영역 드래그는 무동작(오조작으로 창이 통째 바뀌는 일 없음), 클릭 = 정밀 편집 행.
+  const strip = $("strip");
+  const wrap = $("strip-wrap");
+  const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const fmtMin = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const stripMin = (ev) => { // 포인터 x → 30분 스냅 분(0~1439)
+    const r = strip.getBoundingClientRect();
+    const x = Math.min(Math.max(ev.clientX - r.left, 0), r.width);
+    return (Math.round(((x / r.width) * 1440) / 30) * 30) % 1440;
+  };
+  let drag = null; // { handle: "start"|"end"|null, moved, startX, temp }
+  wrap.addEventListener("pointerdown", (ev) => {
+    if (!S.window) { toast("모드 상태머신이 없어요"); return; }
+    const r = strip.getBoundingClientRect();
+    const xAt = (t) => r.left + (toMin(t) / 1440) * r.width;
+    const ds = Math.abs(ev.clientX - xAt(S.window.start));
+    const de = Math.abs(ev.clientX - xAt(S.window.end));
+    const handle = Math.min(ds, de) <= 14 ? (ds <= de ? "start" : "end") : null;
+    drag = { handle, moved: false, startX: ev.clientX, temp: { ...S.window } };
+    if (handle) {
+      $(handle === "start" ? "handle-start" : "handle-end").classList.add("active");
+      try { wrap.setPointerCapture(ev.pointerId); } catch (_) { /* 합성 이벤트 등 */ }
+    }
+  });
+  wrap.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    if (Math.abs(ev.clientX - drag.startX) > 4) drag.moved = true; // 핸들 무관 — 빈 영역 드래그를 클릭으로 오인하지 않게
+    if (!drag.handle || !drag.moved) return;
+    const m = stripMin(ev);
+    const other = toMin(drag.temp[drag.handle === "start" ? "end" : "start"]);
+    if (m === other) return; // 최소 간격 30분 — 경계 충돌은 무시
+    drag.temp[drag.handle] = fmtMin(m);
+    renderWindow(drag.temp); // 미리보기 (커밋 아님)
+  });
+  wrap.addEventListener("pointerup", () => {
+    const d = drag;
+    drag = null;
+    for (const h of ["handle-start", "handle-end"]) $(h).classList.remove("active");
+    if (!d) return;
+    if (!d.moved) { // 클릭 — 정밀 편집 행 토글
+      $("edit-start").value = S.window.start;
+      $("edit-end").value = S.window.end;
+      $("window-edit").classList.toggle("open");
+      renderWindow();
+      return;
+    }
+    if (!d.handle || (d.temp.start === S.window.start && d.temp.end === S.window.end)) {
+      renderWindow(); // 빈 영역 드래그·무변화 — 원복
+      return;
+    }
+    putWindow(d.temp.start, d.temp.end);
+  });
+  wrap.addEventListener("pointercancel", () => {
+    drag = null;
+    for (const h of ["handle-start", "handle-end"]) $(h).classList.remove("active");
+    renderWindow();
+  });
+  $("edit-cancel").onclick = () => $("window-edit").classList.remove("open");
+  $("edit-save").onclick = () => putWindow($("edit-start").value, $("edit-end").value);
+
+  refreshStatus().catch(() => {});
+  refreshPersonas();
+  refreshVoices();
+  connectWS();
+  setInterval(renderStats, 30000);
+  setInterval(renderNowMarker, 30000);
+  setInterval(() => refreshStatus().catch(() => {}), 15000);
+}
+init();
+</script>
+</body>
+</html>

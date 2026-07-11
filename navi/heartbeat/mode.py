@@ -100,6 +100,11 @@ class ModeMachine:
         """검문② — 능동 발화 허용 여부. ACTIVE만 True (arch 5장 규칙 1)."""
         return self.current_mode() is Mode.ACTIVE
 
+    @property
+    def window(self) -> SleepWindow:
+        """현재 취침창 — GUI 24시간 스트립 초기 렌더 재료(GET /status)."""
+        return self._window
+
     # ─── 전이 ───────────────────────────────────────────────
 
     def tick(self, now: datetime | None = None) -> Mode:

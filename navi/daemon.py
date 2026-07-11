@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 import uuid
@@ -198,6 +199,10 @@ class DaemonCore:
         self._apply_mode(mode, force_persist=True)
         return mode
 
+    def sleep_window(self):
+        """현재 취침창 — 상태머신 미구성이면 None. GET /status가 GUI 스트립에 싣는다."""
+        return self._machine.window if self._machine is not None else None
+
     def set_sleep_window(self, window) -> Mode:
         """취침창 런타임 변경(Stage 14 예고) — 변경 즉시 시간 전이를 재평가한다."""
         if self._machine is None:
@@ -352,6 +357,22 @@ async def _run(config, args) -> None:
     user_id = store.ensure_user(display_name="친구")
     session_id = uuid.uuid4().hex
     bus = EventBus()
+
+    # Ctrl+C(SIGINT)·Ctrl+Break(SIGBREAK)를 KeyboardInterrupt 대신 SHUTDOWN 발행으로.
+    # 기본 동작은 런너가 전 태스크를 일괄 취소해 uvicorn WS·lifespan이 CancelledError
+    # 소음(ERROR 로그 2건)을 남긴다 — stop 커맨드·POST /shutdown과 같은 정상 종료
+    # 경로로 합류시키면 조용하다. 두 번째 Ctrl+C는 기본 핸들러 복원(강제 탈출구).
+    loop = asyncio.get_running_loop()
+
+    def _graceful_interrupt(signum, frame) -> None:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        loop.call_soon_threadsafe(
+            bus.publish, Event(EventKind.SHUTDOWN, time.monotonic())
+        )
+
+    signal.signal(signal.SIGINT, _graceful_interrupt)
+    if hasattr(signal, "SIGBREAK"):  # Windows 전용 — Ctrl+Break·콘솔 닫기
+        signal.signal(signal.SIGBREAK, _graceful_interrupt)
 
     # 능동축 상태머신(Stage 14) — 재기동 시 mode_state 복원(만료 오버라이드는 tick이 정리)
     schedule = ConfigSchedule(config.mode.sleep_start, config.mode.sleep_end)
@@ -614,7 +635,8 @@ def main() -> None:
     STOP_FILE.unlink(missing_ok=True)  # 이전 실행의 잔여 센티널 제거
     try:
         asyncio.run(_run(config, args))
-    except KeyboardInterrupt:
+        print("(나비 데몬 내려감)")
+    except KeyboardInterrupt:  # 핸들러 설치 전 인터럽트·두 번째 Ctrl+C(강제)
         print("\n(나비 데몬 내려감)")
     finally:
         release_pidfile()

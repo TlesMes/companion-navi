@@ -7,6 +7,45 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15-③ — pywebview GUI 앱 (2026.07.11, `feat/gui-app`):**
+- **GUI 프로세스([navi/gui/__main__.py](../navi/gui/__main__.py)):** `python -m navi.gui` —
+  pywebview frameless 창(360×420 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면
+  대기 화면을 띄우고 1초 폴링으로 자동 진입. 헤더 ✕는 js_api로 네이티브 창 닫기.
+  의존성 `pywebview`는 기본 venv(음성 스택 불필요 — GUI는 오디오를 만지지 않는다).
+- **단일 파일 프런트([navi/gui/static/index.html](../navi/gui/static/index.html)):** 목업 v3
+  구현 — 5노드 파이프라인 점등(STAGE 구독, 대기 중 귀 숨쉬기·청취축 SLEEP 소등), 능동축 필 +
+  오버라이드 버튼 4개(DND 중엔 해제로 토글), 취침창 24h 스트립(자정 넘김 양끝 음영 + 현재
+  마커 + 클릭 인라인 편집), 페르소나·톤 바텀시트, 로그 다이얼로그. WS 자동 재연결(1.5s) —
+  링버퍼 백필은 로그로만 넣고 점등은 최근 3초 이벤트만(재접속 시 과거 재생 방지). **외부 CDN
+  0** — 목업의 tabler 웹폰트 대신 인라인 SVG 아이콘(오프라인·pywebview 무의존).
+- **컨트롤 플레인 GUI 표면 4건(서버 소폭 확장):** ① `GET /` 프런트 정적 서빙(같은 오리진 —
+  CORS 없음) ② `/status`에 `sleep_window`(스트립 초기 렌더 재료 — ModeMachine.window 신설)
+  ③ WS 이벤트에 `wall_ts`(ts는 monotonic이라 GUI가 시각으로 못 읽음 — 직렬화 시점 두 시계
+  차로 근사) ④ `GET /voices/{name}/audio` 톤 시청취(재생은 GUI `<audio>` — 데몬 스피커 미사용,
+  `SwapRuntime.tone_file`이 파일 아닌 voice_id(프리셋명)는 404).
+- **결정 — 취침창 변경은 런타임 전용(gui.md 검증 ④):** 데몬이 config.yaml을 쓰지 않는다 —
+  영구 변경은 config 수동 편집. GUI 토스트에 "이번 실행 동안 유지"로 명시.
+- **구현 후 UI 다듬기(실사용 피드백 반영):** ① **frameless 창** — OS 제목줄이 드러나 앱
+  헤더를 제목줄로 승격(헤더 전체 드래그 영역, 최소화 버튼, 창 360×420로 축소). 이 과정에서
+  창 멈춤 버그 해소: js_api에 창 객체를 공개 속성으로 두면 pywebview가 브리지 직렬화 중
+  `Window.native`를 무한 재귀로 훑어 메인 스레드가 멎음 → 비공개 `_window`로 전환.
+  ② **취침창 두 핸들 드래그** — 빈 스트립에 범위를 그리는 방식은 인지가 어렵고 오조작에
+  취약(어디를 끌어도 창 통째 교체) → 취침·기상 경계에 상시 핸들 2개, 경계만 개별 이동
+  (30분 스냅·실시간 미리보기, 빈 영역 드래그 무동작). ③ **페르소나 전환을 헤더 프로필
+  드롭다운으로** — 중단 전환 필이 헤더와 중복이라 좌상단 프로필을 인라인 드롭다운 트리거로,
+  중단은 톤 칩 + 자세히(시청취) 시트로 축소. ④ **앱 액센트 = Claude 코랄/러스트(#d97757)** —
+  블루가 웜 다크 표면과 온도 어긋남, 스누즈 필 파랑은 4모드 색 구분 위해 전용 변수로 보존.
+- **결정 — Ctrl+C graceful 종료([navi/daemon.py](../navi/daemon.py)):** 기본 SIGINT는 런너가
+  전 태스크를 일괄 취소해 uvicorn WS·lifespan이 CancelledError 소음(ERROR 2건)을 남김 →
+  SIGINT·SIGBREAK를 가로채 stop·POST /shutdown과 같은 SHUTDOWN 경로로 합류(두 번째 Ctrl+C는
+  기본 핸들러 복원). CTRL_BREAK 실측 — 출력 2줄, traceback 없음, exit 0.
+- **검증:** 유닛 192개 green(+5: sleep_window·wall_ts·GET /·시청취). 오프라인 E2E(echo 데몬 +
+  브라우저 실측): 모드 버튼 전이가 MODE_CHANGED로 라이브 반영·페르소나 드롭다운 교체
+  (navi↔example) 헤더 즉시 반영·취침창 핸들 드래그 즉시 전이·데몬 종료→"연결 끊김"→재기동
+  자동 재연결·STAGE 전 단계 점등·frameless 창/최소화/드래그·코랄 테마 computed style 확인.
+  **실기 E2E(--voice --wakeword + gptsovits base zero-shot ~250MB 다운로드 포함)는 계획대로
+  Stage 15 전체를 한 번에** — gui.md PR ③ 검증 절.
+
 **Stage 15-② — 페르소나·톤 런타임 교체 (2026.07.11, `feat/mouth-voice-swap`):**
 - **페르소나-음색 번들 결정(2026.07.10, 원안 개정):** 페르소나 = 카드(성격) + 음색(fine-tune
   가중치) + 톤 목록(그 음색의 레퍼런스 wav). 톤 레퍼런스는 해당 fine-tune 화자의 녹음이라
