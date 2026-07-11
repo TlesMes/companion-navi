@@ -12,7 +12,9 @@
     --surface-1: #262521; --surface-2: #2d2b27; --surface-3: #34322d;
     --border: #3d3a34; --border-strong: #4a463f; --border-stronger: #6a6459;
     --text-primary: #ece9e2; --text-secondary: #a8a396; --text-muted: #7a756a;
-    --bg-accent: #1e3a5f; --text-accent: #8ec2f2; --border-accent: #3b82d0; --fill-accent: #4a9eea;
+    /* 앱 액센트 = Claude 코랄/러스트 (웜 다크 표면과 조화) — 파이프라인 점등·톤칩·페르소나 강조 */
+    --bg-accent: #402a20; --text-accent: #edad8e; --border-accent: #cc7351; --fill-accent: #d97757;
+    --bg-snooze: #1e3a5f; --text-snooze: #8ec2f2;  /* 스누즈 필 전용 — 4모드 색 구분(초록·회색·주황·파랑) 유지 */
     --bg-success: #1d3b2a; --text-success: #7fd6a4;
     --bg-warn: #4a2c15; --text-warn: #f0a868;
     --bg-pro: #3a2f5b;
@@ -49,7 +51,7 @@
   .pill.active { background: var(--bg-success); color: var(--text-success); }
   .pill.sleep  { background: var(--surface-1); color: var(--text-muted); }
   .pill.dnd    { background: var(--bg-warn); color: var(--text-warn); }
-  .pill.snooze { background: var(--bg-accent); color: var(--text-accent); }
+  .pill.snooze { background: var(--bg-snooze); color: var(--text-snooze); }
   .iconbtn { border: none; padding: 3px; color: var(--text-muted); }
   .iconbtn:hover { color: var(--text-primary); background: transparent; }
 
@@ -71,8 +73,8 @@
   }
   .node.breathe { animation: breathe 2.6s ease-in-out infinite; color: var(--text-accent); }
   @keyframes glow {
-    0%, 100% { box-shadow: 0 0 0 2px rgba(59,130,208,0.20); }
-    50%      { box-shadow: 0 0 0 3px rgba(59,130,208,0.85); }
+    0%, 100% { box-shadow: 0 0 0 2px rgba(217,119,87,0.20); }
+    50%      { box-shadow: 0 0 0 3px rgba(217,119,87,0.85); }
   }
   @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
   #caption {

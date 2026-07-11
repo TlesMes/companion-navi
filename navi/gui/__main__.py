@@ -21,7 +21,7 @@ body { margin: 0; height: 100vh; display: flex; flex-direction: column; align-it
 .x { position: fixed; top: 0; right: 0; width: 34px; height: 34px; border: 0; cursor: pointer;
      background: transparent; color: #7a756a; font-size: 15px; }
 .x:hover { color: #ece9e2; }
-.dot { width: 46px; height: 46px; border-radius: 50%; background: #1e3a5f; color: #8ec2f2;
+.dot { width: 46px; height: 46px; border-radius: 50%; background: #402a20; color: #edad8e;
        display: flex; align-items: center; justify-content: center; font-size: 18px;
        animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
