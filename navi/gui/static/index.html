@@ -113,10 +113,20 @@
   .sleep-head .label { color: var(--text-secondary); }
   #window-text { font-family: var(--font-mono); }
   .sleep-head .hint { color: var(--text-muted); margin-left: auto; }
+  #strip-wrap {
+    position: relative; cursor: pointer;
+    touch-action: none; /* 핸들 드래그 — 브라우저 제스처에 안 뺏긴다 */
+  }
   #strip {
     position: relative; height: 14px; border-radius: 7px; background: var(--surface-1);
-    border: 0.5px solid var(--border); overflow: hidden; cursor: pointer;
+    border: 0.5px solid var(--border); overflow: hidden;
   }
+  .whandle { /* 취침·기상 경계 핸들 — 히트 판정은 wrap이 좌표로, 여긴 표시만 */
+    position: absolute; top: 50%; width: 10px; height: 22px; border-radius: 5px;
+    transform: translate(-50%, -50%); box-sizing: border-box; pointer-events: none;
+    background: var(--surface-3); border: 1px solid var(--border-stronger); z-index: 2;
+  }
+  .whandle.active { background: var(--bg-accent); border-color: var(--border-accent); }
   .shade { position: absolute; top: 0; bottom: 0; background: var(--bg-pro); }
   #now-marker { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--fill-accent); }
   .scale {
@@ -128,9 +138,9 @@
   #window-edit input[type=time] {
     background: var(--surface-1); border: 0.5px solid var(--border-strong); border-radius: 6px;
     color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; padding: 4px 6px;
-    color-scheme: dark;
+    color-scheme: dark; min-width: 0; flex: 1;
   }
-  #window-edit button { font-size: 11px; padding: 5px 10px; }
+  #window-edit button { font-size: 11px; padding: 5px 8px; white-space: nowrap; flex-shrink: 0; }
   .footer-stats { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
   .footer-stats span { display: inline-flex; align-items: center; gap: 4px; }
   #conn { margin-left: auto; }
@@ -249,12 +259,16 @@
       <span class="label" id="sleep-icon"></span>
       <span class="label">취침창</span>
       <span id="window-text">--:-- – --:--</span>
-      <span class="hint">클릭해 편집</span>
+      <span class="hint">핸들 드래그 · 클릭해 편집</span>
     </div>
-    <div id="strip">
-      <div class="shade" id="shade-a"></div>
-      <div class="shade" id="shade-b"></div>
-      <div id="now-marker"></div>
+    <div id="strip-wrap">
+      <div id="strip">
+        <div class="shade" id="shade-a"></div>
+        <div class="shade" id="shade-b"></div>
+        <div id="now-marker"></div>
+      </div>
+      <div class="whandle" id="handle-start" title="취침 시작"></div>
+      <div class="whandle" id="handle-end" title="기상"></div>
     </div>
     <div class="scale"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
     <div id="window-edit">
@@ -386,12 +400,12 @@ function resetSoon(ms = 1200) {
   resetTimer = setTimeout(resetPipeline, ms);
 }
 
-function renderWindow() {
-  if (!S.window) { $("window-text").textContent = "상태머신 없음"; return; }
-  $("window-text").textContent = `${S.window.start} – ${S.window.end}`;
+function renderWindow(win = S.window) { // win 지정 시 = 드래그 미리보기(커밋 아님)
+  if (!win) { $("window-text").textContent = "상태머신 없음"; return; }
+  $("window-text").textContent = `${win.start} – ${win.end}`;
   const pct = (t) => { const [h, m] = t.split(":").map(Number); return ((h * 60 + m) / 1440) * 100; };
   const a = $("shade-a"), b = $("shade-b");
-  const s = pct(S.window.start), e = pct(S.window.end);
+  const s = pct(win.start), e = pct(win.end);
   if (s <= e) { // 같은 날
     a.style.left = s + "%"; a.style.width = (e - s) + "%";
     b.style.width = "0";
@@ -399,6 +413,8 @@ function renderWindow() {
     a.style.left = "0"; a.style.width = e + "%";
     b.style.right = "0"; b.style.left = "auto"; b.style.width = (100 - s) + "%";
   }
+  $("handle-start").style.left = s + "%";
+  $("handle-end").style.left = e + "%";
   renderNowMarker();
 }
 function renderNowMarker() {
@@ -706,24 +722,79 @@ function init() {
   for (const ov of document.querySelectorAll(".overlay"))
     ov.addEventListener("click", (e) => { if (e.target === ov) ov.classList.remove("open"); });
 
-  // 취침창 인라인 편집 — PUT /mode/window (판정·전이는 데몬)
-  $("strip").onclick = () => {
-    if (!S.window) { toast("모드 상태머신이 없어요"); return; }
-    $("edit-start").value = S.window.start;
-    $("edit-end").value = S.window.end;
-    $("window-edit").classList.add("open");
-  };
-  $("edit-cancel").onclick = () => $("window-edit").classList.remove("open");
-  $("edit-save").onclick = async () => {
+  // 취침창 변경 — PUT /mode/window (판정·전이는 데몬).
+  // 스트립 드래그 = 범위 선택(시작점→놓는 지점, 30분 스냅, 왼쪽 드래그 = 자정 넘김),
+  // 클릭(움직임 없음) = 정밀 편집 행. 저장 로직은 둘 다 putWindow 하나로 수렴.
+  async function putWindow(start, end) {
     try {
-      const r = await api("PUT", "/mode/window", { start: $("edit-start").value, end: $("edit-end").value });
+      const r = await api("PUT", "/mode/window", { start, end });
       S.window = { start: r.start, end: r.end };
       S.mode = r.mode;
       renderWindow(); renderMode();
       $("window-edit").classList.remove("open");
       toast("취침창 변경됨 — 이번 실행 동안 유지");
-    } catch (e) { toast(e.message); }
+    } catch (e) { toast(e.message); renderWindow(); }
+  }
+  // 핸들 2개(취침·기상)를 개별 드래그 — 창은 상시 표시, 경계만 옮긴다.
+  // 빈 영역 드래그는 무동작(오조작으로 창이 통째 바뀌는 일 없음), 클릭 = 정밀 편집 행.
+  const strip = $("strip");
+  const wrap = $("strip-wrap");
+  const toMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const fmtMin = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const stripMin = (ev) => { // 포인터 x → 30분 스냅 분(0~1439)
+    const r = strip.getBoundingClientRect();
+    const x = Math.min(Math.max(ev.clientX - r.left, 0), r.width);
+    return (Math.round(((x / r.width) * 1440) / 30) * 30) % 1440;
   };
+  let drag = null; // { handle: "start"|"end"|null, moved, startX, temp }
+  wrap.addEventListener("pointerdown", (ev) => {
+    if (!S.window) { toast("모드 상태머신이 없어요"); return; }
+    const r = strip.getBoundingClientRect();
+    const xAt = (t) => r.left + (toMin(t) / 1440) * r.width;
+    const ds = Math.abs(ev.clientX - xAt(S.window.start));
+    const de = Math.abs(ev.clientX - xAt(S.window.end));
+    const handle = Math.min(ds, de) <= 14 ? (ds <= de ? "start" : "end") : null;
+    drag = { handle, moved: false, startX: ev.clientX, temp: { ...S.window } };
+    if (handle) {
+      $(handle === "start" ? "handle-start" : "handle-end").classList.add("active");
+      try { wrap.setPointerCapture(ev.pointerId); } catch (_) { /* 합성 이벤트 등 */ }
+    }
+  });
+  wrap.addEventListener("pointermove", (ev) => {
+    if (!drag) return;
+    if (Math.abs(ev.clientX - drag.startX) > 4) drag.moved = true; // 핸들 무관 — 빈 영역 드래그를 클릭으로 오인하지 않게
+    if (!drag.handle || !drag.moved) return;
+    const m = stripMin(ev);
+    const other = toMin(drag.temp[drag.handle === "start" ? "end" : "start"]);
+    if (m === other) return; // 최소 간격 30분 — 경계 충돌은 무시
+    drag.temp[drag.handle] = fmtMin(m);
+    renderWindow(drag.temp); // 미리보기 (커밋 아님)
+  });
+  wrap.addEventListener("pointerup", () => {
+    const d = drag;
+    drag = null;
+    for (const h of ["handle-start", "handle-end"]) $(h).classList.remove("active");
+    if (!d) return;
+    if (!d.moved) { // 클릭 — 정밀 편집 행 토글
+      $("edit-start").value = S.window.start;
+      $("edit-end").value = S.window.end;
+      $("window-edit").classList.toggle("open");
+      renderWindow();
+      return;
+    }
+    if (!d.handle || (d.temp.start === S.window.start && d.temp.end === S.window.end)) {
+      renderWindow(); // 빈 영역 드래그·무변화 — 원복
+      return;
+    }
+    putWindow(d.temp.start, d.temp.end);
+  });
+  wrap.addEventListener("pointercancel", () => {
+    drag = null;
+    for (const h of ["handle-start", "handle-end"]) $(h).classList.remove("active");
+    renderWindow();
+  });
+  $("edit-cancel").onclick = () => $("window-edit").classList.remove("open");
+  $("edit-save").onclick = () => putWindow($("edit-start").value, $("edit-end").value);
 
   refreshStatus().catch(() => {});
   refreshPersonas();
