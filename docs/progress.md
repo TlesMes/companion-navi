@@ -9,7 +9,7 @@
 
 **Stage 15-③ — pywebview GUI 앱 (2026.07.11, `feat/gui-app`):**
 - **GUI 프로세스([navi/gui/__main__.py](../navi/gui/__main__.py)):** `python -m navi.gui` —
-  pywebview 창(360×640 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면
+  pywebview frameless 창(360×420 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면
   대기 화면을 띄우고 1초 폴링으로 자동 진입. 헤더 ✕는 js_api로 네이티브 창 닫기.
   의존성 `pywebview`는 기본 venv(음성 스택 불필요 — GUI는 오디오를 만지지 않는다).
 - **단일 파일 프런트([navi/gui/static/index.html](../navi/gui/static/index.html)):** 목업 v3
@@ -25,10 +25,24 @@
   `SwapRuntime.tone_file`이 파일 아닌 voice_id(프리셋명)는 404).
 - **결정 — 취침창 변경은 런타임 전용(gui.md 검증 ④):** 데몬이 config.yaml을 쓰지 않는다 —
   영구 변경은 config 수동 편집. GUI 토스트에 "이번 실행 동안 유지"로 명시.
+- **구현 후 UI 다듬기(실사용 피드백 반영):** ① **frameless 창** — OS 제목줄이 드러나 앱
+  헤더를 제목줄로 승격(헤더 전체 드래그 영역, 최소화 버튼, 창 360×420로 축소). 이 과정에서
+  창 멈춤 버그 해소: js_api에 창 객체를 공개 속성으로 두면 pywebview가 브리지 직렬화 중
+  `Window.native`를 무한 재귀로 훑어 메인 스레드가 멎음 → 비공개 `_window`로 전환.
+  ② **취침창 두 핸들 드래그** — 빈 스트립에 범위를 그리는 방식은 인지가 어렵고 오조작에
+  취약(어디를 끌어도 창 통째 교체) → 취침·기상 경계에 상시 핸들 2개, 경계만 개별 이동
+  (30분 스냅·실시간 미리보기, 빈 영역 드래그 무동작). ③ **페르소나 전환을 헤더 프로필
+  드롭다운으로** — 중단 전환 필이 헤더와 중복이라 좌상단 프로필을 인라인 드롭다운 트리거로,
+  중단은 톤 칩 + 자세히(시청취) 시트로 축소. ④ **앱 액센트 = Claude 코랄/러스트(#d97757)** —
+  블루가 웜 다크 표면과 온도 어긋남, 스누즈 필 파랑은 4모드 색 구분 위해 전용 변수로 보존.
+- **결정 — Ctrl+C graceful 종료([navi/daemon.py](../navi/daemon.py)):** 기본 SIGINT는 런너가
+  전 태스크를 일괄 취소해 uvicorn WS·lifespan이 CancelledError 소음(ERROR 2건)을 남김 →
+  SIGINT·SIGBREAK를 가로채 stop·POST /shutdown과 같은 SHUTDOWN 경로로 합류(두 번째 Ctrl+C는
+  기본 핸들러 복원). CTRL_BREAK 실측 — 출력 2줄, traceback 없음, exit 0.
 - **검증:** 유닛 192개 green(+5: sleep_window·wall_ts·GET /·시청취). 오프라인 E2E(echo 데몬 +
-  브라우저 실측): 모드 버튼 전이가 MODE_CHANGED로 라이브 반영·페르소나 교체(navi↔example)
-  헤더 즉시 반영·취침창 편집 즉시 전이(창 밖 되자 잠복 DND 오버라이드 표면화까지 확인)·
-  데몬 종료→"연결 끊김"→재기동 자동 재연결·STAGE 전 단계 점등 흐름(이벤트 재생) 확인.
+  브라우저 실측): 모드 버튼 전이가 MODE_CHANGED로 라이브 반영·페르소나 드롭다운 교체
+  (navi↔example) 헤더 즉시 반영·취침창 핸들 드래그 즉시 전이·데몬 종료→"연결 끊김"→재기동
+  자동 재연결·STAGE 전 단계 점등·frameless 창/최소화/드래그·코랄 테마 computed style 확인.
   **실기 E2E(--voice --wakeword + gptsovits base zero-shot ~250MB 다운로드 포함)는 계획대로
   Stage 15 전체를 한 번에** — gui.md PR ③ 검증 절.
 
