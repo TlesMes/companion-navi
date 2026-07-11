@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import logging
 import os
+import signal
 import sys
 import time
 import uuid
@@ -357,6 +358,22 @@ async def _run(config, args) -> None:
     session_id = uuid.uuid4().hex
     bus = EventBus()
 
+    # Ctrl+C(SIGINT)·Ctrl+Break(SIGBREAK)를 KeyboardInterrupt 대신 SHUTDOWN 발행으로.
+    # 기본 동작은 런너가 전 태스크를 일괄 취소해 uvicorn WS·lifespan이 CancelledError
+    # 소음(ERROR 로그 2건)을 남긴다 — stop 커맨드·POST /shutdown과 같은 정상 종료
+    # 경로로 합류시키면 조용하다. 두 번째 Ctrl+C는 기본 핸들러 복원(강제 탈출구).
+    loop = asyncio.get_running_loop()
+
+    def _graceful_interrupt(signum, frame) -> None:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        loop.call_soon_threadsafe(
+            bus.publish, Event(EventKind.SHUTDOWN, time.monotonic())
+        )
+
+    signal.signal(signal.SIGINT, _graceful_interrupt)
+    if hasattr(signal, "SIGBREAK"):  # Windows 전용 — Ctrl+Break·콘솔 닫기
+        signal.signal(signal.SIGBREAK, _graceful_interrupt)
+
     # 능동축 상태머신(Stage 14) — 재기동 시 mode_state 복원(만료 오버라이드는 tick이 정리)
     schedule = ConfigSchedule(config.mode.sleep_start, config.mode.sleep_end)
     machine = ModeMachine(schedule.get_sleep_window(), config.mode.snooze_minutes)
@@ -618,7 +635,8 @@ def main() -> None:
     STOP_FILE.unlink(missing_ok=True)  # 이전 실행의 잔여 센티널 제거
     try:
         asyncio.run(_run(config, args))
-    except KeyboardInterrupt:
+        print("(나비 데몬 내려감)")
+    except KeyboardInterrupt:  # 핸들러 설치 전 인터럽트·두 번째 Ctrl+C(강제)
         print("\n(나비 데몬 내려감)")
     finally:
         release_pidfile()
