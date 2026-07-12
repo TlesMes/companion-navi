@@ -7,6 +7,40 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**순서 4 — Heartbeat 2·3층 배선 (2026.07.12, PR #19 `feat/heartbeat-timing`):**
+- **범위 = 배선(scaffolding), "똑똑함" 아님:** 목표는 "판단 함수가 존재하고 값을 반환하며
+  로그가 남는다"까지. 가중치·jitter·window는 전부 config의 **대충값** — 좋은 타이밍/주제 산식은
+  interaction_log가 쌓인 뒤 튜닝하는 후속 작업(진행 원칙 2). 완료 기준도 "자연스러움"이 아니라
+  "자는 시간 절대 안 건다 / 오버라이드 즉시 먹힘 / 로그로 응답률·무시율 계산 가능".
+- **2층 타이밍([navi/heartbeat/timing.py](../navi/heartbeat/timing.py)):** `should_initiate(now,
+  last_interaction_at, time_weights, jitter)` — arch 4.4 계약 그대로의 순수 함수. 마지막 상호작용 후
+  elapsed를 시간대 가중치·jitter로 흔든 유효 간격과 비교. daily_cap은 DB 카운트가 필요해 함수 밖
+  (DaemonCore)에서 건다 — 여기는 시계만으로 테스트되는 순수 함수로 유지. `time_of_day`(버킷)·
+  `draw_jitter`도 함께.
+- **3층 주제([navi/heartbeat/topic.py](../navi/heartbeat/topic.py)):** `pick_topic(memory_snapshot,
+  weather, time_of_day, topic_feed)` → 트리거 힌트 문자열. Feed 후보 우선, 없으면 시간대 힌트.
+  weather=None·topic_feed=[]는 이번 범위 더미(Feed는 arch 4.10 Phase 3 후반, weather 출처는 D번호 없음).
+- **interaction_log([navi/memory/schema.sql](../navi/memory/schema.sql)):** 테이블 신설 +
+  `log_interaction`/`count_interactions`. event ∈ {initiated, user_responded, user_ignored,
+  user_overrode} — 능동성 튜닝의 원천 데이터.
+- **DaemonCore tick 배선([navi/daemon.py](../navi/daemon.py)):** TICK마다 게이트를 순서대로 통과해야
+  발화 — ①`current_mode==ACTIVE`(검문②, 1층) → ②daily_cap 미만 → ③`should_initiate`(2층). 통과 시
+  `pick_topic`(3층)으로 트리거를 만들어 conductor→brain→mouth로 흘리고 initiated 로그. 검문①(오버라이드)·
+  검문②(취침창)는 손대지 않음 — 이번 발화는 그 게이트 통과 뒤에만 동작. 능동 발화는 사용자 발화가
+  없으므로 기억엔 나비 답변만 `trigger_type=proactive`로 남긴다(가짜 user 턴 안 만듦).
+- **응답 판정(문서 미규정 — 이 PR에서 정함):** user_responded(대화 응답)·user_overrode("더 잘래" 등
+  게이트 명령=거절)·user_ignored(response_window_s 배선용 300s 안에 무반응 → 다음 tick이 마감). 규칙·
+  window는 배선용 기본값이며 실데이터로 조정.
+- **설계 확인 — 조건은 bool 뒤에 격리:** `should_initiate`가 bool만 반환하고 게이트·대기·로깅은
+  조건-불가지론이라, 나중에 변동확률(시간 경과에 따른 발화 확률↑, tick 기반 hazard) 등으로 산식을
+  갈아끼워도 배선 재사용. 교체 시 정리할 것 = jitter 파라미터 위치(내부 RNG로 옮기면 붕 뜸)·tick 빈도
+  정규화·테스트 결정성(jitter 고정 → seed 주입).
+- **검증:** 전체 **211 green**(신규 timing 8·topic 4·memory 2·daemon 6). 데몬 게이트는 fake clock +
+  수동 TICK으로 결정론 검증(타이밍 충족은 base/min=0으로 상수화, 실제 elapsed 산수는 test_timing이
+  격리). echo brain E2E: TICK→아침 힌트→응답, interaction_log에 `(initiated, active, topic)`·
+  conversation_turn에 `(assistant, proactive)` 1건 실기록. **음성으로 먼저 말 걸기(--voice --wakeword)
+  실기 E2E는 음성/D8 트랙과 함께 미착수.**
+
 **Stage 15-③ — pywebview GUI 앱 (2026.07.11, `feat/gui-app`):**
 - **GUI 프로세스([navi/gui/__main__.py](../navi/gui/__main__.py)):** `python -m navi.gui` —
   pywebview frameless 창(360×420 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면
