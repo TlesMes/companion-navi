@@ -5,7 +5,15 @@ from pathlib import Path
 from navi.brain import create_brain
 from navi.brain.echo import EchoBrain
 from navi.conductor import Conductor
-from navi.config import BrainConfig, Config, ControlConfig, ModeConfig, MouthConfig, WakeWordConfig
+from navi.config import (
+    BrainConfig,
+    Config,
+    ControlConfig,
+    ModeConfig,
+    MouthConfig,
+    ProactiveConfig,
+    WakeWordConfig,
+)
 from navi.memory import MemoryStore
 from navi.models import VoiceProfile
 from navi.persona import CharacterCard
@@ -44,6 +52,13 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
         ),
         mode=ModeConfig(
             sleep_start=dtime(23, 0), sleep_end=dtime(7, 0), snooze_minutes=30
+        ),
+        proactive=ProactiveConfig(
+            base_interval_s=3600,
+            min_gap_s=1800,
+            daily_cap=8,
+            jitter_range=(0.8, 1.2),
+            time_weights={"morning": 1.2, "afternoon": 1.0, "evening": 1.1, "night": 0.5},
         ),
         control=ControlConfig(enabled=False, port=8765),  # 유닛에선 서버 미기동
         db_path=tmp_path / "t.db",

@@ -44,3 +44,19 @@ CREATE TABLE IF NOT EXISTS usage_log (
     tokens_or_units TEXT NOT NULL,  -- JSON: {"input": n, "output": m}
     est_cost        REAL            -- 단가표 확정 전이라 NULL 허용
 );
+
+-- 능동성 튜닝 데이터(arch 6, Phase 3 순서 4) — 나비가 먼저 건 발화와 그 반응 기록.
+-- 좋은 타이밍/주제는 종이로 못 정한다(진행 원칙 2) → 여기 쌓인 로그로 응답률·
+-- 무시율을 계산해 timing.py 값을 튜닝하는 게 후속 작업. barge_in/false_endpoint(v2)는
+-- 턴테이킹(D12)에서 추가한다.
+CREATE TABLE IF NOT EXISTS interaction_log (
+    log_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT NOT NULL,
+    event        TEXT NOT NULL CHECK (
+        event IN ('initiated', 'user_responded', 'user_ignored', 'user_overrode')
+    ),
+    mode_at_time TEXT,   -- 당시 능동축 모드(대개 active — 발화는 active에서만 나감)
+    note         TEXT    -- 자유 메모(주제 힌트·"이 타이밍 별로" 등)
+);
+
+CREATE INDEX IF NOT EXISTS idx_interaction_time ON interaction_log (ts);

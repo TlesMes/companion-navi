@@ -299,3 +299,196 @@ def test_snapshot_exposes_proactive_mode_for_gui():
     assert snap["proactive_mode"] == "active"
     assert snap["can_speak"] is True
     assert "listening_mode" in snap
+
+
+# ── Phase 3 순서 4: 능동성 2·3층 배선 (타이밍·주제·응답 판정) ──
+
+from navi.config import ProactiveConfig  # noqa: E402
+
+# base/min 0 = "게이트만 통과하면 즉시 발화" — 타이밍 임계 자체는 test_timing이 검증하고,
+# 여기선 데몬의 게이트 순서·로깅·응답 판정 배선만 결정론으로 본다.
+_EAGER = dict(
+    base_interval_s=0.0,
+    min_gap_s=0.0,
+    jitter_range=(1.0, 1.0),  # 결정론 — jitter 고정
+    time_weights={"morning": 1.0, "afternoon": 1.0, "evening": 1.0, "night": 1.0},
+)
+
+
+def _proactive_core(clock, bus, *, inits, events, cap=8, window=300.0, **kw):
+    machine = ModeMachine(WINDOW, 30, now=clock)
+
+    async def run_initiation(topic: str) -> None:
+        inits.append(topic)
+
+    core = DaemonCore(
+        bus=bus,
+        transcribe=kw.pop("transcribe", None),
+        run_turn=kw.pop("run_turn", None),
+        tick_interval=999,  # TICK은 테스트가 수동 발행 — 타이밍 결정론
+        stop_poll=999,
+        mode_machine=machine,
+        persist_mode=lambda mode, until: None,
+        run_initiation=run_initiation,
+        proactive=ProactiveConfig(daily_cap=cap, **_EAGER),
+        wall_now=clock,
+        log_interaction=lambda ev, m, n: events.append((ev, m, n)),
+        count_initiations_today=lambda: sum(1 for e in events if e[0] == "initiated"),
+        memory_snapshot=lambda: [],
+        response_window_s=window,
+        **kw,
+    )
+    return core, machine
+
+
+async def _drain(bus, task):
+    bus.publish(Event(EventKind.SHUTDOWN, time.monotonic()))
+    await asyncio.wait_for(task, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_proactive_initiates_when_active_and_logs():
+    # ACTIVE + 타이밍 충족 → pick_topic 힌트로 발화, initiated 로그가 남는다
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))  # 창 밖 → ACTIVE
+    inits: list = []
+    events: list = []
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: len(inits) == 1)
+    assert isinstance(inits[0], str) and inits[0]  # topic_hint 문자열
+    assert events[0] == ("initiated", "active", inits[0])
+    assert core.state.turns_count == 1
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_no_initiation_in_sleep_window():
+    # 검문② — 취침창(SLEEP)이면 타이밍이 충족돼도 절대 먼저 말하지 않는다
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 23, 30))  # 취침창 안 → SLEEP
+    inits: list = []
+    events: list = []
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _drain(bus, task)  # TICK이 SHUTDOWN보다 먼저 처리됨
+    assert inits == []
+    assert not any(e[0] == "initiated" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_daily_cap_blocks_initiation():
+    # 하루 상한에 도달하면 ACTIVE·타이밍 충족이어도 침묵
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = [("initiated", "active", None)] * 8  # 이미 상한(cap=8)
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events, cap=8)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _drain(bus, task)
+    assert inits == []  # 새 발화 없음
+
+
+@pytest.mark.asyncio
+async def test_pending_resolves_as_ignored_after_window():
+    # 먼저 걸었는데 응답 창 안에 대꾸가 없으면 user_ignored로 마감된다
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events, window=1.0)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: core._pending_initiation is not None)  # noqa: SLF001
+
+    clock.at = datetime(2026, 7, 12, 10, 0, 2)  # 응답 창(1s) 경과
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: any(e[0] == "user_ignored" for e in events))
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_pending_resolves_as_responded_on_user_turn():
+    # 먼저 건 뒤 사용자가 대화로 응하면 user_responded
+    bus = EventBus()
+    frame_q: asyncio.Queue = asyncio.Queue()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    turns: list = []
+    script = iter(["안녕 나비야"])
+
+    async def transcribe(_utt) -> str:
+        return next(script)
+
+    async def run_turn(text: str) -> None:
+        turns.append(text)
+
+    core, _ = _proactive_core(
+        clock, bus, inits=inits, events=events,
+        transcribe=transcribe, run_turn=run_turn,
+        session=_session(), frames=_frames_from(frame_q),
+    )
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: core._pending_initiation is not None)  # noqa: SLF001
+
+    frame_q.put_nowait(SPEECH)  # 사용자 깨움
+    await _wait(lambda: core.state.listening_mode == "active")
+    for f in [SPEECH, SPEECH, SILENCE, SILENCE]:  # 발화 → 일반 대화(PASS)
+        frame_q.put_nowait(f)
+    await _wait(lambda: turns == ["안녕 나비야"])
+    assert ("user_responded", "active", None) in events
+    assert core._pending_initiation is None  # noqa: SLF001
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_pending_resolves_as_overrode_on_gate_command():
+    # 먼저 건 말에 "더 잘래"로 응하면 user_overrode (거절) — 턴으로는 안 감
+    bus = EventBus()
+    frame_q: asyncio.Queue = asyncio.Queue()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    turns: list = []
+    script = iter(["나 조금만 더 잘래"])
+
+    async def transcribe(_utt) -> str:
+        return next(script)
+
+    async def run_turn(text: str) -> None:
+        turns.append(text)
+
+    core, _ = _proactive_core(
+        clock, bus, inits=inits, events=events,
+        transcribe=transcribe, run_turn=run_turn,
+        session=_session(), frames=_frames_from(frame_q),
+    )
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)  # 구독 완료 후에 수동 TICK 발행
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: core._pending_initiation is not None)  # noqa: SLF001
+
+    frame_q.put_nowait(SPEECH)
+    await _wait(lambda: core.state.listening_mode == "active")
+    for f in [SPEECH, SPEECH, SILENCE, SILENCE]:  # 발화 = 스누즈 명령
+        frame_q.put_nowait(f)
+    await _wait(lambda: core.state.proactive_mode == "snooze")
+    assert ("user_overrode", "active", None) in events
+    assert turns == []  # 결정론 게이트 — LLM 미경유
+    await _drain(bus, task)

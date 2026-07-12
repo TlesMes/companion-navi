@@ -30,15 +30,28 @@ import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from navi.bus import Event, EventBus, EventKind
 from navi.cli import _build_wakeword, _setup_logging, _transcribe_utterance
 from navi.ear import EventKind as ListenKind
 from navi.ear import ListenSession, SleepReason
 from navi.gatekeeper import GateResult, check_gate
-from navi.heartbeat import Mode, ModeCommand, ModeMachine
+from navi.heartbeat import (
+    Mode,
+    ModeCommand,
+    ModeMachine,
+    draw_jitter,
+    pick_topic,
+    should_initiate,
+    time_of_day,
+)
 from navi.models import AudioChunk
+
+if TYPE_CHECKING:
+    from navi.config import ProactiveConfig
 
 log = logging.getLogger("navi.daemon")
 
@@ -117,6 +130,14 @@ class DaemonCore:
         now: Callable[[], float] = time.monotonic,
         mode_machine: ModeMachine | None = None,
         persist_mode: Callable[[str, str | None], None] | None = None,
+        # ── 능동성 2·3층 (Phase 3 순서 4) — 전부 주입, 미주입이면 선제 발화 비활성 ──
+        run_initiation: Callable[[str], Awaitable[None]] | None = None,
+        proactive: ProactiveConfig | None = None,
+        wall_now: Callable[[], datetime] = datetime.now,
+        log_interaction: Callable[[str, str | None, str | None], None] | None = None,
+        count_initiations_today: Callable[[], int] | None = None,
+        memory_snapshot: Callable[[], list] | None = None,
+        response_window_s: float = 300.0,
     ) -> None:
         self._bus = bus
         self._transcribe = transcribe
@@ -129,6 +150,18 @@ class DaemonCore:
         self._now = now
         self._machine = mode_machine
         self._persist_mode = persist_mode
+        self._run_initiation = run_initiation
+        self._proactive = proactive
+        self._wall_now = wall_now
+        self._log_interaction = log_interaction
+        self._count_initiations_today = count_initiations_today
+        self._memory_snapshot = memory_snapshot
+        self._response_window_s = response_window_s
+        # 마지막 상호작용 시각(벽시계) — 타이밍 2층의 기준. 기동 시각으로 시작해
+        # base_interval이 지나기 전엔 콜드 오픈하지 않는다.
+        self._last_interaction_at = wall_now()
+        # 응답 대기 중인 능동 발화 시각 — 응답/무시/오버라이드 판정용(None=대기 없음).
+        self._pending_initiation: datetime | None = None
         self.state = DaemonState(started_at=now())
         if mode_machine is not None:
             self.state.proactive_mode = mode_machine.current_mode().value
@@ -185,6 +218,7 @@ class DaemonCore:
             elif event.kind == EventKind.TICK:
                 if self._machine is not None:
                     self._apply_mode(self._machine.tick())  # 시간 전이(창 진입·만료)
+                await self._maybe_initiate()  # 능동성 2·3층 — 게이트 통과 시에만
                 log.debug("tick — %s", self.state.snapshot(now=self._now))
 
     def command_mode(self, cmd: ModeCommand) -> Mode:
@@ -234,6 +268,74 @@ class DaemonCore:
         """STAGE 계측 발행(Stage 15) — GUI 노드 점등 재료 + 구간별 지연 상시 기록."""
         self._bus.publish(Event(EventKind.STAGE, self._now(), (stage, phase, detail)))
 
+    # ── 능동성 2·3층 (arch 4.11 tick 배선) ──
+
+    async def _maybe_initiate(self) -> None:
+        """TICK마다 "지금 먼저 말 걸까"를 판정하고, 그렇다면 주제→발화까지 굴린다.
+
+        게이트 순서(전부 통과해야 발화): ①현재 모드 ACTIVE(검문②, 1층 mode.py) →
+        ②daily_cap 미만 → ③should_initiate(2층 timing.py). 하나라도 막히면 침묵.
+        검문①(오버라이드)·검문②(취침창)는 여기서 건드리지 않는다 — 이미 통과한 뒤다.
+        """
+        if self._run_initiation is None or self._proactive is None or self._machine is None:
+            return  # 능동성 미배선(텍스트 유닛 등) — 조용히 통과
+        now = self._wall_now()
+        self._settle_pending(now)  # 지난 발화가 응답 창을 넘겼으면 먼저 무시로 마감
+        if self._machine.current_mode() is not Mode.ACTIVE:
+            return  # 검문② — 취침창·DND·SNOOZE면 선제 발화 금지
+        if (
+            self._count_initiations_today is not None
+            and self._count_initiations_today() >= self._proactive.daily_cap
+        ):
+            return  # 하루 상한 — 원가·피로 방지
+        jitter = draw_jitter(self._proactive.jitter_range)
+        if not should_initiate(
+            now,
+            self._last_interaction_at,
+            self._proactive.time_weights,
+            jitter,
+            base_interval_s=self._proactive.base_interval_s,
+            min_gap_s=self._proactive.min_gap_s,
+        ):
+            return
+        snapshot = self._memory_snapshot() if self._memory_snapshot is not None else None
+        topic = pick_topic(snapshot, None, time_of_day(now), [])
+        if topic is None:
+            return  # 3층이 걸 게 없다고 판단
+        mode_val = self._machine.current_mode().value
+        log.info("능동 발화 — %s", topic)
+        if self._log_interaction is not None:
+            self._log_interaction("initiated", mode_val, topic)
+        self._last_interaction_at = now
+        self._pending_initiation = now
+        self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), topic))
+        try:
+            await self._run_initiation(topic)
+            self.state.turns_count += 1
+        finally:
+            self._bus.publish(Event(EventKind.TURN_ENDED, self._now(), topic))
+
+    def _settle_pending(self, now: datetime) -> None:
+        """응답 창(response_window)을 넘긴 능동 발화를 '무시됨'으로 마감한다.
+
+        판정 규칙은 문서에 규정이 없어 여기서 정한다: 먼저 건 뒤 response_window_s
+        안에 사용자 발화(응답/오버라이드)가 없으면 user_ignored. 창 값은 배선용
+        기본(300s)이고, 응답률/무시율이 쌓이면 실제 값을 튜닝한다(진행 원칙 2).
+        """
+        if self._pending_initiation is None:
+            return
+        if (now - self._pending_initiation).total_seconds() >= self._response_window_s:
+            self._resolve_pending("user_ignored")
+
+    def _resolve_pending(self, event: str) -> None:
+        """대기 중인 능동 발화의 결말(responded/overrode/ignored)을 로그로 남기고 비운다."""
+        if self._pending_initiation is None:
+            return
+        mode_val = self._machine.current_mode().value if self._machine is not None else None
+        if self._log_interaction is not None:
+            self._log_interaction(event, mode_val, None)
+        self._pending_initiation = None
+
     async def _handle_utterance(self, utterance) -> None:
         """UTTERANCE → STT → 검문①(결정론) → 통과 시 한 턴. cli의 루프 몸통과 같은 순서."""
         self._stage("stt", "start")
@@ -244,11 +346,15 @@ class DaemonCore:
             print("[인식 결과 없음 — 다시 말하세요]")
             return
         print(f"나> {text}")
+        # 사용자가 말했다 = 상호작용 — 타이밍 기준을 지금으로 리셋(연달아 안 건다).
+        self._last_interaction_at = self._wall_now()
         gate = check_gate(text)
         self._stage("gate", "done", {"result": gate.name})  # 게이트는 즉답 — done만
         if gate == GateResult.SLEEP:
             # 두 축을 함께 재운다 — 청취축은 세션 종료, 능동축은 다음 기상까지 SLEEP
             log.info("검문① SLEEP — %r", text)
+            # 방금 먼저 건 말에 "잘게"로 응했으면 오버라이드(거절)로 마감
+            self._resolve_pending("user_overrode")
             if self._session is not None:
                 self._session.request_sleep()
             if self._machine is not None:
@@ -257,12 +363,16 @@ class DaemonCore:
         if gate != GateResult.PASS:
             # 능동축 명령(Stage 14) — LLM 미경유, 상태머신 없으면(구성 안 됨) 무시 안내
             log.info("검문① %s — %r", gate.name, text)
+            # "더 잘래"·"조용히 해" 등도 방금 발화에 대한 오버라이드로 본다
+            self._resolve_pending("user_overrode")
             if self._machine is None:
                 print("[모드 상태머신이 꺼져 있어 무시합니다]")
                 return
             self.command_mode(_GATE_TO_COMMAND[gate])
             print(_GATE_ACK[gate], flush=True)
             return
+        # 실제 대화로 응답 — 방금 먼저 건 말에 사용자가 대꾸했다
+        self._resolve_pending("user_responded")
         self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), text))
         try:
             await self._run_turn(text)
@@ -473,6 +583,52 @@ async def _run(config, args) -> None:
         store.log_usage("llm", result.usage)
         log.info("응답 완료 — %d자, 총 %.0fms", len(result.full_text), (time.perf_counter() - started) * 1000)
 
+    async def run_initiation(topic: str) -> None:
+        """능동 발화 — 나비가 먼저 건다. run_turn과 달리 사용자 발화가 없다:
+
+        topic 힌트는 트리거(LLM 프롬프트)일 뿐 사용자 말이 아니므로 기억엔 나비의
+        답변만 trigger_type=proactive로 남긴다(user 턴을 지어내지 않는다).
+        """
+        print(f"\n{swap.character}> ", end="", flush=True)
+
+        def _echo(token: str) -> None:
+            print(token, end="", flush=True)
+
+        try:
+            if pipeline is not None:
+                result = await pipeline.run_turn(
+                    topic, user_id=user_id, session_id=session_id, echo=_echo
+                )
+            else:
+                request = conductor.build_request(
+                    topic, user_id=user_id, session_id=session_id
+                )
+                async for token in brain.generate_stream(request):
+                    _echo(token)
+                result = brain.last_result
+            print()
+        except Exception:
+            print()
+            log.exception("능동 발화 실패 — 이 턴은 기억에 남기지 않는다")
+            return
+        if result is None:
+            return
+        store.append_turn(
+            session_id, user_id, role="assistant",
+            text=result.full_text, trigger_type="proactive",
+        )
+        store.log_usage("llm", result.usage)
+        log.info("능동 발화 완료 — %d자", len(result.full_text))
+
+    from datetime import UTC
+
+    def count_initiations_today() -> int:
+        """오늘(사용자 로컬 자정 이후) 능동 발화 횟수 — daily_cap 판정."""
+        local_midnight = (
+            datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+        )
+        return store.count_interactions("initiated", local_midnight.astimezone(UTC).isoformat())
+
     # 귀 배선 — --wakeword일 때만 마이크·STT를 든다 (없으면 tick만 도는 상주 골격)
     session: ListenSession | None = None
     frames = None
@@ -525,6 +681,12 @@ async def _run(config, args) -> None:
         stop_requested=STOP_FILE.exists,
         mode_machine=machine,
         persist_mode=lambda mode, until: store.set_mode_state(user_id, mode, until),
+        # 능동성 2·3층 (Phase 3 순서 4)
+        run_initiation=run_initiation,
+        proactive=config.proactive,
+        log_interaction=lambda ev, mode, note: store.log_interaction(ev, mode, note),
+        count_initiations_today=count_initiations_today,
+        memory_snapshot=lambda: store.recall_recent_for_user(user_id, config.recent_turns),
     )
 
     # 컨트롤 플레인(Stage 15) — 같은 이벤트 루프의 태스크로 기동. 예외는 삼킨다:
