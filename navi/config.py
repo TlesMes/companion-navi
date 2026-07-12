@@ -98,6 +98,22 @@ class ModeConfig:
 
 
 @dataclass(frozen=True)
+class ProactiveConfig:
+    """능동 발화 타이밍(arch 4.4 2층·7장) 기본값 — 전부 배선용 대충값이다.
+
+    좋은 값은 종이로 못 정한다(진행 원칙 2): interaction_log가 쌓인 뒤 응답률·
+    무시율을 보고 튜닝하는 게 후속 작업이고, 지금은 "값이 config에서 읽혀 함수로
+    흘러든다"까지만 검증한다. 섹션이 없어도 기본값으로 뜬다(하위호환).
+    """
+
+    base_interval_s: float          # 마지막 상호작용 후 이만큼(가중치 전) 지나면 발화 후보
+    min_gap_s: float                # 능동 발화 사이 최소 간격
+    daily_cap: int                  # 하루 최대 능동 발화 횟수 (원가/피로 방지)
+    jitter_range: tuple[float, float]  # 유효 간격 난수 폭
+    time_weights: dict[str, float]  # 시간대(time_of_day) → 가중치, 클수록 자주
+
+
+@dataclass(frozen=True)
 class ControlConfig:
     """컨트롤 플레인(Stage 15) — 데몬 안 HTTP/WS 서버. 섹션이 없어도 기본값으로 뜬다."""
 
@@ -114,6 +130,7 @@ class Config:
     mouth: MouthConfig
     wakeword: WakeWordConfig
     mode: ModeConfig
+    proactive: ProactiveConfig
     control: ControlConfig
     db_path: Path
     recent_turns: int
@@ -196,6 +213,24 @@ def _load_mode(raw: dict[str, Any]) -> ModeConfig:
     )
 
 
+def _load_proactive(raw: dict[str, Any]) -> ProactiveConfig:
+    p = raw.get("proactive", {})
+    jr = p.get("jitter_range", [0.8, 1.2])
+    weights = p.get("time_weights") or {
+        "morning": 1.2,
+        "afternoon": 1.0,
+        "evening": 1.1,
+        "night": 0.5,
+    }
+    return ProactiveConfig(
+        base_interval_s=float(p.get("base_interval_s", 3600)),
+        min_gap_s=float(p.get("min_gap_s", 1800)),
+        daily_cap=int(p.get("daily_cap", 8)),
+        jitter_range=(float(jr[0]), float(jr[1])),
+        time_weights={k: float(v) for k, v in weights.items()},
+    )
+
+
 def load_config(
     root: Path | None = None,
     *,
@@ -221,6 +256,7 @@ def load_config(
         mouth=_load_mouth(root, raw),
         wakeword=_load_wakeword(root, raw),
         mode=_load_mode(raw),
+        proactive=_load_proactive(raw),
         control=_load_control(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),

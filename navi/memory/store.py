@@ -134,6 +134,30 @@ class MemoryStore:
         )
         self._conn.commit()
 
+    # ─── 능동성 로그 (Phase 3 순서 4) ────────────────────────
+
+    def log_interaction(
+        self, event: str, mode_at_time: str | None = None, note: str | None = None
+    ) -> None:
+        """능동 발화·반응 1건 기록 — 나중에 응답률/무시율 산출의 원천 데이터.
+
+        event ∈ {initiated, user_responded, user_ignored, user_overrode}.
+        """
+        self._conn.execute(
+            "INSERT INTO interaction_log (ts, event, mode_at_time, note)"
+            " VALUES (?, ?, ?, ?)",
+            (_now_iso(), event, mode_at_time, note),
+        )
+        self._conn.commit()
+
+    def count_interactions(self, event: str, since_iso: str) -> int:
+        """since_iso(포함) 이후 특정 event 건수 — daily_cap 판정에 쓴다."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM interaction_log WHERE event = ? AND ts >= ?",
+            (event, since_iso),
+        ).fetchone()
+        return row["n"]
+
     # ─── 원가 모니터링 ────────────────────────────────────────
 
     def log_usage(self, kind: str, usage: Usage, est_cost: float | None = None) -> None:

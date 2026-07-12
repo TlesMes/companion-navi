@@ -70,6 +70,35 @@ def test_usage_log_written_as_json(tmp_path):
     assert row[2] is None  # 단가표 확정 전
 
 
+def test_interaction_log_records_and_counts(tmp_path):
+    """Phase 3 순서 4 — 능동 발화·반응이 남아 나중에 응답률/무시율을 계산할 수 있다."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    store.log_interaction("initiated", "active", note="아침 인사")
+    store.log_interaction("user_responded", "active")
+    store.log_interaction("initiated", "active")
+
+    rows = sqlite3.connect(db).execute(
+        "SELECT event, mode_at_time, note FROM interaction_log ORDER BY log_id"
+    ).fetchall()
+    assert [r[0] for r in rows] == ["initiated", "user_responded", "initiated"]
+    assert rows[0][1] == "active" and rows[0][2] == "아침 인사"
+
+    # 응답률 산출의 재료 — 카운트가 event별로 집계된다
+    assert store.count_interactions("initiated", "1970-01-01T00:00:00+00:00") == 2
+    assert store.count_interactions("user_responded", "1970-01-01T00:00:00+00:00") == 1
+
+
+def test_count_interactions_respects_since(tmp_path):
+    """daily_cap 판정용 — since 이전 기록은 세지 않는다."""
+    from datetime import UTC, datetime
+
+    store = MemoryStore(tmp_path / "t.db")
+    store.log_interaction("initiated", "active")
+    future = datetime(2999, 1, 1, tzinfo=UTC).isoformat()
+    assert store.count_interactions("initiated", future) == 0
+
+
 def test_mode_state_roundtrip_and_upsert(tmp_path):
     """Stage 14 — 능동축 오버라이드가 재기동을 견딘다 (mode_state)."""
     db = tmp_path / "t.db"
