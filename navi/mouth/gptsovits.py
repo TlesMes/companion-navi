@@ -16,9 +16,11 @@ Windows에서 동일 동작 → WSL 유지 이유 없음). GPU 백엔드(CUDA/Di
   #   allow_patterns=["chinese-hubert-base/*","chinese-roberta-wwm-ext-large/*"],
   #   local_dir="C:\\gptsovits\\GPT_SoVITS\\pretrained_models")
   #   ↑ hubert/roberta는 전처리(feature/BERT)일 뿐 — TTS 가중치가 아니다.
-  #   fine-tune 없이 base(zero-shot)로 돌리려면 s1(GPT)·s2(SoVITS) pretrained 가중치도
-  #   같은 repo에서 받아야 한다(약 250MB, gsv-v2 계열 pretrained 하위). ckpt를 안 넘기면
-  #   inference_webui가 이 base로 폴백(66~67행) — personas/example.yaml이 그 경로.
+  #   fine-tune 없이 base(zero-shot)로 돌리려면 v2ProPlus base(s1v3.ckpt +
+  #   v2Pro/s2Gv2ProPlus.pth + sv/*, 약 460MB)도 같은 repo에서 받아야 한다. ckpt를
+  #   안 넘기면 어댑터가 이 base 경로를 명시 지정한다 — inference_webui 자체 폴백은
+  #   weight.json(마지막 사용 가중치)이라 믿을 수 없음(2026.07.14 실측).
+  #   personas/example.yaml이 그 경로.
   # mkdir C:\\gptsovits\\GPT_SoVITS\\pretrained_models\\fast_langdetect  (lid.176.bin 다운로드 대비)
 
 사용:
@@ -131,6 +133,34 @@ class GPTSoVITSMouth(MouthAdapter):
             jtalk_dic = os.path.join(repo, "open_jtalk_dic_utf_8-1.11")
             if os.path.isdir(jtalk_dic):
                 os.environ.setdefault("OPEN_JTALK_DICT_DIR", jtalk_dic)
+
+            # ckpt 미지정 = base(zero-shot) 의도인데, inference_webui는 env 미설정 시
+            # weight.json(마지막으로 쓴 가중치 기억)으로 폴백한다 — 이전 실행이 fine-tune을
+            # 남겼으면 base가 아니라 그 음색이 돼 카드 의도가 깨진다. base 경로를 명시해
+            # "생략 = base"를 weight.json 상태와 무관한 결정론으로 만든다.
+            # base는 v2ProPlus — v2 base는 EOS 실패(폭주·조기 종료)가 잦아 기각
+            # (문장 단위 10/10 정상 vs v2 폭주 빈발, 2026.07.15 실측). v2ProPlus는
+            # 화자 임베딩(sv) 모델이 추가로 필요하다(inference_webui가 자동 로드).
+            if not self._gpt_ckpt or not self._sovits_ckpt:
+                base_gpt = os.path.join(pre, "s1v3.ckpt")
+                base_sovits = os.path.join(pre, "v2Pro", "s2Gv2ProPlus.pth")
+                base_sv = os.path.join(pre, "sv", "pretrained_eres2netv2w24s4ep4.ckpt")
+                missing = [
+                    p for p in (base_gpt, base_sovits, base_sv) if not os.path.isfile(p)
+                ]
+                if missing:
+                    raise FileNotFoundError(
+                        "base(zero-shot) 가중치가 없습니다: "
+                        + ", ".join(os.path.basename(p) for p in missing)
+                        + "\n다운로드:\n"
+                        "  huggingface_hub.snapshot_download('lj1995/GPT-SoVITS',\n"
+                        "    allow_patterns=['s1v3.ckpt', 'v2Pro/s2Gv2ProPlus.pth', 'sv/*'],\n"
+                        f"    local_dir=r'{pre}')"
+                    )
+                if not self._gpt_ckpt:
+                    self._gpt_ckpt = base_gpt
+                if not self._sovits_ckpt:
+                    self._sovits_ckpt = base_sovits
         if self._gpt_ckpt:
             os.environ.setdefault("gpt_path", self._gpt_ckpt)
         if self._sovits_ckpt:
@@ -331,6 +361,13 @@ class GPTSoVITSMouth(MouthAdapter):
         return self._playing
 
 
+# 폭주 판정 임계 — 정상 발화는 |x|>0.01 비율이 ~0.4-0.7, 폭주(EOS 실패로 max
+# 길이까지 무음 채움)는 ~0.01. base(zero-shot)에서 회차당 대략 반반로 실측(2026.07.15,
+# 레퍼런스 종류 무관). fine-tune 가중치에선 관측된 적 없어 사실상 zero-shot 전용 안전망.
+_ACTIVE_RATIO_MIN = 0.1
+_SYNTH_ATTEMPTS = 3
+
+
 def _synth_one(
     tts_fn: Any,
     ref_path: str,
@@ -340,26 +377,41 @@ def _synth_one(
     text_lang: Any,
     how_to_cut: Any,
 ) -> Any:
-    """한 청크를 합성해 float32 ndarray로 반환. get_tts_wav는 (sr, int16) 튜플을 yield."""
+    """한 청크를 합성해 float32 ndarray로 반환. get_tts_wav는 (sr, int16) 튜플을 yield.
+
+    s1(GPT) 단계가 EOS를 못 뱉으면 max 길이까지 무음으로 채운 출력이 나온다(확률적,
+    base zero-shot에서 빈발) — active 비율로 감지해 재시도한다.
+    """
     import numpy as np
 
-    try:
-        raw = list(
-            tts_fn(
-                ref_wav_path=ref_path,
-                prompt_text=ref_text,
-                prompt_language=prompt_lang,
-                text=text,
-                text_language=text_lang,
-                how_to_cut=how_to_cut,  # 청킹은 우리가 문장 경계로 이미 함
+    for attempt in range(1, _SYNTH_ATTEMPTS + 1):
+        try:
+            raw = list(
+                tts_fn(
+                    ref_wav_path=ref_path,
+                    prompt_text=ref_text,
+                    prompt_language=prompt_lang,
+                    text=text,
+                    text_language=text_lang,
+                    how_to_cut=how_to_cut,  # 청킹은 우리가 문장 경계로 이미 함
+                )
             )
-        )
+        except Exception:
+            logger.exception("GPT-SoVITS 합성 오류: %r", text[:40])
+            return None
         if not raw:
             return None
         # yield 형식: (sample_rate, int16 ndarray) 튜플들.
         chunks = [audio for _sr, audio in raw]
         wav_i16 = np.concatenate(chunks)
-        return wav_i16.astype(np.float32) / 32768.0
-    except Exception:
-        logger.exception("GPT-SoVITS 합성 오류: %r", text[:40])
-        return None
+        wav = wav_i16.astype(np.float32) / 32768.0
+        active = float(np.mean(np.abs(wav) > 0.01))
+        if active >= _ACTIVE_RATIO_MIN:
+            return wav
+        logger.warning(
+            "합성 폭주 감지(무음 %d%%, %.1fs) — 재시도 %d/%d: %r",
+            round((1 - active) * 100), len(wav) / _OUTPUT_SR,
+            attempt, _SYNTH_ATTEMPTS, text[:40],
+        )
+    logger.error("합성 %d회 모두 폭주 — 청크 포기: %r", _SYNTH_ATTEMPTS, text[:40])
+    return None

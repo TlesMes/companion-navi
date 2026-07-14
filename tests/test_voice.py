@@ -158,7 +158,8 @@ class _FakeGptSovits:
         import numpy as np
 
         self.calls.append((text, prompt_language, text_language, how_to_cut, prompt_text))
-        yield (32000, np.zeros(8, dtype=np.int16))
+        # 유음 오디오여야 한다 — 무음이면 어댑터의 폭주(EOS 실패) 감지가 재시도한다.
+        yield (32000, np.full(8, 8000, dtype=np.int16))
 
 
 def _build_gptsovits(**kw):
@@ -198,6 +199,48 @@ async def test_gptsovits_tail_without_terminator_is_spoken():
     await mouth.speak_stream(_stream("しゅうけつ ", "ふごう ", "なし"), VOICE)
     assert [c[0] for c in fake.calls] == ["しゅうけつ ふごう なし"]  # 꼬리말도 합성
     assert len(played) == 1
+
+
+async def test_gptsovits_retries_runaway_synthesis():
+    # EOS 실패 폭주(무음 출력)는 재시도, 유음이 나오면 그 결과를 쓴다.
+    import numpy as np
+
+    from navi.mouth.gptsovits import _synth_one
+
+    class _RunawayOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **_):
+            self.calls += 1
+            if self.calls == 1:
+                yield (32000, np.zeros(32000, dtype=np.int16))  # 폭주(무음)
+            else:
+                yield (32000, np.full(8000, 8000, dtype=np.int16))  # 정상
+
+    fake = _RunawayOnce()
+    wav = _synth_one(fake, "ref.wav", "れい", "てすと", "日文", "日文", "不切")
+    assert fake.calls == 2  # 폭주 1회 후 재시도로 성공
+    assert wav is not None
+
+
+async def test_gptsovits_gives_up_after_repeated_runaway():
+    import numpy as np
+
+    from navi.mouth.gptsovits import _SYNTH_ATTEMPTS, _synth_one
+
+    class _AlwaysRunaway:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self, **_):
+            self.calls += 1
+            yield (32000, np.zeros(32000, dtype=np.int16))
+
+    fake = _AlwaysRunaway()
+    wav = _synth_one(fake, "ref.wav", "れい", "てすと", "日文", "日文", "不切")
+    assert fake.calls == _SYNTH_ATTEMPTS  # 상한만큼 시도 후
+    assert wav is None  # 청크 포기
 
 
 async def test_gptsovits_passes_language_and_cut_args():
