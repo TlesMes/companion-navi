@@ -63,7 +63,9 @@ def test_example_card_is_gptsovits_zero_shot_bundle():
     assert card.voice is not None and card.voice.name == "example"
     vv = card.voice.vendor("gptsovits")
     assert vv.ckpts == ("", "")  # ckpt 생략 = base zero-shot
-    assert (vv.ref_lang, vv.gen_lang) == ("ko", "ko")
+    # ja = 발화 언어는 레퍼런스 음성 언어에 맞춤(2026.07.14 — 한국어 G2P(eunjeon)
+    # Windows 빌드 벽으로 KO 경로 미개통, 검증된 JA 경로 사용)
+    assert (vv.ref_lang, vv.gen_lang) == ("ja", "ja")
     tone = card.voice.default_tone("gptsovits")
     assert tone.ref_text  # 레퍼런스 wav와 한 쌍인 전사
     assert Path(tone.voice_id).is_absolute()  # root로 절대화됨
