@@ -36,4 +36,5 @@ dataset/
 # 저작권·개인 자산이라 로컬 전용. README의 "페르소나 자산 제외" 약속을 실제로 구현.
 personas/*.yaml
 !personas/navi.yaml
-!personas/example.yaml
+!personas/example_jp.yaml
+!personas/example_kr.yaml

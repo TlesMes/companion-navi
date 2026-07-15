@@ -20,7 +20,7 @@ Windows에서 동일 동작 → WSL 유지 이유 없음). GPU 백엔드(CUDA/Di
   #   v2Pro/s2Gv2ProPlus.pth + sv/*, 약 460MB)도 같은 repo에서 받아야 한다. ckpt를
   #   안 넘기면 어댑터가 이 base 경로를 명시 지정한다 — inference_webui 자체 폴백은
   #   weight.json(마지막 사용 가중치)이라 믿을 수 없음(2026.07.14 실측).
-  #   personas/example.yaml이 그 경로.
+  #   personas/example_jp.yaml이 그 경로.
   # mkdir C:\\gptsovits\\GPT_SoVITS\\pretrained_models\\fast_langdetect  (lid.176.bin 다운로드 대비)
 
 사용:

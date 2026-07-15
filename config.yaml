@@ -48,9 +48,9 @@ ear:
     engine: openwakeword
     active_timeout_ms: 30000    # 깨어난 뒤 이만큼 무음이면 다시 SLEEP
     openwakeword:
-      # 한국어 커스텀 모델(.onnx) — Track B에서 학습해 secrets/에 둔다(아직 없음).
-      # model_path: secrets/navi_ko.onnx
-      model_name: hey_jarvis    # 내장 영어 모델 — 런타임(검증2·3)용. 한국어 .onnx 생기면 model_path로 교체.
+      # 한국어 커스텀 모델(.onnx) — livekit-wakeword로 학습, 원어민 마이크 실측 통과(D7).
+      model_path: secrets/navi_ko.onnx
+      # model_name: hey_jarvis  # 내장 영어 모델 — model_path 없을 때의 대안.
       threshold: 0.5            # 0~1, 높을수록 엄격(오수락↓·누락↑)
       vad_threshold: 0          # 0=끔(기본). >0이면 Silero VAD가 비음성 출력을 억제(오탐↓). 단
                                 # 연산은 안 줄임 — VAD는 풀 추론 "뒤"에 결과를 거를 뿐, 오히려 ~1% 더 씀.
