@@ -73,9 +73,14 @@ async def _transcribe_file(path: Path, model_size: str = "large-v3-turbo") -> st
     return text
 
 
-async def _transcribe_utterance(stt, utt) -> str:
-    """마이크 발화 1건(PCM 프레임 묶음)을 STT 스트리밍 세션으로 받아쓴다 (계약 4.3)."""
-    session = await stt.open_stream("ko")
+async def _transcribe_utterance(stt, utt, lang: str = "ko") -> str:
+    """마이크 발화 1건(PCM 프레임 묶음)을 STT 스트리밍 세션으로 받아쓴다 (계약 4.3).
+
+    lang = 사용자가 말하는 언어 = 페르소나 언어. Whisper에 강제하므로 어긋나면
+    오역된다(일본어 발화가 lang='ko'면 한국어로 번역돼 나옴 — 2026.07.15 실측).
+    데몬이 카드 gen_lang을 넘긴다.
+    """
+    session = await stt.open_stream(lang)
     for chunk in utt.chunks:
         await session.feed(chunk)
     result = await session.finalize()

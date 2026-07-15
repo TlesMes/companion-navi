@@ -41,6 +41,57 @@
   conversation_turn에 `(assistant, proactive)` 1건 실기록. **음성으로 먼저 말 걸기(--voice --wakeword)
   실기 E2E는 음성/D8 트랙과 함께 미착수.**
 
+**Stage 15 실기 E2E — 음성 파이프라인 실동 검증 (2026.07.15, `feat/gptsovits-base-fallback`):**
+- **범위:** Stage 15 전체를 `--voice --wakeword`로 실기동해 마무리. 부팅 페르소나 aris_base(base+아리스ref)
+  → GUI에서 example_jp(base+나히다ref) 전환까지 실마이크·실스피커로 검증. echo 두뇌로 STT→TTS 직결
+  경로만 순수 확인(LLM 응답 품질은 별개 트랙).
+- **base zero-shot 확정 = v2ProPlus (v2 기각):** GUI 전환 데모용 두 번째 음색을 base로 뽑는데,
+  v2 base는 s1(GPT AR)의 EOS 실패가 잦다 — **폭주**(EOS 못 뱉어 max 길이까지 무음, 실녹음 레퍼런스
+  3/5)와 **조기 종료**(EOS 너무 일찍 → 멀티문장 입력에서 뒤 문장 증발). v2ProPlus(s1v3+s2Gv2ProPlus+
+  화자임베딩 sv, ~460MB)로 교체하니 **문장 단위 호출 10/10 정상**. 어댑터 base 폴백을 v2ProPlus로 명시
+  ([navi/mouth/gptsovits.py](../navi/mouth/gptsovits.py)) + 잔여 확률 폭주는 `_synth_one` 유음 비율 감지
+  3회 재시도로 흡수(fine-tune 경로엔 무영향 — zero-shot 전용 안전망). **실전 파이프라인은 문장 단위
+  호출이라 조기 종료 실패 모드는 성립 안 함**(멀티문장 벤치 오해였음, 실측으로 정정).
+- **부팅 base-선택 버그 실증·수정(progress 예고 항목):** ckpt 미지정(=base 의도) 카드가 config.yaml의
+  gptsovits ckpt 폴백(아리스 fine-tune)에 먹혀 fine-tune 음색으로 부팅됨. 원인 2겹 — ① inference_webui
+  자체 폴백이 weight.json(마지막 사용 가중치)이라 믿을 수 없음 → 어댑터가 base 경로 명시 지정
+  ② [navi/daemon.py](../navi/daemon.py)가 카드 ckpt를 truthy일 때만 덮어써 빈 ckpt가 config 폴백을 못
+  비움 → **카드가 voice 번들을 소유하면 빈 ckpt도 카드가 권위**를 갖도록 수정.
+- **echo 접두사 제거 + STT 언어 배선(E2E에서 드러난 정합성):** ① echo의 `(echo) ` 접두사가 ASCII라
+  GPT-SoVITS 언어감지를 영어로 틀어 nltk 없는 환경에서 G2P 크래시→무음 → 접두사 제거([navi/brain/echo.py](../navi/brain/echo.py)).
+  ② STT `open_stream`이 "ko" 하드코딩이라 일본어 발화가 한국어로 오역(先生→선생님)→ja G2P에 한국어가
+  들어감 → **페르소나 gen_lang을 STT에 배선**([navi/cli.py](../navi/cli.py)·daemon.py, 없으면 ko 폴백,
+  부팅 시점 고정). 실사용(LLM 경유)엔 무해하나 echo·STT직결 경로 누수를 막고 비용 0(Whisper 언어는
+  디코딩 인자 한 개).
+- **음색 전환 데모 배선(핫스왑 없이):** 페르소나 전환 시 **가중치 핫스왑은 미구현**(Stage 15-② 후속 PR).
+  SwapRuntime은 ckpt **일치** 시에만 `set_voice`(레퍼런스 교체)를 태운다 — 그래서 aris(fine-tune v2)↔
+  example(base v2ProPlus)는 ckpt 불일치라 목소리가 안 바뀌었다. **회피: 두 데모 카드를 모두 base로**
+  통일(aris_base·example_jp 둘 다 v2ProPlus, ckpt 빈값 일치) → set_voice로 레퍼런스(아리스↔나히다)만
+  교체해 zero-shot 음색 전환 시연. 실기 청취 "나히다 몸에 다른 사람이 들어가 성대만 빌린 느낌" —
+  **fine-tune과 역할 반대**(fine-tune=음색은 가중치·운율은 레퍼런스 / zero-shot=음색은 레퍼런스·운율은
+  base 일반값).
+- **example 카드 JP/KR 분리·JA 피벗:** 한국어 생성 경로는 GPT-SoVITS 한국어 G2P(eunjeon, C확장)가 이
+  환경(Py3.13, MSVC 없음)에서 빌드 불가라 미개통 — 발화 언어=레퍼런스 언어 원칙(한국어 퍼스트 폐지)에
+  따라 example.yaml→**example_jp.yaml**(레이, base+나히다ref)로 JA 피벗. **example_kr.yaml** 신설(voice
+  섹션 없음 → supertonic 부팅 세션 전용, gptsovits 세션엔 안 섞음 — 엔진 무교체 원칙). 레퍼런스는
+  3~10s 실녹음 필수(TTS 합성음을 ref로 주면 zero-shot 폭주). 웨이크워드 `secrets/navi_ko.onnx`(D7 확정)
+  실기 WAKE 발화까지 검증돼 config에 model_path 반영.
+- **가중치 핫스왑 가능성 평가(다음 PR 근거):** 메커니즘은 이미 존재·검증됨 — `change_gpt/sovits_weights`
+  (webui 런타임 교체 함수, 어댑터가 이미 호출) 재호출 + `pipeline._mouth` 손잡이 + `_guard_not_playing`
+  (409). 신설은 어댑터 `set_weights`·pipeline 위임·SwapRuntime ckpt-불일치 분기(~40줄)+테스트. **리스크
+  3:** ① 동기 torch.load(~2~5s)가 이벤트 루프 블로킹 → `asyncio.to_thread` 필수(이게 GUI "전환중"
+  표시·입력거부 UX를 성립시키는 전제) ② **버전 경계 잔여물**(v2ProPlus의 전역 sv 모델이 v2 전환 후
+  안 치워짐 — get_tts_wav의 is_v2pro 플래그로 오염은 안 될 듯하나 실측 필요) ③ CPU 로드 지연은 의도적
+  전환+재생중 가드라 UX 수용 가능. **버전 경계는 fine-tune(v2)↔base(v2ProPlus) 혼합 때만** 생김 —
+  제품 페르소나를 같은 버전으로 fine-tune하면 소멸. gui.md "엔진 핫스왑 안 함"(supertonic↔gptsovits)과
+  무관(같은 엔진 내 가중치 교체). 언어는 카드 번들(gpt_ckpt+gen_lang)로 원자 교체 — 벽은 G2P 빌드뿐.
+- **잔여 이슈(별개 백로그):** 데몬 lifecycle **pid 파일 불일치** — `stop`이 반복적으로 pid 파일에 실제
+  프로세스와 다른 PID를 기록해(예: 파일 33612 vs 실제 35668) 정지 명령이 엉뚱한 대상을 향함. 재현성
+  있음, 매 재기동마다 orphan 발생. daemon.py의 pid 기록 로직 점검 필요.
+- **검증:** 유닛 214 green(echo 접두사·STT lang·example_kr·base ckpt 신규/갱신). 실기 E2E: WAKE→
+  UTTERANCE→STAGE×4→TURN 관통 점등·일본어 발화 정확 인식(lang=ja)·aris_base↔example_jp 카드 교체
+  실측·base 음색 실청취. **가중치 핫스왑·GUI 5노드/모드버튼 라이브·취침창 유지는 미검증(핫스왑 PR·후속).**
+
 **Stage 15-③ — pywebview GUI 앱 (2026.07.11, `feat/gui-app`):**
 - **GUI 프로세스([navi/gui/__main__.py](../navi/gui/__main__.py)):** `python -m navi.gui` —
   pywebview frameless 창(360×420 고정, Edge WebView2)이 컨트롤 플레인 `GET /`를 로드. 데몬 미기동이면

@@ -54,16 +54,18 @@ def test_real_navi_card_carries_voice_bundle():
 
 
 def test_example_card_is_gptsovits_zero_shot_bundle():
-    """공개 예시 카드 — fine-tune ckpt 없이 base(zero-shot). aris를 대신하는 재현 자산.
+    """공개 예시 카드(JP) — fine-tune ckpt 없이 base(zero-shot). aris를 대신하는 재현 자산.
 
     커밋된 실파일로 gptsovits 번들 로더 경로(ckpt 부재·레퍼런스 경로 절대화)를 커버한다.
     """
     root = PERSONAS_DIR.parent
-    card = CharacterCard.load(PERSONAS_DIR / "example.yaml", root=root)
+    card = CharacterCard.load(PERSONAS_DIR / "example_jp.yaml", root=root)
     assert card.voice is not None and card.voice.name == "example"
     vv = card.voice.vendor("gptsovits")
     assert vv.ckpts == ("", "")  # ckpt 생략 = base zero-shot
-    assert (vv.ref_lang, vv.gen_lang) == ("ko", "ko")
+    # ja = 발화 언어는 레퍼런스 음성 언어에 맞춤(2026.07.14 — 한국어 G2P(eunjeon)
+    # Windows 빌드 벽으로 KO 경로 미개통, 검증된 JA 경로 사용)
+    assert (vv.ref_lang, vv.gen_lang) == ("ja", "ja")
     tone = card.voice.default_tone("gptsovits")
     assert tone.ref_text  # 레퍼런스 wav와 한 쌍인 전사
     assert Path(tone.voice_id).is_absolute()  # root로 절대화됨
@@ -81,6 +83,18 @@ def test_card_without_voice_section_is_none(tmp_path):
         encoding="utf-8",
     )
     assert CharacterCard.load(p).voice is None
+
+
+def test_example_kr_card_has_no_voice_section():
+    """공개 예시 카드(KR) — voice 생략 = 부팅 시점 mouth 엔진을 그대로 사용.
+
+    supertonic 부팅 세션 전용(한국어 완전 지원). SwapRuntime은 엔진을 런타임 교체하지
+    않으므로 gptsovits 세션에 섞으면 안 된다. 한국어 G2P(eunjeon) 빌드 벽이 풀리기
+    전까지 gptsovits voice 섹션을 붙이지 않는다(2026.07.15).
+    """
+    card = CharacterCard.load(PERSONAS_DIR / "example_kr.yaml")
+    assert card.voice is None
+    assert card.character == "소민"
 
 
 def test_voice_parse_resolves_gptsovits_paths_with_root(tmp_path):

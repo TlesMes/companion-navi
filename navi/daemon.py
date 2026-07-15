@@ -504,9 +504,12 @@ async def _run(config, args) -> None:
         mouth_options = dict(config.mouth.options)
         initial_voice = config.mouth.voice
         if vendor_voice is not None:
+            # 카드가 voice 번들을 소유하면 가중치는 카드가 권위 — 빈 ckpt = base(zero-shot)
+            # 의도이므로 config 폴백(아리스 fine-tune)을 덮어 비운다. config의 gptsovits
+            # ckpt 폴백은 voice 섹션 없는 카드용(하위호환). 언어는 빈 값이면 config 유지.
+            mouth_options["gpt_ckpt"] = vendor_voice.gpt_ckpt
+            mouth_options["sovits_ckpt"] = vendor_voice.sovits_ckpt
             for key, value in (
-                ("gpt_ckpt", vendor_voice.gpt_ckpt),
-                ("sovits_ckpt", vendor_voice.sovits_ckpt),
                 ("ref_lang", vendor_voice.ref_lang),
                 ("gen_lang", vendor_voice.gen_lang),
             ):
@@ -664,11 +667,16 @@ async def _run(config, args) -> None:
     else:
         print("[귀 없이 상주 — tick만 돕니다. stop 커맨드나 Ctrl+C로 종료]", flush=True)
 
+    # STT 언어 = 페르소나 발화 언어(카드 gen_lang). 없으면 ko 폴백(navi 등 supertonic
+    # 한국어 카드). Whisper에 강제해 일본어 페르소나가 한국어로 오역되는 걸 막는다.
+    # 부팅 시점 고정 — 런타임 페르소나 교체 시 언어까지 바꾸는 건 후속(전환은 같은 언어 내).
+    stt_lang = vendor_voice.gen_lang if (vendor_voice and vendor_voice.gen_lang) else "ko"
+
     async def transcribe(utt) -> str:
         print("[받아쓰는 중…]")
         stt_t0 = time.perf_counter()
-        text = await _transcribe_utterance(listen_stt, utt)
-        log.info("STT %.0fms", (time.perf_counter() - stt_t0) * 1000)
+        text = await _transcribe_utterance(listen_stt, utt, stt_lang)
+        log.info("STT %.0fms — lang=%s", (time.perf_counter() - stt_t0) * 1000, stt_lang)
         return text
 
     core = DaemonCore(
