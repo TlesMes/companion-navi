@@ -10,8 +10,8 @@ def _request(text: str) -> LlmRequest:
 async def test_echo_streams_tokens_and_fixes_result():
     brain = EchoBrain()
     tokens = [t async for t in brain.generate_stream(_request("안녕 나비"))]
-    assert "".join(tokens) == "(echo) 안녕 나비"
-    assert brain.last_result.full_text == "(echo) 안녕 나비"
+    assert "".join(tokens) == "안녕 나비"  # 들은 말 그대로 (접두사 없음)
+    assert brain.last_result.full_text == "안녕 나비"
     assert brain.last_result.usage.input_tokens == 0
 
 

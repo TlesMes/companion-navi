@@ -164,8 +164,8 @@ async def test_e2e_with_echo_brain(tmp_path):
     tokens = [t async for t in brain.generate_stream(request)]
     result = brain.last_result
 
-    assert "".join(tokens) == result.full_text == "(echo) 안녕 나비"
+    assert "".join(tokens) == result.full_text == "안녕 나비"
     store.append_turn("s1", uid, "user", "안녕 나비")
     store.append_turn("s1", uid, "assistant", result.full_text)
     store.log_usage("llm", result.usage)
-    assert [t.text for t in store.recall_recent("s1", 10)] == ["안녕 나비", "(echo) 안녕 나비"]
+    assert [t.text for t in store.recall_recent("s1", 10)] == ["안녕 나비", "안녕 나비"]

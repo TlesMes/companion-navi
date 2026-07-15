@@ -16,7 +16,10 @@ class EchoBrain(BrainAdapter):
         last_user = next(
             (m.text for m in reversed(request.messages) if m.role == "user"), ""
         )
-        reply = f"(echo) {last_user}"
+        # 들은 말을 그대로 되돌린다 — 접두사·표식 없음. 음성 파이프라인 검증 시
+        # ASCII 접두사가 TTS 언어감지를 영어로 틀어 G2P를 깨뜨렸다(2026.07.15).
+        # echo임을 알려야 하면 텍스트가 아니라 로그(vendor=echo)로.
+        reply = last_user
         emitted: list[str] = []
         # 어절 단위로 끊어 스트리밍을 흉내 낸다
         for i, word in enumerate(reply.split(" ")):
