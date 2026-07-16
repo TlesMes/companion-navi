@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 
 from navi.brain.base import BrainAdapter
@@ -135,6 +136,65 @@ def test_is_playing_delegates_to_mouth():
     assert not pipe.is_playing()
     mouth._playing = True  # FakeMouth 내부 플래그 — 재생 중 시뮬레이션
     assert pipe.is_playing()
+
+
+# --- swap_weights(): 가중치 핫스왑은 턴과 상호배제 ---
+
+
+class _WeightMouth(FakeMouth):
+    """set_weights가 블로킹(실제로는 torch.load 수 초)임을 sleep으로 흉내 낸다."""
+
+    def __init__(self, load_s: float = 0.0) -> None:
+        super().__init__()
+        self.weight_calls: list[tuple] = []
+        self._load_s = load_s
+
+    def set_weights(
+        self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
+    ) -> None:
+        time.sleep(self._load_s)  # 스레드로 나가 있어야 루프를 막지 않는다
+        self.weight_calls.append((gpt_ckpt, sovits_ckpt, ref_lang, gen_lang))
+
+
+async def test_swap_weights_delegates_to_mouth():
+    pipe, _brain, _mouth, _conductor = _build(["하나."])
+    mouth = _WeightMouth()
+    pipe._mouth = mouth
+    await pipe.swap_weights("g.ckpt", "s.pth", ref_lang="ja", gen_lang="ko")
+    assert mouth.weight_calls == [("g.ckpt", "s.pth", "ja", "ko")]
+
+
+async def test_swap_weights_does_not_block_event_loop():
+    """모델 로드는 스레드로 — 로드 중에도 루프가 살아 GUI·컨트롤 플레인이 응답한다."""
+    pipe, _brain, _mouth, _conductor = _build(["하나."])
+    pipe._mouth = _WeightMouth(load_s=0.05)
+    ticks = 0
+
+    async def _heartbeat() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.005)
+            ticks += 1
+
+    beat = asyncio.create_task(_heartbeat())
+    await pipe.swap_weights("g.ckpt", "s.pth")
+    beat.cancel()
+    assert ticks > 1  # 루프가 멎었다면 0
+
+
+async def test_turn_waits_for_weight_swap():
+    """교체 중 시작된 턴은 교체가 끝난 뒤 합성한다 — 반쯤 갈린 모델로 말하지 않는다."""
+    pipe, _brain, _mouth, _conductor = _build(["하나."])
+    mouth = _WeightMouth(load_s=0.05)
+    pipe._mouth = mouth
+    swap = asyncio.create_task(pipe.swap_weights("g.ckpt", "s.pth"))
+    await asyncio.sleep(0.01)  # 교체가 스레드로 나간 뒤
+    assert pipe.is_playing()  # 교체 구간은 busy — 컨트롤 플레인이 409를 낸다
+    turn = asyncio.create_task(pipe.run_turn("x", user_id=1, session_id="s"))
+    await asyncio.sleep(0.01)
+    assert mouth.spoken == []  # 아직 합성 전 — 락에 걸려 대기 중
+    await asyncio.gather(swap, turn)
+    assert mouth.weight_calls and mouth.spoken == ["하나."]  # 교체 → 그 다음 합성
 
 
 # --- interrupt(): barge-in = 재생 하드스톱 + LLM 생성 취소를 동시에 ---

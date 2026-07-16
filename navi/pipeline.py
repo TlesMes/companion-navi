@@ -14,6 +14,7 @@ barge-in(kill switch): interrupt()가 재생 하드스톱(mouth.stop)과 LLM 생
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
@@ -40,6 +41,10 @@ class TurnPipeline:
         self._mouth = mouth
         self._conductor = conductor
         self._voice = voice
+        # 턴과 가중치 교체의 상호배제 — 교체는 torch.load(~2-5s) 때문에 스레드로 나가며
+        # 그동안 루프를 놓는다. 락이 없으면 그 틈에 tick의 선제 발화가 시작돼 교체 중인
+        # 모델로 합성한다. 락을 잡은 쪽이 끝나야 상대가 진행한다(is_playing이 이를 표면화).
+        self._turn_lock = asyncio.Lock()
         # 단계 계측 콜백 (stage, phase, detail) — 파이프라인은 버스를 모른다(계층 분리),
         # 데몬이 bus.publish로 연결한다(Stage 15). 1차는 brain 첫 토큰·tts 진입/종료만,
         # TTFA(첫 오디오)는 어댑터 확장이 필요해 후속.
@@ -58,19 +63,22 @@ class TurnPipeline:
         echo는 토큰을 받는 콜백(예: 화면 print). 재생이 끝날 때까지 await한다.
         반환은 Brain의 last_result(전문·usage) — 호출부가 기억 적재에 쓴다.
         """
-        request = self._conductor.build_request(
-            trigger_text, user_id=user_id, session_id=session_id
-        )
-        self._on_stage("brain", "start", None)
-        tts_t0 = time.perf_counter()
-        tokens = self._tee(self._brain.generate_stream(request), echo, brain_t0=tts_t0)
-        # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
-        self._on_stage("tts", "start", None)
-        await self._mouth.speak_stream(tokens, self._voice)
-        tts_ms = (time.perf_counter() - tts_t0) * 1000
-        self._on_stage("tts", "done", {"ms": round(tts_ms)})
-        log.info("TTS(합성+재생) %.0fms", tts_ms)
-        return self._brain.last_result
+        async with self._turn_lock:  # 가중치 교체 중이면 끝날 때까지 기다린다
+            request = self._conductor.build_request(
+                trigger_text, user_id=user_id, session_id=session_id
+            )
+            self._on_stage("brain", "start", None)
+            tts_t0 = time.perf_counter()
+            tokens = self._tee(
+                self._brain.generate_stream(request), echo, brain_t0=tts_t0
+            )
+            # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
+            self._on_stage("tts", "start", None)
+            await self._mouth.speak_stream(tokens, self._voice)
+            tts_ms = (time.perf_counter() - tts_t0) * 1000
+            self._on_stage("tts", "done", {"ms": round(tts_ms)})
+            log.info("TTS(합성+재생) %.0fms", tts_ms)
+            return self._brain.last_result
 
     async def _tee(
         self,
@@ -101,13 +109,36 @@ class TurnPipeline:
         log.info("목소리 교체: %s → %s", self._voice.name, voice.name)
         self._voice = voice
 
+    async def swap_weights(
+        self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
+    ) -> None:
+        """음색 가중치 교체 — 다음 턴부터 적용. 엔진은 그대로다(엔진 핫스왑 아님).
+
+        모델 로드는 동기 블로킹(torch.load ~2-5s)이라 스레드로 넘긴다 — 안 그러면
+        이벤트 루프가 통째로 멎어 GUI·컨트롤 플레인이 응답하지 않는다. 교체 구간엔
+        턴 락을 쥐고 있어 그 사이 발화가 끼어들지 못한다(is_playing이 True를 반환).
+        """
+        async with self._turn_lock:
+            log.info("음색 가중치 교체 시작 — %s", gpt_ckpt or "(base)")
+            await asyncio.to_thread(
+                self._mouth.set_weights,
+                gpt_ckpt,
+                sovits_ckpt,
+                ref_lang=ref_lang,
+                gen_lang=gen_lang,
+            )
+
     @property
     def current_voice(self) -> VoiceProfile:
         return self._voice
 
     def is_playing(self) -> bool:
-        """재생 중 여부 — mouth 위임 (컨트롤 플레인의 교체 가드용)."""
-        return self._mouth.is_playing()
+        """재생 중(또는 턴·가중치 교체 진행 중) 여부 — 컨트롤 플레인의 교체 가드용.
+
+        턴 락이 잡혀 있으면 발화 준비 중(두뇌 생성)이거나 가중치 교체 중이라 새 교체를
+        받으면 안 된다 — 재생 플래그만으로는 이 구간이 비어 보인다.
+        """
+        return self._mouth.is_playing() or self._turn_lock.locked()
 
     def interrupt(self) -> None:
         """barge-in — 재생 즉시 중단 + LLM 생성 취소를 동시에(kill switch)."""
