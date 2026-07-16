@@ -61,6 +61,33 @@ _SUPERTONIC_VOICE = (
 )
 
 
+# gptsovits 톤 1개 + 가중치 — 페르소나별로 ckpt를 갈아 끼워 핫스왑 분기를 태운다.
+_GPTSOVITS_VOICE = (
+    "voice:\n"
+    "  name: {name}\n"
+    "  gptsovits:\n"
+    "    gpt_ckpt: {gpt}\n"
+    "    sovits_ckpt: {sovits}\n"
+    "    ref_lang: ja\n"
+    "    gen_lang: ja\n"
+    "    tones:\n"
+    "      - {{name: 기본, icon: mood-smile, voice_id: ref_{name}.wav, ref_text: r}}\n"
+)
+
+
+class _HotSwapMouth(FakeMouth):
+    """가중치 핫스왑을 지원하는 가짜 엔진 — 호출 인자만 기록한다(실모델 없음)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight_calls: list[tuple] = []
+
+    def set_weights(
+        self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
+    ) -> None:
+        self.weight_calls.append((gpt_ckpt, sovits_ckpt, ref_lang, gen_lang))
+
+
 class _StubConductor:
     """SwapRuntime이 쓰는 것만 — set_card / card. system 교체 검증은 test_conductor 몫."""
 
@@ -112,6 +139,43 @@ def _make_swap(tmp_path, *, with_pipeline: bool = True):
         vendor="supertonic",
         persona_id="navi",
         loaded_ckpts=("", ""),  # supertonic = 무가중치
+    )
+    return swap, pipeline
+
+
+def _make_gptsovits_swap(tmp_path, *, mouth=None):
+    """aris(fine-tune 가중치) 부팅 + example(base — 빈 ckpt) 카드로 핫스왑 분기 구성."""
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    _write_card(
+        personas / "aris.yaml",
+        "아리스",
+        voice_block=_GPTSOVITS_VOICE.format(
+            name="aris", gpt="aris.ckpt", sovits="aris.pth"
+        ),
+    )
+    _write_card(
+        personas / "example.yaml",
+        "레이",
+        voice_block=_GPTSOVITS_VOICE.format(name="example", gpt='""', sovits='""'),
+    )
+    card = CharacterCard.load(personas / "aris.yaml", root=tmp_path)
+    conductor = _StubConductor(card)
+    tone = card.voice.default_tone("gptsovits")
+    pipeline = TurnPipeline(
+        brain=None,
+        mouth=mouth if mouth is not None else _HotSwapMouth(),
+        conductor=conductor,
+        voice=card.voice.profile(tone),
+    )
+    swap = SwapRuntime(
+        conductor=conductor,
+        pipeline=pipeline,
+        personas_dir=personas,
+        root=tmp_path,
+        vendor="gptsovits",
+        persona_id="aris",
+        loaded_ckpts=card.voice.vendor("gptsovits").ckpts,  # 부팅 = aris fine-tune
     )
     return swap, pipeline
 
@@ -383,6 +447,51 @@ def test_text_mode_pipeline_none_voices_503_persona_ok(tmp_path):
     assert client.post("/voice", json={"name": "기본"}).status_code == 503
     body = client.post("/persona", json={"id": "other"}).json()
     assert body == {"id": "other", "character": "다른애", "voice_swapped": False}
+
+
+# --- 가중치 핫스왑 (Stage 15-② 후속) ---
+
+
+def test_persona_swap_hotswaps_weights_on_ckpt_mismatch(tmp_path):
+    """ckpt 불일치 → 새 가중치를 엔진에 올리고 톤까지 교체(카드·목소리 주인 재합류)."""
+    swap, pipeline = _make_gptsovits_swap(tmp_path)
+    client, *_ = _make(swap=swap)
+    body = client.post("/persona", json={"id": "example"}).json()
+    assert body == {"id": "example", "character": "레이", "voice_swapped": True}
+
+    gpt, sovits, ref_lang, gen_lang = pipeline._mouth.weight_calls[-1]
+    assert (gpt, sovits) == ("", "")  # base(zero-shot) 의도 = 빈 ckpt 그대로 전달
+    assert (ref_lang, gen_lang) == ("ja", "ja")  # 언어는 가중치와 한 몸으로 함께 교체
+    assert pipeline.current_voice.name == "example"  # 새 음색의 기본 톤
+    assert swap._loaded_ckpts == ("", "")  # 다음 비교 키 갱신 — 재교체 시 중복 로드 없음
+
+
+def test_persona_swap_same_ckpts_skips_weight_load(tmp_path):
+    """ckpt 일치 → 레퍼런스만 교체. 수 초짜리 모델 로드를 걸지 않는다."""
+    swap, pipeline = _make_gptsovits_swap(tmp_path)
+    client, *_ = _make(swap=swap)
+    assert client.post("/persona", json={"id": "aris"}).json()["voice_swapped"] is True
+    assert pipeline._mouth.weight_calls == []
+
+
+def test_persona_swap_unsupported_engine_keeps_voice(tmp_path):
+    """핫스왑 미지원 엔진(FakeMouth) → 카드만 교체, 목소리 유지 — 500이 아니다."""
+    swap, pipeline = _make_gptsovits_swap(tmp_path, mouth=FakeMouth())
+    client, *_ = _make(swap=swap)
+    before = pipeline.current_voice
+    body = client.post("/persona", json={"id": "example"}).json()
+    assert body == {"id": "example", "character": "레이", "voice_swapped": False}
+    assert swap.character == "레이"  # 카드는 교체됨
+    assert pipeline.current_voice is before  # 목소리는 그대로
+    assert swap._loaded_ckpts != ("", "")  # 로드 실패 — 비교 키 유지
+
+
+def test_persona_swap_weights_rejected_while_playing(tmp_path):
+    swap, pipeline = _make_gptsovits_swap(tmp_path)
+    pipeline._mouth._playing = True
+    client, *_ = _make(swap=swap)
+    assert client.post("/persona", json={"id": "example"}).status_code == 409
+    assert pipeline._mouth.weight_calls == []  # 재생 중 모델 로드 금지
 
 
 def test_personas_scan_skips_broken_yaml(tmp_path):
