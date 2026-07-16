@@ -69,6 +69,7 @@ class GPTSoVITSMouth(MouthAdapter):
         gen_lang: str = "ja",
         device: str = "cpu",  # 백엔드 추상화 자리 — 추후 cuda/dml로 교체
         tts_fn: Any = None,  # 테스트 주입용 (실모델·실오디오 없이 고정)
+        weight_fns: Any = None,  # 테스트 주입용 (change_gpt, change_sovits) — 핫스왑 검증
     ) -> None:
         if ref_lang not in _GPTSOVITS_LANG or gen_lang not in _GPTSOVITS_LANG:
             raise ValueError(
@@ -82,6 +83,11 @@ class GPTSoVITSMouth(MouthAdapter):
         self._gen_lang = gen_lang
         self._device = device
         self._tts_fn = tts_fn
+        # 엔진 심볼 — _ensure_engine이 import해 채운다(테스트는 weight_fns로 주입).
+        self._i18n: Any = None
+        self._change_gpt_weights, self._change_sovits_weights = (
+            weight_fns if weight_fns is not None else (None, None)
+        )
         # i18n으로 래핑된 인자 — _ensure_engine에서 채운다. 테스트 주입 시엔
         # i18n이 없으므로 소스 문자열을 그대로 쓴다.
         self._prompt_lang = _GPTSOVITS_LANG[ref_lang]
@@ -104,7 +110,8 @@ class GPTSoVITSMouth(MouthAdapter):
         # repo 루트(= `from GPT_SoVITS.x`, `import config`)·GPT_SoVITS/ 하위(= 내부
         # `from text.x`)·eres2net(= sv.py의 `from ERes2NetV2 import`) 셋 다 path에 필요.
         if self._repo_path:
-            repo = os.path.abspath(self._repo_path)
+            # chdir 전에 고정한다 — 상대경로면 chdir 뒤 abspath가 달라진다.
+            repo = self._repo_path = os.path.abspath(self._repo_path)
             sys.path.insert(0, os.path.join(repo, "GPT_SoVITS", "eres2net"))
             sys.path.insert(0, os.path.join(repo, "GPT_SoVITS"))
             sys.path.insert(0, repo)
@@ -134,33 +141,7 @@ class GPTSoVITSMouth(MouthAdapter):
             if os.path.isdir(jtalk_dic):
                 os.environ.setdefault("OPEN_JTALK_DICT_DIR", jtalk_dic)
 
-            # ckpt 미지정 = base(zero-shot) 의도인데, inference_webui는 env 미설정 시
-            # weight.json(마지막으로 쓴 가중치 기억)으로 폴백한다 — 이전 실행이 fine-tune을
-            # 남겼으면 base가 아니라 그 음색이 돼 카드 의도가 깨진다. base 경로를 명시해
-            # "생략 = base"를 weight.json 상태와 무관한 결정론으로 만든다.
-            # base는 v2ProPlus — v2 base는 EOS 실패(폭주·조기 종료)가 잦아 기각
-            # (문장 단위 10/10 정상 vs v2 폭주 빈발, 2026.07.15 실측). v2ProPlus는
-            # 화자 임베딩(sv) 모델이 추가로 필요하다(inference_webui가 자동 로드).
-            if not self._gpt_ckpt or not self._sovits_ckpt:
-                base_gpt = os.path.join(pre, "s1v3.ckpt")
-                base_sovits = os.path.join(pre, "v2Pro", "s2Gv2ProPlus.pth")
-                base_sv = os.path.join(pre, "sv", "pretrained_eres2netv2w24s4ep4.ckpt")
-                missing = [
-                    p for p in (base_gpt, base_sovits, base_sv) if not os.path.isfile(p)
-                ]
-                if missing:
-                    raise FileNotFoundError(
-                        "base(zero-shot) 가중치가 없습니다: "
-                        + ", ".join(os.path.basename(p) for p in missing)
-                        + "\n다운로드:\n"
-                        "  huggingface_hub.snapshot_download('lj1995/GPT-SoVITS',\n"
-                        "    allow_patterns=['s1v3.ckpt', 'v2Pro/s2Gv2ProPlus.pth', 'sv/*'],\n"
-                        f"    local_dir=r'{pre}')"
-                    )
-                if not self._gpt_ckpt:
-                    self._gpt_ckpt = base_gpt
-                if not self._sovits_ckpt:
-                    self._sovits_ckpt = base_sovits
+            self._resolve_base_ckpts()
         if self._gpt_ckpt:
             os.environ.setdefault("gpt_path", self._gpt_ckpt)
         if self._sovits_ckpt:
@@ -229,26 +210,75 @@ class GPTSoVITSMouth(MouthAdapter):
                 "  create_mouth('gptsovits', repo_path=r'C:\\gptsovits', ...)"
             ) from exc
 
-        # i18n으로 언어 인자 래핑 (webui 내부 dict_language 키와 일치시켜야 함).
-        self._prompt_lang = i18n(_GPTSOVITS_LANG[self._ref_lang])
-        self._text_lang = i18n(_GPTSOVITS_LANG[self._gen_lang])
-        self._how_to_cut = i18n("不切")
+        self._i18n = i18n
+        self._change_gpt_weights = change_gpt_weights
+        self._change_sovits_weights = change_sovits_weights
 
-        # SoVITS 가중치 로드 — 제너레이터라 소진해야 적용됨. prompt/text_language를
-        # 넘겨야 마지막 yield가 미설정 prompt_text_update를 참조해 죽지 않는다.
+        # i18n으로 언어 인자 래핑 (webui 내부 dict_language 키와 일치시켜야 함).
+        self._apply_langs()
+        self._how_to_cut = i18n("不切")
+        self._load_weights()
+
+        self._tts_fn = get_tts_wav
+        logger.info("GPT-SoVITS 준비 완료 (device=%s).", self._device)
+        return self._tts_fn
+
+    def _resolve_base_ckpts(self) -> None:
+        """빈 ckpt를 base(zero-shot) 경로로 채운다 — 부팅·핫스왑 공용. repo_path 없으면 무동작.
+
+        ckpt 미지정 = base(zero-shot) 의도인데, inference_webui는 env 미설정 시
+        weight.json(마지막으로 쓴 가중치 기억)으로 폴백한다 — 이전 실행이 fine-tune을
+        남겼으면 base가 아니라 그 음색이 돼 카드 의도가 깨진다. base 경로를 명시해
+        "생략 = base"를 weight.json 상태와 무관한 결정론으로 만든다.
+        base는 v2ProPlus — v2 base는 EOS 실패(폭주·조기 종료)가 잦아 기각
+        (문장 단위 10/10 정상 vs v2 폭주 빈발, 2026.07.15 실측). v2ProPlus는
+        화자 임베딩(sv) 모델이 추가로 필요하다(inference_webui가 자동 로드).
+        """
+        if not self._repo_path or (self._gpt_ckpt and self._sovits_ckpt):
+            return
+        # _repo_path는 _ensure_engine이 chdir 전에 절대경로로 고정해 둔다.
+        pre = os.path.join(self._repo_path, "GPT_SoVITS", "pretrained_models")
+        base_gpt = os.path.join(pre, "s1v3.ckpt")
+        base_sovits = os.path.join(pre, "v2Pro", "s2Gv2ProPlus.pth")
+        base_sv = os.path.join(pre, "sv", "pretrained_eres2netv2w24s4ep4.ckpt")
+        missing = [p for p in (base_gpt, base_sovits, base_sv) if not os.path.isfile(p)]
+        if missing:
+            raise FileNotFoundError(
+                "base(zero-shot) 가중치가 없습니다: "
+                + ", ".join(os.path.basename(p) for p in missing)
+                + "\n다운로드:\n"
+                "  huggingface_hub.snapshot_download('lj1995/GPT-SoVITS',\n"
+                "    allow_patterns=['s1v3.ckpt', 'v2Pro/s2Gv2ProPlus.pth', 'sv/*'],\n"
+                f"    local_dir=r'{pre}')"
+            )
+        if not self._gpt_ckpt:
+            self._gpt_ckpt = base_gpt
+        if not self._sovits_ckpt:
+            self._sovits_ckpt = base_sovits
+
+    def _apply_langs(self) -> None:
+        """언어 인자 래핑 — 엔진 로드 전(테스트 주입)엔 i18n이 없어 소스 문자열을 그대로 쓴다."""
+        wrap = self._i18n or (lambda s: s)
+        self._prompt_lang = wrap(_GPTSOVITS_LANG[self._ref_lang])
+        self._text_lang = wrap(_GPTSOVITS_LANG[self._gen_lang])
+
+    def _load_weights(self) -> None:
+        """현재 _gpt_ckpt·_sovits_ckpt를 엔진에 올린다 (부팅·핫스왑 공용).
+
+        SoVITS는 제너레이터라 소진해야 적용된다. prompt/text_language를 넘겨야 마지막
+        yield가 미설정 prompt_text_update를 참조해 죽지 않는다.
+        """
+        if self._change_sovits_weights is None or self._change_gpt_weights is None:
+            raise RuntimeError("엔진 미로드 — warmup() 후에 가중치를 올릴 수 있습니다")
         if self._sovits_ckpt:
-            for _ in change_sovits_weights(
+            for _ in self._change_sovits_weights(
                 self._sovits_ckpt,
                 prompt_language=self._prompt_lang,
                 text_language=self._text_lang,
             ):
                 pass
         if self._gpt_ckpt:
-            change_gpt_weights(self._gpt_ckpt)
-
-        self._tts_fn = get_tts_wav
-        logger.info("GPT-SoVITS 준비 완료 (device=%s).", self._device)
-        return self._tts_fn
+            self._change_gpt_weights(self._gpt_ckpt)
 
     # --- 계약 ---------------------------------------------------------
 
@@ -340,6 +370,33 @@ class GPTSoVITSMouth(MouthAdapter):
     def warmup(self) -> None:
         """GPT-SoVITS 가중치를 미리 로드한다 (첫 발화 ~71s 지연 제거)."""
         self._ensure_engine()
+
+    def set_weights(
+        self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
+    ) -> None:
+        """음색 가중치를 런타임 교체한다 — 페르소나 번들(가중치+언어)의 원자 교체.
+
+        webui의 change_*_weights를 재호출할 뿐이다(엔진은 그대로 — 엔진 핫스왑 아님).
+        블로킹(torch.load 수 초) — 호출부가 스레드로 넘긴다. 빈 ckpt는 base(zero-shot)
+        의도이므로 _ensure_engine과 같은 규칙으로 base 경로를 명시 해석하고, 빈 언어는
+        현재 값을 유지한다.
+        """
+        for name, lang in (("ref_lang", ref_lang), ("gen_lang", gen_lang)):
+            if lang and lang not in _GPTSOVITS_LANG:
+                raise ValueError(f"지원 언어: {sorted(_GPTSOVITS_LANG)} ({name}={lang})")
+        self._ensure_engine()  # 미웜업 상태에서의 교체도 성립시킨다(idempotent)
+        self._gpt_ckpt = os.path.abspath(gpt_ckpt) if gpt_ckpt else ""
+        self._sovits_ckpt = os.path.abspath(sovits_ckpt) if sovits_ckpt else ""
+        self._resolve_base_ckpts()
+        self._ref_lang = ref_lang or self._ref_lang
+        self._gen_lang = gen_lang or self._gen_lang
+        self._apply_langs()
+        self._load_weights()
+        logger.info(
+            "음색 가중치 교체 완료 — gpt=%s, sovits=%s (ref=%s, gen=%s)",
+            os.path.basename(self._gpt_ckpt), os.path.basename(self._sovits_ckpt),
+            self._ref_lang, self._gen_lang,
+        )
 
     def _play(self, wav: Any) -> None:
         import sounddevice as sd

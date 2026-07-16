@@ -307,6 +307,64 @@ def test_gptsovits_warmup_loads_engine_once():
     assert mouth._tts_fn is fake_tts_fn  # 교체되지 않음
 
 
+# --- set_weights: 음색 가중치 런타임 교체 (핫스왑) ---
+
+
+class _FakeWeights:
+    """change_gpt_weights / change_sovits_weights 흉내 — 로드 순서·인자를 기록한다."""
+
+    def __init__(self) -> None:
+        self.loaded: list[tuple] = []
+
+    def gpt(self, path):
+        self.loaded.append(("gpt", path))
+
+    def sovits(self, path, *, prompt_language, text_language):
+        self.loaded.append(("sovits", path, prompt_language, text_language))
+        yield  # webui는 제너레이터 — 소진해야 적용된다
+
+
+def _build_swappable(**kw):
+    from navi.mouth.gptsovits import GPTSoVITSMouth
+
+    w = _FakeWeights()
+    mouth = GPTSoVITSMouth(tts_fn=_FakeGptSovits(), weight_fns=(w.gpt, w.sovits), **kw)
+    return mouth, w
+
+
+def test_gptsovits_set_weights_loads_both_and_updates_langs():
+    mouth, w = _build_swappable(ref_lang="ja", gen_lang="ja")
+    mouth.set_weights("a.ckpt", "a.pth", ref_lang="ko", gen_lang="ko")
+
+    # SoVITS 먼저(제너레이터 소진) → GPT. 언어는 새 값으로 래핑돼 함께 넘어간다.
+    assert [x[0] for x in w.loaded] == ["sovits", "gpt"]
+    assert w.loaded[0][2:] == ("韩文", "韩文")  # i18n 없음 → 소스 문자열
+    assert (mouth._ref_lang, mouth._gen_lang) == ("ko", "ko")
+    assert mouth._gpt_ckpt.endswith("a.ckpt") and mouth._sovits_ckpt.endswith("a.pth")
+
+
+def test_gptsovits_set_weights_empty_lang_keeps_current():
+    """빈 언어 = 현재 유지 — 부팅 배선(카드 언어 미지정 시 config 유지)과 같은 규칙."""
+    mouth, w = _build_swappable(ref_lang="ja", gen_lang="ja")
+    mouth.set_weights("a.ckpt", "a.pth")
+    assert (mouth._ref_lang, mouth._gen_lang) == ("ja", "ja")
+    assert w.loaded[0][2:] == ("日文", "日文")
+
+
+def test_gptsovits_set_weights_invalid_lang_raises():
+    mouth, w = _build_swappable()
+    with pytest.raises(ValueError, match="지원 언어"):
+        mouth.set_weights("a.ckpt", "a.pth", gen_lang="fr")
+    assert w.loaded == []  # 검증 실패 시 아무것도 안 올린다
+
+
+def test_gptsovits_set_weights_applies_to_next_synthesis():
+    """교체한 언어가 다음 합성 인자에 실제로 실린다 — 가중치와 언어의 원자 교체."""
+    mouth, _w = _build_swappable(ref_lang="ja", gen_lang="ja")
+    mouth.set_weights("a.ckpt", "a.pth", ref_lang="ja", gen_lang="ko")
+    assert (mouth._prompt_lang, mouth._text_lang) == ("日文", "韩文")
+
+
 def test_fake_mouth_warmup_is_noop():
     """FakeMouth.warmup()은 상태를 바꾸지 않는다."""
     from navi.mouth.fake import FakeMouth
@@ -314,6 +372,14 @@ def test_fake_mouth_warmup_is_noop():
     mouth = FakeMouth()
     mouth.warmup()  # 에러 없이 호출 가능
     assert not mouth.is_playing()
+
+
+def test_mouth_set_weights_unsupported_by_default():
+    """가중치 없는 엔진은 조용히 무시하지 않고 미지원을 알린다 — 호출부가 분기한다."""
+    from navi.mouth.fake import FakeMouth
+
+    with pytest.raises(NotImplementedError, match="핫스왑"):
+        FakeMouth().set_weights("a.ckpt", "a.pth")
 
 
 # --- 팩토리: 벤더 종속 금지 + 보류 결정 안내 ---
