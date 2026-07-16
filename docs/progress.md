@@ -7,6 +7,38 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**Stage 15-② 후속 — 음색 가중치 핫스왑 (2026.07.16, `feat/voice-weight-hotswap`):**
+- **범위:** 페르소나 전환 시 **음색 가중치를 런타임 교체**한다. 직전 E2E의 회피(두 데모 카드를
+  모두 base로 통일해 레퍼런스만 교체)를 걷어내고, fine-tune(aris)↔base(example)처럼 ckpt가
+  다른 카드 사이에서도 목소리가 실제로 바뀐다. 앞선 가능성 평가(아래 항목)의 결론을 그대로 구현 —
+  메커니즘은 이미 있던 `change_gpt/sovits_weights` 재호출이고, 신설은 그 위의 배선·가드뿐.
+- **어댑터 계약([navi/mouth/base.py](../navi/mouth/base.py)):** `set_weights(gpt, sovits, *,
+  ref_lang, gen_lang)` 기본은 `NotImplementedError` — 가중치 없는 엔진(supertonic 등)은
+  재정의하지 않고, 호출부가 이 예외로 분기한다(조용한 no-op 금지 — 안 바뀐 걸 바뀐 척하지 않음).
+  **언어는 가중치와 한 몸**이라 같이 받는다(카드 번들의 원자 교체). **빈 값 = 현재 유지**로
+  부팅 배선(`daemon._run`)과 규칙을 맞췄다.
+- **gptsovits 구현([navi/mouth/gptsovits.py](../navi/mouth/gptsovits.py)):** 부팅 경로에서
+  base ckpt 해석(`_resolve_base_ckpts`)·가중치 로드(`_load_weights`)·언어 래핑(`_apply_langs`)을
+  추출해 부팅과 핫스왑이 **같은 코드**를 탄다 — "빈 ckpt = base(v2ProPlus)" 결정론이 교체 경로에도
+  그대로 적용된다. 리팩터 중 발견: `_repo_path`가 상대경로면 `os.chdir(repo)` 뒤 abspath가
+  달라지므로 chdir 전에 절대경로로 고정.
+- **동시성 — 턴 락(리스크 ① 해소):** 모델 로드는 동기 블로킹(torch.load ~2~5s)이라
+  `asyncio.to_thread`로 넘긴다. 그 순간 이벤트 루프를 놓으므로 **tick의 선제 발화가 교체 중인
+  모델로 합성할 수 있다** — `TurnPipeline._turn_lock`으로 턴과 교체를 상호배제하고,
+  `is_playing()`이 재생 플래그 + 락 상태를 함께 반환해 교체·발화 준비 구간이 컨트롤 플레인에
+  409로 표면화된다(재생 플래그만으론 두뇌 생성 구간이 비어 보였다).
+- **SwapRuntime([navi/control/runtime.py](../navi/control/runtime.py)):** `swap_persona`가 async가
+  되고(서버는 `await` 한 줄), ckpt 불일치 시 `_swap_weights`로 가중치를 올린 뒤 톤을 건다 →
+  `voice_swapped=true`. **카드 주인·목소리 주인의 분열이 해소된다**(핫스왑 미지원 엔진에서만 잔존).
+  비교 키(`_loaded_ckpts`)는 카드 선언값 그대로 갱신해 재교체 시 중복 로드를 막는다.
+- **검증:** 유닛 **226 green**(신규 12 — 핫스왑 분기 4·pipeline 상호배제 3·어댑터 set_weights 5).
+  루프 비차단은 교체 중 heartbeat 태스크가 계속 도는지로, 상호배제는 교체 중 시작한 턴이 교체
+  완료 뒤에야 합성하는지로 고정. **실기 E2E(fine-tune↔base 실제 음색 전환·버전 경계 잔여물
+  청취)는 미실시** — 아래 평가의 리스크 ②(v2ProPlus 전역 sv 모델이 v2 전환 후 잔존하는지)는
+  여전히 실측 대기.
+- **남은 것:** GUI 로딩 표시(gui.md 보류 항목) — 지금은 교체 중 요청이 409로 튕길 뿐이라
+  사용자에겐 무반응처럼 보인다. `/status` `mouth.state(ready|loading)` + WS 발행이 후속.
+
 **순서 4 — Heartbeat 2·3층 배선 (2026.07.12, PR #19 `feat/heartbeat-timing`):**
 - **범위 = 배선(scaffolding), "똑똑함" 아님:** 목표는 "판단 함수가 존재하고 값을 반환하며
   로그가 남는다"까지. 가중치·jitter·window는 전부 config의 **대충값** — 좋은 타이밍/주제 산식은
@@ -63,7 +95,7 @@
   들어감 → **페르소나 gen_lang을 STT에 배선**([navi/cli.py](../navi/cli.py)·daemon.py, 없으면 ko 폴백,
   부팅 시점 고정). 실사용(LLM 경유)엔 무해하나 echo·STT직결 경로 누수를 막고 비용 0(Whisper 언어는
   디코딩 인자 한 개).
-- **음색 전환 데모 배선(핫스왑 없이):** 페르소나 전환 시 **가중치 핫스왑은 미구현**(Stage 15-② 후속 PR).
+- **음색 전환 데모 배선(핫스왑 없이):** 페르소나 전환 시 **가중치 핫스왑은 미구현**(2026.07.16 구현 — 위 항목).
   SwapRuntime은 ckpt **일치** 시에만 `set_voice`(레퍼런스 교체)를 태운다 — 그래서 aris(fine-tune v2)↔
   example(base v2ProPlus)는 ckpt 불일치라 목소리가 안 바뀌었다. **회피: 두 데모 카드를 모두 base로**
   통일(aris_base·example_jp 둘 다 v2ProPlus, ckpt 빈값 일치) → set_voice로 레퍼런스(아리스↔나히다)만
