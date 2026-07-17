@@ -7,6 +7,30 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**순서 4 후속 — 2층 타이밍을 tick 기반 hazard로 교체 (2026.07.18, `refactor/timing-hazard`, 체크리스트 B1):**
+- **범위:** 배선 당시 예고한 "조건 산식 재구상". `should_initiate`를 고정 임계값+외부 jitter에서
+  **변동확률(Weibull hazard)**로 교체. 계약(bool 반환)·게이트 순서·`daily_cap`·로깅은 무수정 —
+  조건이 bool 뒤에 격리돼 있어 산식만 갈렸다(순서 4 설계 확인 항목대로).
+- **교체 중 드러난 구 산식의 결함(우려가 아니라 실재):** 구 산식은 매 tick(10s) jitter를 새로
+  뽑아 `elapsed >= base/w*jitter`를 봤다. elapsed가 jitter 하한에 닿는 순간부터 10초마다 주사위를
+  다시 굴리니 **반복 샘플링이 산포를 하한으로 무너뜨린다.** 2000회 시뮬레이션 실측: 의도한
+  48~72분(±20%) 대신 평균 50.4분·산포 3.8분(5~95%)에 눌어붙고, tick을 1s로 줄이면 48.8분·
+  1.3분까지 더 붕괴 — **tick 빈도가 나비의 발화 성격을 바꾸고 있었다.** 지금까지 쌓였을 로그가
+  이 왜곡된 조건의 기록이라 B2 튜닝의 오염원이 될 뻔했다.
+- **새 산식 — Weibull 생존함수 S(t)=exp(-(t/λ)^k):** 매 tick 조건부 발화 확률
+  `p = 1 - S(t+dt)/S(t)`를 굴린다. 매 tick 생존확률의 곱이 telescoping되어 전체 생존확률이
+  정확히 S(t)로 떨어지므로 **tick 빈도 중립성이 근사가 아닌 항등**으로 따라온다(실측: tick 10s
+  평균 62.3분 vs 1s 63.1분, 산포 75분 동일). λ=base_interval_s/시간대가중치(가중치 방향 보존),
+  k=2 → 경과할수록 발화 확률↑("오래 안 봤을수록 말 걸 기운이 오른다"), k=1이면 무기억 지수분포.
+- **정리된 것(순서 4가 예고한 3건):** ① jitter_range 폐지 — 무작위성이 산식에 내장돼 붕 뜬다,
+  자리는 `hazard_shape_k` ② tick 빈도 정규화 — `tick_interval_s`를 산식에 넣어 위 telescoping으로
+  해결 ③ 테스트 결정성 — seed 주입 대신 확률 계산(`initiation_probability`)을 난수 없는 순수
+  함수로 분리(산식 전체가 결정론 검증, RNG는 경계 한 곳). test_daemon 결정론도 base/min=0
+  상수화(hazard에선 척도가 무너져 불가)에서 rng 고정으로 이동.
+- **값은 여전히 배선용 대충값** — 바뀐 건 산식의 꼴이지 튜닝이 아니다. 좋은 값은 interaction_log
+  축적 뒤(B2, 진행 원칙 2). **검증:** 228 green(timing 8건 재작성 — tick 빈도 중립성·hazard
+  단조성·k=1 무기억). arch 4.4·aliveness.md 2.1의 "가중치+jitter" 표현도 hazard로 최신화.
+
 **Stage 15-② 후속 — 음색 가중치 핫스왑 (2026.07.16, `feat/voice-weight-hotswap`):**
 - **범위:** 페르소나 전환 시 **음색 가중치를 런타임 교체**한다. 직전 E2E의 회피(두 데모 카드를
   모두 base로 통일해 레퍼런스만 교체)를 걷어내고, fine-tune(aris)↔base(example)처럼 ckpt가
