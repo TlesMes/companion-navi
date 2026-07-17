@@ -145,7 +145,7 @@ def create_app(
     @app.post("/persona")
     async def persona(body: PersonaBody) -> dict:
         try:
-            return _swap().swap_persona(body.id)
+            return await _swap().swap_persona(body.id)
         except LookupError as exc:
             raise HTTPException(404, str(exc)) from exc
         except SwapBusy as exc:

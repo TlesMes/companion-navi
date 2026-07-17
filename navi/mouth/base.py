@@ -35,3 +35,14 @@ class MouthAdapter(ABC):
 
     def warmup(self) -> None:
         """엔진을 미리 로드한다. 기본: no-op. 지연 로드 어댑터에서 재정의."""
+
+    def set_weights(
+        self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
+    ) -> None:
+        """음색 가중치를 런타임 교체한다 (페르소나 번들 전환). 기본: 미지원.
+
+        언어는 가중치와 한 몸이라 함께 받는다 — 빈 값이면 현재 언어를 유지한다(부팅 배선과
+        같은 규칙). 블로킹 호출(수 초의 모델 로드)이라 호출부가 스레드로 넘긴다
+        (TurnPipeline.swap_weights). 가중치를 갖지 않는 엔진(프리셋 기반)은 재정의하지 않는다.
+        """
+        raise NotImplementedError(f"{type(self).__name__}은 가중치 핫스왑 미지원")

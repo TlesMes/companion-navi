@@ -6,12 +6,14 @@ DaemonCore는 conductor·pipeline을 들지 않는다(전부 _run 지역변수) 
 
 목소리 연속성 원칙(설계 원칙 2)의 런타임 표현: 톤 레퍼런스는 그 fine-tune 화자의
 녹음이라 다른 가중치에 교차 적용할 수 없다. 그래서 두 주인을 분리 추적한다 —
-persona_id(카드 주인)와 voice_persona_id(톤 세트·VoiceProfile 주인). 가중치가
-일치할 때만 둘이 함께 움직이고(voice_swapped=true), 불일치면 카드만 바뀐다.
-가중치 런타임 교체(후속 PR)가 이 분열을 해소하며 두 id를 다시 합친다.
+persona_id(카드 주인)와 voice_persona_id(톤 세트·VoiceProfile 주인). 가중치가 다르면
+새 가중치를 엔진에 올린 뒤(핫스왑) 톤을 걸어 둘을 다시 합친다 — 핫스왑을 지원하지
+않는 엔진에서만 분열이 남는다(카드만 교체, voice_swapped=false).
 
-동시성: 컨트롤 서버와 턴은 같은 이벤트 루프다 — is_playing 판정→set_voice 적용
-사이에 await가 없으므로 원자적이고, 락이 필요 없다.
+동시성: 컨트롤 서버와 턴은 같은 이벤트 루프다. 톤 교체는 is_playing 판정→set_voice
+사이에 await가 없어 원자적이라 락이 없다. 가중치 교체는 모델 로드를 스레드로 넘기며
+루프를 놓으므로 TurnPipeline의 턴 락이 그 구간을 지킨다(is_playing이 True를 반환해
+동시 교체 요청은 409).
 """
 
 from __future__ import annotations
@@ -81,8 +83,13 @@ class SwapRuntime:
             )
         return out
 
-    def swap_persona(self, persona_id: str) -> dict:
-        """번들 교체 진입점 — 카드는 즉시, 목소리는 가중치가 일치할 때만 따라간다."""
+    async def swap_persona(self, persona_id: str) -> dict:
+        """번들 교체 진입점 — 카드는 즉시, 목소리는 가중치까지 따라간다.
+
+        가중치가 다르면 엔진에 새 가중치를 올린 뒤(핫스왑) 톤을 건다 — 이로써 카드 주인과
+        목소리 주인의 분열(위 docstring)이 해소된다. 엔진이 핫스왑을 지원하지 않으면
+        (프리셋 기반 등) 카드만 교체하고 목소리는 유지한다.
+        """
         self._guard_not_playing()
         path = self._personas_dir / f"{persona_id}.yaml"
         if not path.exists():
@@ -94,21 +101,41 @@ class SwapRuntime:
         voice_swapped = False
         vendor_voice = card.voice.vendor(self._vendor) if card.voice else None
         tone = card.voice.default_tone(self._vendor) if card.voice else None
-        if (
-            self._pipeline is not None
-            and vendor_voice is not None
-            and tone is not None
-            and vendor_voice.ckpts == self._loaded_ckpts
-        ):
-            self._pipeline.set_voice(card.voice.profile(tone))
-            self._voice = card.voice
-            self._voice_persona_id = persona_id
-            voice_swapped = True
+        if self._pipeline is not None and vendor_voice is not None and tone is not None:
+            if vendor_voice.ckpts != self._loaded_ckpts:
+                voice_swapped = await self._swap_weights(vendor_voice)
+            else:
+                voice_swapped = True  # 같은 음색 — 레퍼런스만 갈면 된다
+            if voice_swapped:
+                self._pipeline.set_voice(card.voice.profile(tone))
+                self._voice = card.voice
+                self._voice_persona_id = persona_id
         return {
             "id": persona_id,
             "character": card.character,
             "voice_swapped": voice_swapped,
         }
+
+    async def _swap_weights(self, vendor_voice) -> bool:
+        """새 음색 가중치를 엔진에 올린다. 성공 시 True — 미지원 엔진이면 False(카드만 교체).
+
+        언어(ref/gen)는 가중치와 한 몸이라 함께 넘긴다 — 카드 번들의 원자 교체.
+        """
+        try:
+            await self._pipeline.swap_weights(
+                vendor_voice.gpt_ckpt,
+                vendor_voice.sovits_ckpt,
+                # 빈 값 = 현재 언어 유지 — 부팅 배선(daemon._run)과 같은 규칙
+                ref_lang=vendor_voice.ref_lang,
+                gen_lang=vendor_voice.gen_lang,
+            )
+        except NotImplementedError:
+            log.info(
+                "%s 엔진은 가중치 핫스왑 미지원 — 카드만 교체(목소리 유지)", self._vendor
+            )
+            return False
+        self._loaded_ckpts = vendor_voice.ckpts
+        return True
 
     # --- 톤 (현재 목소리 주인의 톤 세트 안에서만) ----------------------
 

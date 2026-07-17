@@ -11,9 +11,9 @@
       name: aris
       speed: 1.0
       gptsovits:
-        gpt_ckpt: ...          # 가중치 — 런타임 교체는 후속 PR, 지금은 부팅 시 사용
+        gpt_ckpt: ...          # 음색 가중치 — 부팅 로드 + 페르소나 교체 시 런타임 핫스왑
         sovits_ckpt: ...
-        ref_lang: ja           # 전방호환 — 파싱만, 적용은 가중치 교체 후속 PR
+        ref_lang: ja           # 가중치와 한 몸 — 핫스왑 시 함께 교체(빈 값 = 현재 유지)
         gen_lang: ja
         tones:                 # 첫 항목이 기본 톤
           - { name: 기본, icon: mood-smile, voice_id: <ref wav>, ref_text: "..." }
@@ -60,7 +60,7 @@ class VendorVoice:
 
     gpt_ckpt: str = ""
     sovits_ckpt: str = ""
-    ref_lang: str = ""  # 전방호환 — 이번엔 파싱만, 런타임 적용은 가중치 교체 후속 PR
+    ref_lang: str = ""  # 빈 값 = 현재 언어 유지 (부팅·핫스왑 공통 규칙)
     gen_lang: str = ""
     tones: tuple[ToneSpec, ...] = ()
 
