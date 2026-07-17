@@ -7,6 +7,7 @@ FakeWakeWord로 깨우고, transcribe는 대본(scripted texts)으로 STT를 대
 
 import asyncio
 import os
+import random
 import struct
 import time
 
@@ -305,14 +306,26 @@ def test_snapshot_exposes_proactive_mode_for_gui():
 
 from navi.config import ProactiveConfig  # noqa: E402
 
-# base/min 0 = "게이트만 통과하면 즉시 발화" — 타이밍 임계 자체는 test_timing이 검증하고,
-# 여기선 데몬의 게이트 순서·로깅·응답 판정 배선만 결정론으로 본다.
+# "게이트만 통과하면 즉시 발화" — 타이밍 산식 자체는 test_timing이 검증하고, 여기선
+# 데몬의 게이트 순서·로깅·응답 판정 배선만 결정론으로 본다.
+#
+# 산식이 hazard로 바뀐 뒤 결정론의 자리가 옮겨졌다: 이전엔 base/min=0으로 임계를
+# 상수화했지만, hazard에선 base_interval이 척도 λ라 0이면 척도가 무너진다(확률 정의 불가).
+# 대신 **주사위를 고정**한다 — min_gap=0으로 하드 바닥만 열어두면 확률은 항상 >0이고,
+# rng가 0.0을 뱉으므로 게이트를 통과한 tick은 반드시 발화한다.
 _EAGER = dict(
-    base_interval_s=0.0,
-    min_gap_s=0.0,
-    jitter_range=(1.0, 1.0),  # 결정론 — jitter 고정
+    base_interval_s=3600.0,  # 값 자체는 무관 — 주사위가 고정이라 확률>0이면 발화
+    min_gap_s=0.0,           # 하드 바닥 해제(이 게이트는 test_timing이 검증)
+    hazard_shape_k=2.0,
     time_weights={"morning": 1.0, "afternoon": 1.0, "evening": 1.0, "night": 1.0},
 )
+
+
+def _always_rng() -> random.Random:
+    """확률이 0보다 크기만 하면 발화 — 데몬 배선 테스트의 결정론 장치."""
+    rng = random.Random()
+    rng.random = lambda: 0.0  # type: ignore[method-assign]
+    return rng
 
 
 def _proactive_core(clock, bus, *, inits, events, cap=8, window=300.0, **kw):
@@ -331,6 +344,7 @@ def _proactive_core(clock, bus, *, inits, events, cap=8, window=300.0, **kw):
         persist_mode=lambda mode, until: None,
         run_initiation=run_initiation,
         proactive=ProactiveConfig(daily_cap=cap, **_EAGER),
+        rng=kw.pop("rng", _always_rng()),
         wall_now=clock,
         log_interaction=lambda ev, m, n: events.append((ev, m, n)),
         count_initiations_today=lambda: sum(1 for e in events if e[0] == "initiated"),

@@ -125,8 +125,13 @@ stt_session.finalize() → { text, confidence, lang }   # UtteranceEnded 시 호
 current_mode(now, schedule, user_overrides) → SLEEP | ACTIVE | DND | SNOOZE
 can_speak_now(mode) → bool          # SLEEP/DND/SNOOZE면 false
 
-# 2층: 타이밍 (가중치 + jitter)
-should_initiate(now, last_interaction_at, time_weights, jitter) → bool
+# 2층: 타이밍 (tick 기반 hazard — 변동확률)
+should_initiate(now, last_interaction_at, time_weights, base_interval_s, min_gap_s,
+                tick_interval_s, shape_k, rng) → bool
+#   Weibull 생존함수 S(t)=exp(-(t/λ)^k), λ=base_interval_s/시간대가중치. 매 tick 조건부
+#   발화확률 p=1-S(t+dt)/S(t)를 굴린다 — 경과할수록 확률↑, tick 빈도와 무관(telescoping).
+#   확률 계산은 순수함수 initiation_probability로 분리(테스트 결정성). 구현: 2026.07.18 교체,
+#   구 "가중치+jitter" 산식은 반복 샘플링으로 산포가 하한에 붕괴해 폐기(progress.md 참조).
 
 # 3층: 주제 도출 (작은 모델/LLM 허용)
 pick_topic(memory_snapshot, weather, time_of_day, topic_feed) → topic_hint
@@ -388,8 +393,9 @@ flowchart TD
 
 ```
 quiet_hours: 기본 취침창 (스케줄 미동기화 시 fallback)
-jitter_range: 능동 발화 타이밍 난수 폭
-min_gap_between_initiations: 능동 발화 최소 간격
+base_interval_s: 능동 발화 hazard 척도 λ의 기준 (2026.07.18 — jitter_range 대체)
+hazard_shape_k: Weibull shape — >1이면 경과할수록 발화 확률 상승
+min_gap_between_initiations: 능동 발화 최소 간격 (이 안이면 확률 0)
 wake_keywords: ["야 일어나", ...]   # 강제기상
 override_phrases: ["더 잘래", "조용히 해", ...]
 intimacy_thresholds: 페르소나 전환 경계값

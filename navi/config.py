@@ -106,10 +106,10 @@ class ProactiveConfig:
     흘러든다"까지만 검증한다. 섹션이 없어도 기본값으로 뜬다(하위호환).
     """
 
-    base_interval_s: float          # 마지막 상호작용 후 이만큼(가중치 전) 지나면 발화 후보
-    min_gap_s: float                # 능동 발화 사이 최소 간격
+    base_interval_s: float          # hazard 척도 λ의 기준(가중치 전) — 클수록 뜸하게
+    min_gap_s: float                # 능동 발화 사이 최소 간격 — 이 안이면 확률 0
     daily_cap: int                  # 하루 최대 능동 발화 횟수 (원가/피로 방지)
-    jitter_range: tuple[float, float]  # 유효 간격 난수 폭
+    hazard_shape_k: float           # Weibull shape — >1이면 경과에 따라 발화 확률 상승
     time_weights: dict[str, float]  # 시간대(time_of_day) → 가중치, 클수록 자주
 
 
@@ -215,7 +215,6 @@ def _load_mode(raw: dict[str, Any]) -> ModeConfig:
 
 def _load_proactive(raw: dict[str, Any]) -> ProactiveConfig:
     p = raw.get("proactive", {})
-    jr = p.get("jitter_range", [0.8, 1.2])
     weights = p.get("time_weights") or {
         "morning": 1.2,
         "afternoon": 1.0,
@@ -226,7 +225,7 @@ def _load_proactive(raw: dict[str, Any]) -> ProactiveConfig:
         base_interval_s=float(p.get("base_interval_s", 3600)),
         min_gap_s=float(p.get("min_gap_s", 1800)),
         daily_cap=int(p.get("daily_cap", 8)),
-        jitter_range=(float(jr[0]), float(jr[1])),
+        hazard_shape_k=float(p.get("hazard_shape_k", 2.0)),
         time_weights={k: float(v) for k, v in weights.items()},
     )
 
