@@ -55,8 +55,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("navi.daemon")
 
-PID_FILE = Path("logs") / "navi.pid"
-STOP_FILE = Path("logs") / "navi.stop"
+# 절대경로로 고정 — 임포트 시점(cwd=프로젝트, chdir 이전)에 resolve한다. gptsovits
+# warmup이 os.chdir(repo)를 하므로(gptsovits.py) 상대경로면 tick의 STOP_FILE.exists·
+# release_pidfile이 chdir된 엉뚱한 디렉토리를 가리켜 stop 무효·orphan을 낳았다. cmd_stop은
+# 별도 프로세스(chdir 없음)라 같은 import resolve로 동일 절대경로를 얻는다.
+PID_FILE = (Path("logs") / "navi.pid").resolve()
+STOP_FILE = (Path("logs") / "navi.stop").resolve()
 
 _LISTEN_TO_BUS = {
     ListenKind.WAKE: EventKind.WAKE,
