@@ -33,11 +33,27 @@
   비교 키(`_loaded_ckpts`)는 카드 선언값 그대로 갱신해 재교체 시 중복 로드를 막는다.
 - **검증:** 유닛 **226 green**(신규 12 — 핫스왑 분기 4·pipeline 상호배제 3·어댑터 set_weights 5).
   루프 비차단은 교체 중 heartbeat 태스크가 계속 도는지로, 상호배제는 교체 중 시작한 턴이 교체
-  완료 뒤에야 합성하는지로 고정. **실기 E2E(fine-tune↔base 실제 음색 전환·버전 경계 잔여물
-  청취)는 미실시** — 아래 평가의 리스크 ②(v2ProPlus 전역 sv 모델이 v2 전환 후 잔존하는지)는
-  여전히 실측 대기.
+  완료 뒤에야 합성하는지로 고정.
+- **미검증 = `aris`→`example_jp`→`aris` 왕복 실청취 딱 하나.** 범위를 정확히: **가중치 핫스왑
+  경로(ckpt 불일치 → `set_weights`)의 실기 청취가 없다** — 직전 세션(2026.07.15)의 "base 음색
+  실청취"는 두 카드를 base로 통일한 **회피책의 청취**라 `set_voice`(레퍼런스 교체) 경로였고,
+  이번 코드는 실모델에 한 번도 안 붙었다(유닛은 가짜 함수로 "호출됐다"까지만 고정). 엔진
+  메커니즘이 옳은 것과 **우리 배선이 거기 닿았는지**는 별개라 왕복 1회는 여전히 필요하다.
+  핫스왑을 태우는 유일한 조합이 `aris`(fine-tune v2)↔`example_jp`(base v2ProPlus)다 —
+  `aris_base`↔`example_jp`는 둘 다 base라 ckpt 일치 → 기존 레퍼런스 교체 경로로 샌다.
+- **리스크 ②(버전 경계 잔여물) — 실측 없이 소스 확인으로 해소(2026.07.16):** "v2ProPlus의 전역
+  sv 모델이 v2 전환 후 안 치워진다"는 **사실이 아니다.** 근거는 `GPT_SoVITS/inference_webui.py`
+  세 지점 — ① `change_sovits_weights`(261행)가 `get_sovits_version_from_path_fast(sovits_path)`로
+  **ckpt에서 버전을 직접 읽어** 전역 `model_version`을 재태깅한다(가중치를 갈 때마다 정확) ②
+  `get_tts_wav`가 매 호출 `is_v2pro = model_version in {"v2Pro","v2ProPlus"}`를 새로 계산(963행)해
+  v2에선 sv를 **아예 참조하지 않는다** ③ 게다가 v2 로드 상태의 첫 합성에서 `clean_sv_cn_model()`을
+  직접 호출(825~828행)해 메모리까지 반환하고, 역방향은 `sv_cn_model == None`이면 `init_sv_cn()`으로
+  재로드(968~971행)한다. **양방향 자가 청소·자가 복구** — 평가 당시의 직감("is_v2pro 플래그로
+  오염은 안 될 듯")이 맞았다. 샘플 1회 청취보다 강한 근거라(모든 경우를 덮음) 실측 항목에서 뺀다.
 - **남은 것:** GUI 로딩 표시(gui.md 보류 항목) — 지금은 교체 중 요청이 409로 튕길 뿐이라
   사용자에겐 무반응처럼 보인다. `/status` `mouth.state(ready|loading)` + WS 발행이 후속.
+  전환 소요 시간은 **2~5s 추정치일 뿐 실측 안 됨** — 이 값이 무반응 구간의 길이를 정하므로
+  로딩 표시의 시급성이 여기서 갈린다.
 
 **순서 4 — Heartbeat 2·3층 배선 (2026.07.12, PR #19 `feat/heartbeat-timing`):**
 - **범위 = 배선(scaffolding), "똑똑함" 아님:** 목표는 "판단 함수가 존재하고 값을 반환하며
@@ -113,7 +129,8 @@
   (409). 신설은 어댑터 `set_weights`·pipeline 위임·SwapRuntime ckpt-불일치 분기(~40줄)+테스트. **리스크
   3:** ① 동기 torch.load(~2~5s)가 이벤트 루프 블로킹 → `asyncio.to_thread` 필수(이게 GUI "전환중"
   표시·입력거부 UX를 성립시키는 전제) ② **버전 경계 잔여물**(v2ProPlus의 전역 sv 모델이 v2 전환 후
-  안 치워짐 — get_tts_wav의 is_v2pro 플래그로 오염은 안 될 듯하나 실측 필요) ③ CPU 로드 지연은 의도적
+  안 치워짐 — get_tts_wav의 is_v2pro 플래그로 오염은 안 될 듯하나 실측 필요) **→ 2026.07.16 소스
+  확인으로 해소, 기우였다(위 핫스왑 항목 참조 — 실측 불필요)** ③ CPU 로드 지연은 의도적
   전환+재생중 가드라 UX 수용 가능. **버전 경계는 fine-tune(v2)↔base(v2ProPlus) 혼합 때만** 생김 —
   제품 페르소나를 같은 버전으로 fine-tune하면 소멸. gui.md "엔진 핫스왑 안 함"(supertonic↔gptsovits)과
   무관(같은 엔진 내 가중치 교체). 언어는 카드 번들(gpt_ckpt+gen_lang)로 원자 교체 — 벽은 G2P 빌드뿐.
