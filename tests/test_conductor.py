@@ -57,7 +57,7 @@ def make_config(tmp_path, vendor: str = "echo") -> Config:
             base_interval_s=3600,
             min_gap_s=1800,
             daily_cap=8,
-            jitter_range=(0.8, 1.2),
+            hazard_shape_k=2.0,
             time_weights={"morning": 1.2, "afternoon": 1.0, "evening": 1.1, "night": 0.5},
         ),
         control=ControlConfig(enabled=False, port=8765),  # 유닛에선 서버 미기동

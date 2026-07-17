@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import logging
 import os
+import random
 import signal
 import sys
 import time
@@ -43,7 +44,6 @@ from navi.heartbeat import (
     Mode,
     ModeCommand,
     ModeMachine,
-    draw_jitter,
     pick_topic,
     should_initiate,
     time_of_day,
@@ -142,6 +142,7 @@ class DaemonCore:
         count_initiations_today: Callable[[], int] | None = None,
         memory_snapshot: Callable[[], list] | None = None,
         response_window_s: float = 300.0,
+        rng: random.Random | None = None,  # 2층 hazard 주사위 — 테스트에서 seed 고정
     ) -> None:
         self._bus = bus
         self._transcribe = transcribe
@@ -161,6 +162,7 @@ class DaemonCore:
         self._count_initiations_today = count_initiations_today
         self._memory_snapshot = memory_snapshot
         self._response_window_s = response_window_s
+        self._rng = rng or random.Random()
         # 마지막 상호작용 시각(벽시계) — 타이밍 2층의 기준. 기동 시각으로 시작해
         # base_interval이 지나기 전엔 콜드 오픈하지 않는다.
         self._last_interaction_at = wall_now()
@@ -292,14 +294,15 @@ class DaemonCore:
             and self._count_initiations_today() >= self._proactive.daily_cap
         ):
             return  # 하루 상한 — 원가·피로 방지
-        jitter = draw_jitter(self._proactive.jitter_range)
         if not should_initiate(
             now,
             self._last_interaction_at,
             self._proactive.time_weights,
-            jitter,
             base_interval_s=self._proactive.base_interval_s,
             min_gap_s=self._proactive.min_gap_s,
+            tick_interval_s=self._tick_interval,
+            shape_k=self._proactive.hazard_shape_k,
+            rng=self._rng,
         ):
             return
         snapshot = self._memory_snapshot() if self._memory_snapshot is not None else None
