@@ -1,6 +1,12 @@
 from pathlib import Path
 
-from navi.persona import CharacterCard, PersonaProfile, PersonaVoice
+from navi.persona import (
+    CharacterCard,
+    PersonaProfile,
+    PersonaVoice,
+    mouth_options,
+    select_vendor,
+)
 
 PERSONAS_DIR = Path(__file__).parents[1] / "personas"
 CARD_PATH = PERSONAS_DIR / "navi.yaml"
@@ -145,3 +151,75 @@ def test_voice_vendor_without_tones_has_no_default():
     voice = PersonaVoice.parse({"name": "x", "gptsovits": {"gpt_ckpt": "a.ckpt"}})
     assert voice.default_tone("gptsovits") is None
     assert voice.vendor("없는벤더") is None
+
+
+# ── 벤더 선택 (부팅 시 카드가 정한다) ────────────────────────────────
+
+
+def test_select_vendor_uses_card_bundle_when_card_declares_one():
+    """카드가 단독 선언하면 config 기본과 달라도 카드가 이긴다 — --mouth 없이 부팅."""
+    voice = PersonaVoice.parse({"name": "aris", "gptsovits": {"gpt_ckpt": "a.ckpt"}})
+    assert select_vendor(voice, config_default="supertonic") == "gptsovits"
+
+
+def test_select_vendor_falls_back_to_config_when_card_has_no_voice():
+    """voice 섹션 없는 카드(하위호환) — config의 벤더·ckpt 폴백이 계속 권위."""
+    assert select_vendor(None, config_default="supertonic") == "supertonic"
+    assert select_vendor(PersonaVoice.parse({"name": "x"}), config_default="fake") == "fake"
+
+
+def test_select_vendor_prefers_config_vendor_when_card_declares_several():
+    """다중 선언 시 config가 타이브레이커 — 엔진 교체 없이 원하는 쪽을 고를 수 있다."""
+    voice = PersonaVoice.parse(
+        {"name": "x", "gptsovits": {"gpt_ckpt": "a.ckpt"}, "supertonic": {"tones": []}}
+    )
+    assert select_vendor(voice, config_default="supertonic") == "supertonic"
+
+
+def test_select_vendor_picks_first_declared_when_config_vendor_absent():
+    """다중 선언 + config 벤더 부재 — raise 없이 첫 선언(YAML 순서)을 고른다."""
+    voice = PersonaVoice.parse(
+        {"name": "x", "gptsovits": {"gpt_ckpt": "a.ckpt"}, "supertonic": {"tones": []}}
+    )
+    assert select_vendor(voice, config_default="fake") == "gptsovits"
+
+
+# ── mouth kwargs 조립 (벤더 경계) ────────────────────────────────────
+
+
+def test_mouth_options_omits_ckpts_for_supertonic():
+    """가중치 kwarg가 supertonic 생성자로 새지 않는다 — TypeError 부팅 실패의 원인."""
+    voice = PersonaVoice.parse({"name": "navi", "supertonic": {"tones": []}})
+    options = mouth_options(
+        "supertonic", {"model": "supertonic-3", "lang": "ko"}, voice.vendor("supertonic")
+    )
+    assert options == {"model": "supertonic-3", "lang": "ko"}
+    for key in ("gpt_ckpt", "sovits_ckpt", "ref_lang", "gen_lang"):
+        assert key not in options
+
+
+def test_mouth_options_blanks_ckpts_for_gptsovits_base_voice():
+    """카드의 빈 ckpt = base(zero-shot) 의도 — config의 fine-tune 폴백을 덮어 비운다."""
+    voice = PersonaVoice.parse({"name": "example", "gptsovits": {"ref_lang": "ja"}})
+    options = mouth_options(
+        "gptsovits",
+        {"gpt_ckpt": "/config/arisu.ckpt", "sovits_ckpt": "/config/arisu.pth"},
+        voice.vendor("gptsovits"),
+    )
+    assert options["gpt_ckpt"] == "" and options["sovits_ckpt"] == ""
+
+
+def test_mouth_options_keeps_config_lang_when_card_lang_empty():
+    """언어는 가중치와 달리 '미지정=현재 유지' — 빈 값이 config를 덮지 않는다."""
+    voice = PersonaVoice.parse({"name": "x", "gptsovits": {"gpt_ckpt": "a.ckpt"}})
+    options = mouth_options(
+        "gptsovits", {"ref_lang": "ja", "gen_lang": "ja"}, voice.vendor("gptsovits")
+    )
+    assert options["ref_lang"] == "ja" and options["gen_lang"] == "ja"
+
+
+def test_mouth_options_without_card_bundle_passes_config_through():
+    """번들 없는 카드 — config 옵션이 그대로 간다(하위호환 경로)."""
+    assert mouth_options("gptsovits", {"repo_path": "C:/gptsovits"}, None) == {
+        "repo_path": "C:/gptsovits"
+    }
