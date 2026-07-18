@@ -764,6 +764,9 @@ def main() -> None:
                         help="청취축 켜기 — 마이크+호출어로 대화(.venv-voice 필요)")
     parser.add_argument("--mouth", choices=["fake", "supertonic", "gptsovits"],
                         help="mouth.vendor 덮어쓰기 (--voice와 함께)")
+    parser.add_argument("--persona",
+                        help="페르소나를 이번 실행만 교체 — 이름만(personas/<이름>.yaml). "
+                             "TTS 엔진은 부팅 카드가 정하므로 다른 엔진의 음색을 쓰려면 이걸로 재기동한다")
     parser.add_argument("--mic", type=int, metavar="INDEX", help="입력 장치 번호")
     parser.add_argument("--vad-threshold", type=float, metavar="RMS", help="발화 RMS 임계")
     parser.add_argument("--stt-model", default="large-v3-turbo", metavar="SIZE",
@@ -790,7 +793,8 @@ def main() -> None:
     from navi.config import load_config
 
     _setup_logging(args.verbose)
-    config = load_config(mouth_vendor=args.mouth)
+    persona_card = f"personas/{args.persona}.yaml" if args.persona else None
+    config = load_config(mouth_vendor=args.mouth, persona_card=persona_card)
     if args.brain:
         config = replace(config, brain=replace(config.brain, vendor=args.brain))
     if args.db:
