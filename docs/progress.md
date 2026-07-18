@@ -10,11 +10,12 @@
 **A 실기 검증 세션 — Stage 15 E2E·음색 핫스왑 실측 (2026.07.18, 체크리스트 A):**
 - **환경:** 데몬 `--voice --wakeword --mouth gptsovits --vad-threshold 50`(+테스트는 `--db` 격리),
   GUI 별도 프로세스, aris/aris_base/example_jp 카드. base 모델·example_ref.wav·aris ckpt 사전 배치 확인.
-- **기동 중 발견한 버그 2건(별도 fix 후보, A와 분리):** ① config `mouth.vendor: supertonic`인데
+- **기동 중 발견한 버그 2건 → 둘 다 수정됨(2026.07.19, PR #24):** ① config `mouth.vendor: supertonic`인데
   활성 카드에 voice 번들이 있으면 daemon이 gptsovits ckpt를 `SupertonicMouth(gpt_ckpt=…)`로 주입해
-  TypeError → **음성 데몬은 `--mouth gptsovits` 필수**(운영 메모 "표준 실행 인자"에 기록). ② `main()`
-  `finally: os._exit(0)`(--voice 한정)이 `_run` 전파 예외의 traceback을 삼켜 **로그 2줄+exit 0으로
-  위장** — 조용히 죽으면 --mouth부터 의심. (spawn_task로 fix 후보 등록.)
+  TypeError. 당시엔 `--mouth gptsovits` 필수로 회피했으나, **기본 카드 navi.yaml도 해당돼 실은
+  보편적 실패**였음이 뒤에 드러났다(아리스 한정이 아님) → 벤더를 카드 번들이 결정하도록 이관.
+  ② `main()` `finally: os._exit(0)`(--voice 한정)이 `_run` 전파 예외의 traceback을 삼켜 **로그
+  2줄+exit 0으로 위장** → 실패 시 traceback 출력 + exit 1. ①이 여기까지 온 원인이 ②였다.
 - **VAD 실측 튜닝:** 웨이크워드는 통과하나 발화가 STT로 안 넘어가는 증상 → 마이크 RMS 측정
   (침묵 p90=1 / 발화 p50=38·p90=390·max=726). 기본 임계 150이 이 조용한 방+저게인 마이크엔 너무
   높음 → `--vad-threshold 50`으로 해결(침묵 바닥 ~1이라 오탐 없음). **이 값은 이 머신·마이크
@@ -680,14 +681,22 @@ STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`n
   (06.13 테스트 발화가 본 기억에 영구 적재되는 오염 사고 → 사용자 승인 하에 DB 초기화한 이력)
 - 레이턴시 참고치: 첫 토큰 1.1~1.6초 (무료 티어, 프롬프트 ~1,300토큰). Phase 2 예산 산정 시 참고.
 - 로그: `-v`(INFO)/`-vv`(DEBUG), 파일 로그 logs/navi.log 상시 기록.
-- **표준 실행 인자 (2026.07.18 정리):**
-  - 음성 데몬(실사용): `.venv-voice` → `python -m navi.daemon --voice --wakeword --mouth gptsovits`
-    — **`--mouth gptsovits` 생략 금지.** config 기본이 supertonic인데 활성 카드에 voice 번들이
-    있으면 daemon이 gptsovits ckpt 옵션을 주입해 `SupertonicMouth(gpt_ckpt=…)` TypeError로 죽는다.
-    이때 `main()`의 `finally: os._exit(0)`(--voice 한정, torch 잔여 스레드 대책)이 traceback을
-    삼켜 **로그 2줄 남기고 exit 0으로 위장**한다 — "조용히 죽으면 --mouth부터 의심". (버그 2건
-    — vendor 불일치 주입·예외 은폐 — 은 별도 fix 후보)
-  - 실구동 테스트: 위에 **`--db 임시파일` 추가**(본 기억 격리 규칙, 위 항목 참조).
-  - 텍스트 전용: `python -m navi.daemon` (.venv, --voice 없이 — mouth 미생성이라 위 충돌 없음)
-  - GUI: `.venv` → `python -m navi.gui` (데몬과 별도 프로세스, 컨트롤 플레인 :8765로 접속)
-  - 종료: `python -m navi.daemon stop` / Ctrl+C / `POST /shutdown`
+- **표준 실행 — [scripts/run_navi.ps1](../scripts/run_navi.ps1)이 단일 출처 (2026.07.19 이관):**
+  ```
+  .\scripts\run_navi.ps1                    # 음성 + 웨이크워드 + Claude (최종 형태)
+  .\scripts\run_navi.ps1 -Mode text|gui|stop
+  .\scripts\run_navi.ps1 -Db logs\test.db   # 실구동 테스트 — 본 기억 격리(규칙)
+  .\scripts\run_navi.ps1 -Persona aris      # 부팅 카드 교체 = TTS 엔진 교체
+  ```
+  인자·venv 선택은 스크립트 주석이 권위다. 여기 산문으로 중복해 적지 않는다 —
+  이 항목이 stale해져 틀린 명령을 가르치던 것이 이관의 이유다.
+  - **`--mouth`는 이제 넘기지 않는 게 정상** — TTS 벤더는 부팅 카드의 voice 번들이 결정한다(PR #24).
+    구 지침이던 "`--mouth gptsovits` 생략 금지"는 폐기. `-Mouth`는 텍스트 스모크에 fake 강제용.
+  - 스크립트의 존재 이유 절반은 **cwd 고정** — 다른 디렉토리에서 띄우면 `logs/navi.pid`가 딴 곳에
+    생겨 단일 인스턴스 가드와 stop이 조용히 무력해진다.
+  - `-VadThreshold` 기본 50은 **이 머신·마이크 전용**(위 VAD 실측 항목). config의
+    `ear.wakeword.openwakeword.vad_threshold`와 **이름만 비슷한 다른 손잡이**다 — 혼동 주의.
+  - **PowerShell 5.1은 BOM 없는 .ps1을 cp949로 읽어** 한글 주석에서 파싱이 깨진다. run_navi.ps1은
+    UTF-8 BOM으로 저장했다. 기존 `setup_voice_env.ps1`은 BOM이 없어 5.1에서 파싱 11에러 —
+    pwsh(7.x)로 실행해 왔기에 드러나지 않았다(별도 수정 대상).
+  - 종료는 `-Mode stop` / Ctrl+C / `POST /shutdown`.

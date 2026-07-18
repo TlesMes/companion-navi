@@ -27,12 +27,14 @@ body { margin: 0; height: 100vh; display: flex; flex-direction: column; align-it
        animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
 code { font-family: Consolas, monospace; color: #7a756a; font-size: 12px; }
+.hint { color: #6b6659; font-size: 11px; margin: -6px 0 0; }
 </style></head><body>
 <div class="bar pywebview-drag-region"></div>
 <button class="x" onclick="pywebview.api.close()">&#10005;</button>
 <div class="dot">나</div>
 <p>데몬을 기다리는 중…</p>
-<code>python -m navi.daemon 으로 먼저 띄워 주세요</code>
+<code>.\scripts\run_navi.ps1</code>
+<p class="hint">음성 모드는 TTS 웜업에 수십 초 걸립니다</p>
 </body></html>"""
 
 
