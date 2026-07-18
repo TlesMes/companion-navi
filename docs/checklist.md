@@ -106,6 +106,20 @@
       웜업 수십 초 동안 버튼 비활성 + 캡션 교체, 스크립트 부재 시 에러 대신 안내 문자열 반환.
       중복 클릭은 `acquire_pidfile`이 이미 거부한다.
       비목표: 정지 버튼·재시작·인자 선택 UI.
+- [ ] **E7. 벤더 지식 분산 정리** — PR #24 코드리뷰(2026.07.19)에서 나온 구조 지적 3건. 셋 다 뿌리가
+      같다: **"이 벤더가 무슨 kwarg를 받는가"라는 지식이 여러 층에 흩어져 있다.**
+      ① `"gptsovits는 특별하다"`가 세 곳에 각각 인코딩 — [voice.py:40](../navi/persona/voice.py:40)
+      `_PATH_VOICE_ID_VENDORS`, [voice.py:43](../navi/persona/voice.py:43) `_CKPT_VENDORS`,
+      [config.py:159](../navi/config.py:159) `if vendor == "gptsovits"`. 두 번째 ckpt 벤더를 추가할 때
+      하나를 빠뜨리면 **부팅은 되는데 음색만 조용히 틀린** 상태가 된다.
+      ② mouth 어댑터 생성자 시그니처 지식이 persona 모듈에 산다 — 그 지식의 자연스러운 주인은
+      `navi/mouth/`(벤더별 kwarg 레지스트리)다. 세 번째 벤더가 고유 kwarg를 들고 오면 또 특수 케이스를
+      추가해야 하고 일반화되지 않는다.
+      ③ `create_mouth` 자체는 여전히 무방비 — `persona.mouth_options`를 안 거치는 호출자(테스트·스크립트·
+      향후 SwapRuntime 경로)가 옵션을 직접 조립하면 동일 TypeError가 재발한다. 이 PR의
+      `test_supertonic_rejects_gptsovits_kwargs`가 그 무방비함을 **의도된 계약으로 고정**해뒀다.
+      → 해법 방향: 벤더별 kwarg 스키마를 mouth 층에 한 곳으로 모으고 persona/config는 그걸 참조만.
+      **E3·E4보다 급하지 않다**(현재 벤더 2개에선 실해 없음). 세 번째 TTS 벤더를 붙일 때가 실질 기한.
 - [ ] **E5. 언어를 페르소나 속성으로 올릴지 검토** — 지금 `gen_lang`·`ref_lang`이 `voice.<vendor>`
       안에 있어 **voice 섹션 없는 카드는 자기 언어를 선언할 방법이 없다**. example_kr은 한국어
       페르소나인데 그 사실이 카드 어디에도 없어서 코드가 판단할 데이터가 아예 없다(E3 ③을
