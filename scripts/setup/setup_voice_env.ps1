@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     GPT-SoVITS Windows native CPU 추론용 .venv-voice 환경 셋업.
 
