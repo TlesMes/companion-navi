@@ -60,7 +60,13 @@ $ErrorActionPreference = "Stop"
 $Proj = $PSScriptRoot | Split-Path   # scripts → 프로젝트 루트
 
 # ── venv 선택: 음성 스택은 별도 3.12 venv, 나머지는 기본 venv ──────────────────
-$VenvDir = if ($Mode -eq "voice") { ".venv-voice" } else { ".venv" }
+# stop은 navi 코어만 있으면 되므로 있는 venv 아무거나 쓴다 — 음성 venv만 구성한
+# 사용자가 "내릴 venv가 없다"는 이유로 자기 데몬을 못 내리면 곤란하다.
+$VenvDir =
+    if ($Mode -eq "voice") { ".venv-voice" }
+    elseif ($Mode -eq "stop" -and -not (Test-Path (Join-Path $Proj ".venv\Scripts\python.exe"))) {
+        ".venv-voice"
+    } else { ".venv" }
 $VenvAbs = Join-Path $Proj $VenvDir
 $PyExe   = Join-Path $VenvAbs "Scripts\python.exe"
 
@@ -75,13 +81,17 @@ if (-not (Test-Path $PyExe)) {
 if (-not (Test-Path (Join-Path $Proj "config.yaml"))) {
     Write-Error "config.yaml 없음: $Proj`n  프로젝트 루트에서 실행하거나 리포를 확인하세요"
 }
-if ($Mode -ne "stop" -and $Brain -eq "anthropic") {
-    # 키의 존재만 확인한다 — 값은 읽지도 출력하지도 않는다
+# brain을 쓰는 모드에서만 키를 본다 — gui는 컨트롤 플레인에만 붙고 brain을 안 쓴다.
+if ($Mode -notin @("stop", "gui") -and $Brain -eq "anthropic") {
+    # 키의 존재만 확인한다 — 값은 읽지도 출력하지도 않는다.
+    # 데몬은 load_dotenv 후 os.getenv라 .env 밖(프로세스 환경변수)의 키도 쓴다 —
+    # 검사가 데몬보다 엄격하면 되는 실행을 막게 된다.
     $envFile = Join-Path $Proj ".env"
-    $hasKey = (Test-Path $envFile) -and
-              ((Get-Content $envFile) -match '^\s*ANTHROPIC_API_KEY\s*=\s*\S')
+    $hasKey = [bool]$env:ANTHROPIC_API_KEY -or
+              ((Test-Path $envFile) -and
+               ((Get-Content $envFile) -match '^\s*ANTHROPIC_API_KEY\s*=\s*\S'))
     if (-not $hasKey) {
-        Write-Error ".env에 ANTHROPIC_API_KEY 없음`n  .env.example을 .env로 복사해 키를 채우거나 -Brain gemini"
+        Write-Error "ANTHROPIC_API_KEY 없음(.env·환경변수 모두)`n  .env.example을 .env로 복사해 키를 채우거나 -Brain gemini"
     }
 }
 # GPT-SoVITS repo는 일부러 검사하지 않는다 — 어느 벤더가 선택될지는 카드가 정하므로
@@ -89,35 +99,37 @@ if ($Mode -ne "stop" -and $Brain -eq "anthropic") {
 # logs/도 불요 — daemon.acquire_pidfile이 mkdir(exist_ok=True)한다.
 
 # ── 인자 조립 ────────────────────────────────────────────────────────────────
-if ($Mode -eq "gui") {
-    $Module = "navi.gui"
-    $Args = @()
-} else {
-    $Module = "navi.daemon"
-    $Args = @()
-    if ($Mode -eq "stop") {
-        $Args += "stop"
-    } else {
-        if ($Mode -eq "voice") {
-            $Args += "--voice"
-            if (-not $NoWakeWord) { $Args += "--wakeword" }
-            $Args += @("--vad-threshold", $VadThreshold)
-            if ($Mic -ge 0) { $Args += @("--mic", $Mic) }
-        }
-        if ($Brain)   { $Args += @("--brain", $Brain) }
-        if ($Mouth)   { $Args += @("--mouth", $Mouth) }
-        if ($Persona) { $Args += @("--persona", $Persona) }
-        if ($Db)      { $Args += @("--db", $Db) }
-        $Args += $ExtraArgs
+# $Args가 아니라 $PyArgs — $Args는 PowerShell 자동 변수(바인딩 안 된 인자)라
+# 대소문자 무구분으로 섀도잉된다. 이 로직을 함수로 감쌀 때 조용히 어긋난다.
+$Module = if ($Mode -eq "gui") { "navi.gui" } else { "navi.daemon" }
+$PyArgs = @()
+if ($Mode -eq "stop") {
+    $PyArgs += "stop"
+} elseif ($Mode -ne "gui") {
+    if ($Mode -eq "voice") {
+        $PyArgs += "--voice"
+        if (-not $NoWakeWord) { $PyArgs += "--wakeword" }
+        # 불변 로케일로 직렬화 — 쉼표 소수점 로케일(de-DE 등)에서 [double] 37.5가
+        # "37,5"가 되어 argparse float 파싱이 거부한다.
+        $PyArgs += @("--vad-threshold", $VadThreshold.ToString([cultureinfo]::InvariantCulture))
+        if ($Mic -ge 0) { $PyArgs += @("--mic", $Mic) }
     }
+    if ($Brain)   { $PyArgs += @("--brain", $Brain) }
+    if ($Mouth)   { $PyArgs += @("--mouth", $Mouth) }
+    if ($Persona) { $PyArgs += @("--persona", $Persona) }
+    if ($Db)      { $PyArgs += @("--db", $Db) }
+    $PyArgs += $ExtraArgs
 }
 
 # ── 실행 (cwd = 프로젝트 루트) ────────────────────────────────────────────────
 # Push-Location이라야 Ctrl+C로 끊어도 호출자의 쉘 위치가 남지 않는다.
+# $code 선(先)초기화: pwsh 7.3+는 네이티브 비정상 종료를 terminating error로 던질 수
+# 있어(PSNativeCommandUseErrorActionPreference) 대입 전에 빠져나갈 수 있다.
+$code = 0
 Push-Location $Proj
 try {
-    Write-Host "[$VenvDir] python -m $Module $($Args -join ' ')" -ForegroundColor DarkGray
-    & $PyExe -m $Module @Args
+    Write-Host "[$VenvDir] python -m $Module $($PyArgs -join ' ')" -ForegroundColor DarkGray
+    & $PyExe -m $Module @PyArgs
     $code = $LASTEXITCODE
 } finally {
     Pop-Location
