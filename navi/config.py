@@ -150,18 +150,26 @@ def _resolve(root: Path, value: str) -> str:
 def _vendor_from_card(root: Path, card_path: Path, config_default: str) -> str:
     """활성 카드의 목소리 번들에서 TTS 벤더를 해석한다. 실패하면 config 기본.
 
-    카드 파싱은 방어적으로 감싼다 — config 로딩이 새로운 부팅 실패 경로가 되면
-    안 된다(카드 하나로 데몬이 안 뜨는 게 이 변경이 고치려는 유형의 버그다).
-    카드는 daemon._run에서 한 번 더 읽지만 작은 파일이라 수용한다.
+    카드의 `voice:` 섹션만 필요하므로 CharacterCard 전체를 짓지 않는다 — profiles가
+    비었거나 스키마가 어긋난 카드도 목소리 번들은 멀쩡할 수 있고, 그 판정은 여기가
+    아니라 카드를 실제로 쓰는 쪽(daemon._run)의 몫이다.
+
+    **깨진 카드를 여기서 삼켜도 부팅이 구제되지는 않는다** — daemon._run이 곧바로
+    같은 파일을 CharacterCard.load로 읽다 죽는다(의도된 fail-fast: 페르소나 없이
+    돌 수 있는 데몬은 없다). 이 except의 목적은 그 실패를 *가리는* 게 아니라
+    **벤더 해석이 새로운 실패 지점이 되지 않게** 하는 것뿐이라, 진짜 사인을 보고할
+    daemon 쪽과 겹쳐 시끄럽지 않도록 debug로만 남긴다.
     """
-    from navi.persona import CharacterCard, select_vendor
+    from navi.persona import PersonaVoice, select_vendor
 
     try:
-        card = CharacterCard.load(card_path, root=root)
+        raw = yaml.safe_load(card_path.read_text(encoding="utf-8")) or {}
+        section = raw.get("voice")
+        voice = PersonaVoice.parse(section, root=root) if section else None
     except Exception:
-        log.warning("카드를 읽지 못해 config 벤더 유지 — %s", card_path, exc_info=True)
+        log.debug("벤더 해석용 카드 읽기 실패 — config 기본 사용: %s", card_path, exc_info=True)
         return config_default
-    return select_vendor(card.voice, config_default=config_default)
+    return select_vendor(voice, config_default=config_default)
 
 
 def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:

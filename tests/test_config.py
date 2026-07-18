@@ -78,9 +78,27 @@ def test_load_config_keeps_config_vendor_when_card_has_no_voice_section(tmp_path
     assert config.mouth.options["gpt_ckpt"].endswith("a.ckpt")
 
 
-def test_load_config_survives_unreadable_persona_card(tmp_path):
-    """깨진 카드가 config 로딩을 죽이면 안 된다 — 새 부팅 실패 경로를 만들지 않는다."""
+def test_load_config_falls_back_when_card_unreadable_for_vendor(tmp_path):
+    """깨진 카드에도 벤더 해석은 config 기본으로 떨어진다 — 여기가 새 실패 지점이 되지 않는다.
+
+    **부팅이 구제된다는 뜻이 아니다.** daemon._run이 곧바로 같은 파일을 CharacterCard로
+    읽다 죽는다(페르소나 없이 도는 데몬은 없으므로 의도된 fail-fast). 이 테스트 이름이
+    "survives"였을 때 그 보장을 하는 것처럼 읽혀 실제로 오해를 낳았다(2026.07.19 리뷰).
+    """
     _write(tmp_path, card_voice=None)
     (tmp_path / "personas" / "card.yaml").write_text("{{ 깨진 yaml", encoding="utf-8")
     config = load_config(tmp_path)
     assert config.mouth.vendor == "supertonic"
+
+
+def test_load_config_resolves_vendor_even_if_card_profiles_broken(tmp_path):
+    """voice 섹션만 멀쩡하면 벤더는 해석된다 — 카드 전체를 짓지 않기 때문."""
+    _write(tmp_path, card_voice={"name": "aris", "gptsovits": {"ref_lang": "ja"}})
+    card = tmp_path / "personas" / "card.yaml"
+    card.write_text(
+        yaml.safe_dump(
+            {"character": "테스트", "profiles": [], "voice": {"name": "aris", "gptsovits": {}}}
+        ),
+        encoding="utf-8",
+    )
+    assert load_config(tmp_path).mouth.vendor == "gptsovits"

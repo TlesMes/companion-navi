@@ -27,7 +27,6 @@ import random
 import signal
 import sys
 import time
-import traceback
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -808,12 +807,13 @@ def main() -> None:
     except KeyboardInterrupt:  # 핸들러 설치 전 인터럽트·두 번째 Ctrl+C(강제)
         print("\n(나비 데몬 내려감)")
     except BaseException:
-        # 아래 os._exit는 예외를 삼킨다 — 파이썬의 기본 traceback 출력에 도달하기 전에
-        # 프로세스가 사라지므로 "로그 2줄 남기고 exit 0"으로 위장했다(부팅 실패가 이렇게
-        # 숨어 있었다). 하드 exit는 유지하되 사인은 여기서 직접 남긴다.
         failed = True
-        log.exception("데몬이 예외로 종료됨")
-        traceback.print_exc()
+        if args.voice:
+            # --voice는 아래 finally에서 os._exit로 프로세스를 즉시 없앤다 — 파이썬의
+            # 기본 traceback 출력에 도달하지 못해 "로그 2줄 남기고 exit 0"으로 위장했다
+            # (부팅 실패가 이렇게 숨어 있었다). 그 경로에서만 사인을 직접 남긴다.
+            # 비음성 경로는 예외가 정상 전파돼 파이썬이 알아서 찍으므로 여기서 찍으면 중복.
+            log.exception("데몬이 예외로 종료됨")
         raise
     finally:
         release_pidfile()
