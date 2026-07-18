@@ -462,7 +462,7 @@ async def _run(config, args) -> None:
     from navi.brain import create_brain
     from navi.conductor import Conductor
     from navi.memory import MemoryStore
-    from navi.persona import CharacterCard
+    from navi.persona import CharacterCard, mouth_options
     from navi.pipeline import TurnPipeline
     from navi.schedule import ConfigSchedule
 
@@ -509,24 +509,14 @@ async def _run(config, args) -> None:
     if args.voice:
         from navi.mouth import create_mouth
 
-        mouth_options = dict(config.mouth.options)
+        # 벤더 경계는 persona.mouth_options가 지킨다 — 가중치 kwarg는 그걸 받는
+        # 벤더에만 간다(예전엔 무조건 주입해 SupertonicMouth(gpt_ckpt=…)로 죽었다).
+        options = mouth_options(config.mouth.vendor, config.mouth.options, vendor_voice)
         initial_voice = config.mouth.voice
-        if vendor_voice is not None:
-            # 카드가 voice 번들을 소유하면 가중치는 카드가 권위 — 빈 ckpt = base(zero-shot)
-            # 의도이므로 config 폴백(아리스 fine-tune)을 덮어 비운다. config의 gptsovits
-            # ckpt 폴백은 voice 섹션 없는 카드용(하위호환). 언어는 빈 값이면 config 유지.
-            mouth_options["gpt_ckpt"] = vendor_voice.gpt_ckpt
-            mouth_options["sovits_ckpt"] = vendor_voice.sovits_ckpt
-            for key, value in (
-                ("ref_lang", vendor_voice.ref_lang),
-                ("gen_lang", vendor_voice.gen_lang),
-            ):
-                if value:
-                    mouth_options[key] = value
         default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
         if default_tone is not None:
             initial_voice = card.voice.profile(default_tone)
-        mouth = create_mouth(config.mouth.vendor, **mouth_options)
+        mouth = create_mouth(config.mouth.vendor, **options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(

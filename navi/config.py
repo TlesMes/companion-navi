@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import time
@@ -12,6 +13,8 @@ import yaml
 from dotenv import load_dotenv
 
 from navi.models import VoiceProfile
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,23 @@ def _resolve(root: Path, value: str) -> str:
     return str((root / value).resolve()) if value else value
 
 
+def _vendor_from_card(root: Path, card_path: Path, config_default: str) -> str:
+    """활성 카드의 목소리 번들에서 TTS 벤더를 해석한다. 실패하면 config 기본.
+
+    카드 파싱은 방어적으로 감싼다 — config 로딩이 새로운 부팅 실패 경로가 되면
+    안 된다(카드 하나로 데몬이 안 뜨는 게 이 변경이 고치려는 유형의 버그다).
+    카드는 daemon._run에서 한 번 더 읽지만 작은 파일이라 수용한다.
+    """
+    from navi.persona import CharacterCard, select_vendor
+
+    try:
+        card = CharacterCard.load(card_path, root=root)
+    except Exception:
+        log.warning("카드를 읽지 못해 config 벤더 유지 — %s", card_path, exc_info=True)
+        return config_default
+    return select_vendor(card.voice, config_default=config_default)
+
+
 def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
     raw_mouth = raw.get("mouth", {})
     vendor = raw_mouth.get("vendor", "fake")
@@ -244,8 +264,16 @@ def load_config(
     root = root or Path.cwd()
     load_dotenv(root / ".env")
     raw = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    card_path = root / (persona_card or raw["persona"]["card_path"])
     if mouth_vendor:
         raw.setdefault("mouth", {})["vendor"] = mouth_vendor
+    else:
+        # 카드가 목소리 번들을 소유하면 벤더도 카드가 정한다(2026.07.10 결정).
+        # _load_mouth가 벤더 하위 섹션을 읽으므로 그 전에 확정해야 하고, 여기서
+        # 정하면 mouth.options·SwapRuntime·부팅 톤이 한 번에 일관된다.
+        raw.setdefault("mouth", {})["vendor"] = _vendor_from_card(
+            root, card_path, raw.get("mouth", {}).get("vendor", "fake")
+        )
     return Config(
         root=root.resolve(),
         brain=BrainConfig(
@@ -259,7 +287,7 @@ def load_config(
         control=_load_control(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
-        persona_card_path=root / (persona_card or raw["persona"]["card_path"]),
+        persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
     )
