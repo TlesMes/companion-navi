@@ -193,9 +193,10 @@
   전환+재생중 가드라 UX 수용 가능. **버전 경계는 fine-tune(v2)↔base(v2ProPlus) 혼합 때만** 생김 —
   제품 페르소나를 같은 버전으로 fine-tune하면 소멸. gui.md "엔진 핫스왑 안 함"(supertonic↔gptsovits)과
   무관(같은 엔진 내 가중치 교체). 언어는 카드 번들(gpt_ckpt+gen_lang)로 원자 교체 — 벽은 G2P 빌드뿐.
-- **잔여 이슈(별개 백로그):** 데몬 lifecycle **pid 파일 불일치** — `stop`이 반복적으로 pid 파일에 실제
-  프로세스와 다른 PID를 기록해(예: 파일 33612 vs 실제 35668) 정지 명령이 엉뚱한 대상을 향함. 재현성
-  있음, 매 재기동마다 orphan 발생. daemon.py의 pid 기록 로직 점검 필요.
+- **잔여 이슈 해결(PR #21, 2026.07.16):** 데몬 lifecycle **pid 파일 불일치** — 원인은 gptsovits
+  warmup의 `os.chdir(repo)` 이후 상대경로 PID_FILE/STOP_FILE이 엉뚱한 디렉토리(`C:\gptsovits\logs\`)를
+  가리켜, stop 센티널을 tick이 못 보고(stop 무효) release_pidfile도 실제 pid 파일을 못 지워 stale pid가
+  남던 것. 임포트 시점(chdir 이전)에 절대경로로 고정해 해소.
 - **검증:** 유닛 214 green(echo 접두사·STT lang·example_kr·base ckpt 신규/갱신). 실기 E2E: WAKE→
   UTTERANCE→STAGE×4→TURN 관통 점등·일본어 발화 정확 인식(lang=ja)·aris_base↔example_jp 카드 교체
   실측·base 음색 실청취. **가중치 핫스왑·GUI 5노드/모드버튼 라이브·취침창 유지는 미검증(핫스왑 PR·후속).**
