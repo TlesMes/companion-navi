@@ -14,7 +14,8 @@ import urllib.request
 from pathlib import Path
 
 # 대기 화면 — 프런트(index.html)와 같은 다크 팔레트. 데몬이 뜨면 파이썬 폴러가 갈아끼운다.
-_WAITING_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>
+# raw 문자열: 안내 명령의 `.\scripts\...` 백슬래시를 이스케이프로 해석하지 않게.
+_WAITING_HTML = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>
 body { margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center;
        justify-content: center; gap: 14px; background: #262521; color: #a8a396;
        font-family: "Malgun Gothic", system-ui, sans-serif; font-size: 13px; user-select: none; }
