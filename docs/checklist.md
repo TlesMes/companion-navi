@@ -29,8 +29,8 @@
 
 ## E. 데몬 기동 정상화 — 진행 중 (2026.07.19 시작, A·B보다 우선)
 
-`--voice` 부팅이 어떤 카드로도 죽던 버그에서 출발한 묶음. 순서 강제: E1 → E2 → E4 → E3
-(E4가 E3의 데이터 소스라 먼저, E5는 그 뒤 검토).
+`--voice` 부팅이 어떤 카드로도 죽던 버그에서 출발한 묶음. 순서 강제: E1 → E2 → E4 → E3 → E6
+(E4가 E3의 데이터 소스라 먼저, E6는 스크립트 기본값이 실사용으로 자리잡은 뒤, E5는 그 뒤 검토).
 
 - [x] **E1. 벤더 해석을 카드 번들로 이관** — `fix/mouth-vendor-from-card`(3커밋, 로컬).
       config 기본 supertonic + 카드 gptsovits kwarg 무조건 주입 → `SupertonicMouth(gpt_ckpt=…)`
@@ -90,6 +90,22 @@
       GUI 게이팅.**
       실사용 근거: `voice_ref/`와 `personas/aris*.yaml`이 gitignore(로컬 전용)라 **다른 머신·새
       클론에서 즉시 발생**하는 시나리오다.
+- [ ] **E6. GUI 대기 화면에서 데몬 분리 기동(실행 버튼)** — **E4·E3 뒤로 미룸**(2026.07.19 결정).
+      E2가 전제 조건을 다 만들었다 — 고정된 진입점 하나([scripts/run_navi.ps1](../scripts/run_navi.ps1)),
+      무인자 실행 가능, 스크립트가 스스로 cwd 고정, 데몬 뜨면 기존 1초 폴러(`wait_for_daemon`)가
+      자동 인계. 남은 건 `_Api.launch()` + 대기 화면 버튼 하나로 **20줄 안쪽**.
+      **미루는 이유:** 버튼이 생기면 "무인자 실행"이 기본 경로가 되는데 그 기본값
+      (`-VadThreshold 50`·`-Brain anthropic`)이 아직 실사용을 안 거쳤다. 며칠 손으로 써서
+      기본값이 자리잡은 뒤에 붙인다.
+      **설계 제약(양보 불가):** GUI가 데몬을 **소유하면 안 된다**. `subprocess.Popen`에
+      `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, stdout/stderr는 `DEVNULL`, 핸들 즉시 폐기 —
+      `wait()`도 파이프도 금지(파이프가 차면 데몬이 막히고, 로그는 `logs/navi.log`에 이미 있다).
+      **새 폴링 추가 금지** — 기존 `wait_for_daemon`이 유일한 피드백 경로여야 GUI가 관찰·제어
+      표면으로 남는다(gui.md 검증 ③ "GUI 강제 종료 후 음성 대화 무영향" 유지).
+      GUI가 아는 것은 **스크립트 파일명 하나뿐** — venv·인자 지식을 GUI에 두지 않는다.
+      웜업 수십 초 동안 버튼 비활성 + 캡션 교체, 스크립트 부재 시 에러 대신 안내 문자열 반환.
+      중복 클릭은 `acquire_pidfile`이 이미 거부한다.
+      비목표: 정지 버튼·재시작·인자 선택 UI.
 - [ ] **E5. 언어를 페르소나 속성으로 올릴지 검토** — 지금 `gen_lang`·`ref_lang`이 `voice.<vendor>`
       안에 있어 **voice 섹션 없는 카드는 자기 언어를 선언할 방법이 없다**. example_kr은 한국어
       페르소나인데 그 사실이 카드 어디에도 없어서 코드가 판단할 데이터가 아예 없다(E3 ③을
