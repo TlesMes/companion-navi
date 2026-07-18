@@ -7,6 +7,41 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**A 실기 검증 세션 — Stage 15 E2E·음색 핫스왑 실측 (2026.07.18, 체크리스트 A):**
+- **환경:** 데몬 `--voice --wakeword --mouth gptsovits --vad-threshold 50`(+테스트는 `--db` 격리),
+  GUI 별도 프로세스, aris/aris_base/example_jp 카드. base 모델·example_ref.wav·aris ckpt 사전 배치 확인.
+- **기동 중 발견한 버그 2건(별도 fix 후보, A와 분리):** ① config `mouth.vendor: supertonic`인데
+  활성 카드에 voice 번들이 있으면 daemon이 gptsovits ckpt를 `SupertonicMouth(gpt_ckpt=…)`로 주입해
+  TypeError → **음성 데몬은 `--mouth gptsovits` 필수**(운영 메모 "표준 실행 인자"에 기록). ② `main()`
+  `finally: os._exit(0)`(--voice 한정)이 `_run` 전파 예외의 traceback을 삼켜 **로그 2줄+exit 0으로
+  위장** — 조용히 죽으면 --mouth부터 의심. (spawn_task로 fix 후보 등록.)
+- **VAD 실측 튜닝:** 웨이크워드는 통과하나 발화가 STT로 안 넘어가는 증상 → 마이크 RMS 측정
+  (침묵 p90=1 / 발화 p50=38·p90=390·max=726). 기본 임계 150이 이 조용한 방+저게인 마이크엔 너무
+  높음 → `--vad-threshold 50`으로 해결(침묵 바닥 ~1이라 오탐 없음). **이 값은 이 머신·마이크
+  전용**(D12 튜닝, 환경 바뀌면 재측정).
+- **A1 음색 가중치 핫스왑 — 통과 + 실측:** GUI 페르소나 왕복 navi→aris→aris_base→example_jp(レイ)→aris.
+  로그 타임스탬프로 `set_weights`(ckpt 불일치) 경로 소요 실측 — **aris→aris_base(fine-tune→base,
+  s1v3+s2Gv2ProPlus) 1.65s / example→aris(base→fine-tune, arisu ckpt) 0.96s**(base ckpt가 커서 그
+  방향이 느림). 추정치 2~5s보다 빠름. **zero-shot 레퍼런스 음색이 실제로 입혀짐**(example_jp 청취
+  "뚜렷하게 바뀜"). 보너스 — `aris_base↔example_jp`는 로그상 가중치 교체 없이 레퍼런스 교체만
+  탐(둘 다 base=ckpt 일치), progress.md 기존 주장을 실측 확증. 409는 유휴 중 전환이라 미발생(락은 유닛 고정).
+- **A4 GUI 로딩 표시 → 백로그 강등:** 위 무반응 구간 0.96~1.65s < 2s 기준 → 로딩 표시 시급성 낮음
+  (checklist D로 강등, feat PR 불요).
+- **A2 Stage 15 통합 E2E(gui.md PR③ 4항목):** ① 5노드 파이프라인 점등 — WAKE→UTTERANCE→STT
+  (9.3s, lang=ko 정확 전사)→검문(통과)→TURN_STARTED(gemini)→STAGE×n(gptsovits)→TURN_ENDED
+  실측 흐름 + 스피커 음성 답변 **통과**(레이턴시 STT 9.3s+TTS 47.2s=턴 47s는 CPU-TTS 병목 D8
+  동결분, 배선 정상). ② GUI 오버라이드→`MODE_CHANGED` 라이브(`proactive_mode` sleep→active,
+  `can_speak` true) **통과**. ③ GUI 강제 종료(kill) 후 데몬 무영향 — `/status`·컨트롤 플레인 정상 +
+  GUI 죽은 상태로 풀 파이프라인 실행(turns_count 3→4, wake→STT→brain) **통과**(그 턴의 LLM은
+  Gemini 503 일시 장애로 실패했으나 GUI와 무관, 스피커 출력은 GUI 생존 턴들에서 확인됨). ④ 취침창
+  런타임 변경(`PUT /mode/window` 01:23~04:56)은 **재기동 후 config(23:00~07:00)로 복귀 — 영속 안 됨.**
+  gui.md:121 예고("영속화 데몬 소유 아님, config가 진실")대로의 설계 결정 실증. **미결: GUI 창 변경을
+  영구화하려면 `mode_state` 영속 또는 config write-back 후속 필요**(제품 의도면 백로그 등록 대상).
+- **A3 먼저 말 걸기 E2E — 보류(사유 정정):** Gemini 오류가 아니라 **선제 발화가 2층 타이밍
+  게이트(hazard)까지만 실질 구현**이고, 3층 `pick_topic`이 `topic_feed`(D13, 항상 빈 더미) 없어
+  시간대 고정 힌트 문자열만 반환 → **LLM 요청문("무엇을 말할까")이 플레이스홀더**라 E2E 검증 실질이
+  없음. topic_feed/D13 구현(B4) 후 재개.
+
 **순서 4 후속 — 2층 타이밍을 tick 기반 hazard로 교체 (2026.07.18, `refactor/timing-hazard`, 체크리스트 B1):**
 - **범위:** 배선 당시 예고한 "조건 산식 재구상". `should_initiate`를 고정 임계값+외부 jitter에서
   **변동확률(Weibull hazard)**로 교체. 계약(bool 반환)·게이트 순서·`daily_cap`·로깅은 무수정 —
@@ -644,3 +679,14 @@ STT/Mouth 계약(01 문서 4.3·4.8) + fake 어댑터 + 팩토리 + 테스트(`n
   (06.13 테스트 발화가 본 기억에 영구 적재되는 오염 사고 → 사용자 승인 하에 DB 초기화한 이력)
 - 레이턴시 참고치: 첫 토큰 1.1~1.6초 (무료 티어, 프롬프트 ~1,300토큰). Phase 2 예산 산정 시 참고.
 - 로그: `-v`(INFO)/`-vv`(DEBUG), 파일 로그 logs/navi.log 상시 기록.
+- **표준 실행 인자 (2026.07.18 정리):**
+  - 음성 데몬(실사용): `.venv-voice` → `python -m navi.daemon --voice --wakeword --mouth gptsovits`
+    — **`--mouth gptsovits` 생략 금지.** config 기본이 supertonic인데 활성 카드에 voice 번들이
+    있으면 daemon이 gptsovits ckpt 옵션을 주입해 `SupertonicMouth(gpt_ckpt=…)` TypeError로 죽는다.
+    이때 `main()`의 `finally: os._exit(0)`(--voice 한정, torch 잔여 스레드 대책)이 traceback을
+    삼켜 **로그 2줄 남기고 exit 0으로 위장**한다 — "조용히 죽으면 --mouth부터 의심". (버그 2건
+    — vendor 불일치 주입·예외 은폐 — 은 별도 fix 후보)
+  - 실구동 테스트: 위에 **`--db 임시파일` 추가**(본 기억 격리 규칙, 위 항목 참조).
+  - 텍스트 전용: `python -m navi.daemon` (.venv, --voice 없이 — mouth 미생성이라 위 충돌 없음)
+  - GUI: `.venv` → `python -m navi.gui` (데몬과 별도 프로세스, 컨트롤 플레인 :8765로 접속)
+  - 종료: `python -m navi.daemon stop` / Ctrl+C / `POST /shutdown`

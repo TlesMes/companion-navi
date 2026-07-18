@@ -12,16 +12,17 @@
 
 마이크·스피커 앞에서만 되는 작업. 이 묶음을 끝내면 "배선은 됐는데 실기 확인이 없다"는 부채가 사라진다.
 
-- [ ] **A1. 음색 가중치 핫스왑 실청취 왕복 1회** — `aris`(fine-tune v2) → `example_jp`(base v2ProPlus)
-      → `aris`. **이 조합만 ckpt 불일치라 `set_weights` 경로를 탄다** (`aris_base`↔`example_jp`는 둘 다
-      base → ckpt 일치 → 기존 레퍼런스 교체 경로로 샘). 겸해서 **전환 소요 시간 실측** — 현재 2~5s는
-      추정치일 뿐이고 이 값이 A4의 시급성을 정한다. 배경: progress.md "Stage 15-② 후속".
-- [ ] **A2. Stage 15 실기 E2E 통합** — `python -m navi.daemon --voice --wakeword` 기동 + GUI에서
-      페르소나 전환. 검증 절은 [design/gui.md](./design/gui.md) PR ③. A1과 한 세션에 묶을 수 있다.
-- [ ] **A3. 음성으로 먼저 말 걸기 E2E** — TICK 통과 → 선제 발화가 실스피커로. 지금까지 echo 두뇌
-      오프라인 검증만 있음(PR #19).
-- [ ] **A4. GUI 로딩 표시** — `/status`에 `mouth.state(ready|loading)` + WS 발행. 지금은 교체 중 요청이
-      409로 튕길 뿐이라 사용자에겐 무반응으로 보인다. **착수 판단은 A1의 실측 전환 시간에 의존.**
+- [x] **A1. 음색 가중치 핫스왑 실청취 왕복 1회** — 통과(2026.07.18). set_weights 경로 실측
+      **0.96~1.65s**(base ckpt 방향이 느림), example_jp zero-shot 음색 "뚜렷하게 바뀜" 청취 확인.
+      `aris_base↔example_jp`가 레퍼런스 교체만 타는 것도 로그로 실측 확증. 상세: progress.md "A 실기 검증 세션".
+- [x] **A2. Stage 15 실기 E2E 통합** — ①5노드 점등 ②MODE_CHANGED 라이브 ③GUI kill 무영향 통과.
+      ④취침창 런타임 변경은 재기동 후 config로 복귀(영속 안 됨) — gui.md:121 설계대로.
+      **미결(백로그 후보): GUI 창 변경 영구화하려면 mode_state 영속/config write-back 필요.** 상세: progress.md.
+- [ ] **A3. 음성으로 먼저 말 걸기 E2E** — **보류(2026.07.18).** Gemini 아니라 선제 발화가 2층 타이밍
+      게이트까지만 실질 구현이고 3층 `pick_topic`이 `topic_feed`(D13, 빈 더미) 없어 LLM 요청문이
+      플레이스홀더라 E2E 실질 없음. **B4(D13 관심사 피드) 구현 후 재개.**
+- [x] **A4. GUI 로딩 표시** — **백로그 강등(2026.07.18).** A1 실측 무반응 구간 0.96~1.65s < 2s → 시급성
+      낮음. feat PR 불요. 필요 시 아래 D 백로그에서 재소환.
 
 ## B. Phase 3 본류 — 순서 4 튜닝 → 순서 5
 
