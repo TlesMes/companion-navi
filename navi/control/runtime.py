@@ -22,7 +22,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from navi.persona import CharacterCard, PersonaVoice
+from navi.persona import CharacterCard, PersonaVoice, missing_assets
 
 if TYPE_CHECKING:
     from navi.conductor import Conductor
@@ -95,12 +95,14 @@ class SwapRuntime:
         if not path.exists():
             raise LookupError(f"페르소나 없음: {persona_id!r}")
         card = CharacterCard.load(path, root=self._root)
+        vendor_voice = card.voice.vendor(self._vendor) if card.voice else None
+        tone = card.voice.default_tone(self._vendor) if card.voice else None
+        self._require_assets(card, vendor_voice, tone)
+
         self._conductor.set_card(card)
         self._persona_id = persona_id
 
         voice_swapped = False
-        vendor_voice = card.voice.vendor(self._vendor) if card.voice else None
-        tone = card.voice.default_tone(self._vendor) if card.voice else None
         if self._pipeline is not None and vendor_voice is not None and tone is not None:
             if vendor_voice.ckpts != self._loaded_ckpts:
                 voice_swapped = await self._swap_weights(vendor_voice)
@@ -115,6 +117,27 @@ class SwapRuntime:
             "character": card.character,
             "voice_swapped": voice_swapped,
         }
+
+    def _require_assets(self, card, vendor_voice, tone) -> None:
+        """카드 자산이 실물로 있는지 — 카드 교체(set_card) *이전*에 본다.
+
+        여기서 걸러야 "실패하면 아무것도 안 바뀜"이 성립한다. 통과 뒤에 터지면 카드는
+        새 페르소나인데 목소리는 옛것인 반쪽 정체성이 남는다(연속성 원칙 위반).
+        막는 것은 **교체를 실패시키는 것만** — 가중치와 기본 톤이다. 나머지 톤의
+        wav 부재는 그 칩만 못 쓸 뿐이라 교체를 막지 않는다(E3 ④-b).
+        텍스트 모드(pipeline=None)는 목소리를 안 건드리므로 검사 대상이 아니다.
+        """
+        if self._pipeline is None or vendor_voice is None:
+            return
+        missing = missing_assets(self._vendor, vendor_voice)
+        blocking = list(missing.ckpts)
+        if tone is not None and tone.name in missing.tones:
+            blocking.append(tone.voice_id)
+        if blocking:
+            raise FileNotFoundError(
+                f"{card.character}의 목소리 자산이 없어 교체할 수 없습니다: "
+                + ", ".join(blocking)
+            )
 
     async def _swap_weights(self, vendor_voice) -> bool:
         """새 음색 가중치를 엔진에 올린다. 성공 시 True — 미지원 엔진이면 False(카드만 교체).

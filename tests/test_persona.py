@@ -4,6 +4,7 @@ from navi.persona import (
     CharacterCard,
     PersonaProfile,
     PersonaVoice,
+    missing_assets,
     mouth_options,
     select_vendor,
 )
@@ -223,3 +224,54 @@ def test_mouth_options_without_card_bundle_passes_config_through():
     assert mouth_options("gptsovits", {"repo_path": "C:/gptsovits"}, None) == {
         "repo_path": "C:/gptsovits"
     }
+
+
+# ── 자산 존재 검사 (E4 — E3 게이팅의 데이터 소스) ────────────────────
+
+
+def _voice_with(tmp_path, *, gpt="", sovits="", tones=()):
+    section = {"gpt_ckpt": gpt, "sovits_ckpt": sovits, "tones": list(tones)}
+    return PersonaVoice.parse(
+        {"name": "aris", "gptsovits": section}, root=tmp_path
+    ).vendor("gptsovits")
+
+
+def test_missing_assets_reports_absent_ckpts(tmp_path):
+    (tmp_path / "have.pth").write_bytes(b"")
+    vv = _voice_with(tmp_path, gpt="gone.ckpt", sovits="have.pth")
+    missing = missing_assets("gptsovits", vv)
+    assert len(missing.ckpts) == 1 and missing.ckpts[0].endswith("gone.ckpt")
+    assert bool(missing) is True
+
+
+def test_missing_assets_reports_tones_in_declared_order(tmp_path):
+    """톤 순서 보존 — 호출부가 '기본 톤(첫 항목)인가'를 대조해 차단 범위를 정한다."""
+    (tmp_path / "b.wav").write_bytes(b"")
+    vv = _voice_with(
+        tmp_path,
+        tones=[
+            {"name": "기본", "voice_id": "a.wav"},
+            {"name": "차분", "voice_id": "b.wav"},
+            {"name": "들뜸", "voice_id": "c.wav"},
+        ],
+    )
+    assert missing_assets("gptsovits", vv).tones == ("기본", "들뜸")
+
+
+def test_missing_assets_ignores_empty_paths(tmp_path):
+    """빈 ckpt = base(zero-shot) 의도 — 부재가 아니다(base 검사는 엔진 소유)."""
+    vv = _voice_with(tmp_path, tones=[{"name": "기본"}])
+    assert not missing_assets("gptsovits", vv)
+
+
+def test_missing_assets_skips_preset_vendors(tmp_path):
+    """supertonic의 voice_id는 프리셋명 — 경로로 해석하면 전부 부재로 오판한다."""
+    vv = PersonaVoice.parse(
+        {"name": "navi", "supertonic": {"tones": [{"name": "기본", "voice_id": "F1"}]}},
+        root=tmp_path,
+    ).vendor("supertonic")
+    assert not missing_assets("supertonic", vv)
+
+
+def test_missing_assets_without_bundle_is_empty():
+    assert not missing_assets("gptsovits", None)

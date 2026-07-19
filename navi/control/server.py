@@ -150,6 +150,8 @@ def create_app(
             raise HTTPException(404, str(exc)) from exc
         except SwapBusy as exc:
             raise HTTPException(409, str(exc)) from exc
+        except FileNotFoundError as exc:  # 카드가 가리키는 ckpt·레퍼런스 wav 부재
+            raise HTTPException(422, str(exc)) from exc
 
     @app.get("/voices")
     async def voices() -> list[dict]:

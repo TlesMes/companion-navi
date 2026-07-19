@@ -133,6 +133,46 @@ class PersonaVoice:
         )
 
 
+@dataclass(frozen=True)
+class MissingAssets:
+    """카드가 가리키는데 실물이 없는 자산 — 게이팅(E3)·부팅 안내의 단일 판정 결과."""
+
+    ckpts: tuple[str, ...] = ()  # 없는 가중치 파일 경로
+    tones: tuple[str, ...] = ()  # 레퍼런스 wav가 없는 톤 이름 (카드 선언 순서 유지)
+
+    def __bool__(self) -> bool:
+        return bool(self.ckpts or self.tones)
+
+
+def missing_assets(vendor: str, vendor_voice: VendorVoice | None) -> MissingAssets:
+    """카드 지정 자산의 존재 검사 — 파일 시스템만 본다(엔진·torch 불필요).
+
+    빈 값은 검사 대상이 아니다: 빈 ckpt = base(zero-shot) 의도(엔진이 base 경로를
+    따로 검사한다 — gptsovits._resolve_base_ckpts), 빈 voice_id = 레퍼런스 없음.
+    경로가 아닌 벤더(supertonic의 voice_id는 프리셋명)는 톤을 검사하지 않는다.
+
+    톤 순서를 보존하는 이유: 첫 항목(기본 톤)이 없으면 페르소나 교체 자체가 실패하고,
+    그 외 톤은 그 칩만 못 쓴다 — 호출부가 `tones[0].name`과 대조해 구분한다.
+    """
+    if vendor_voice is None:
+        return MissingAssets()
+    ckpts: tuple[str, ...] = ()
+    if vendor in _CKPT_VENDORS:
+        ckpts = tuple(
+            p
+            for p in (vendor_voice.gpt_ckpt, vendor_voice.sovits_ckpt)
+            if p and not Path(p).is_file()
+        )
+    tones: tuple[str, ...] = ()
+    if vendor in _PATH_VOICE_ID_VENDORS:
+        tones = tuple(
+            t.name
+            for t in vendor_voice.tones
+            if t.voice_id and not Path(t.voice_id).is_file()
+        )
+    return MissingAssets(ckpts=ckpts, tones=tones)
+
+
 def select_vendor(voice: PersonaVoice | None, *, config_default: str) -> str:
     """부팅 시 쓸 TTS 벤더 — 카드가 번들을 소유하면 카드가 정한다(2026.07.10 결정).
 

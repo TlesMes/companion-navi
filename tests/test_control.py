@@ -147,6 +147,9 @@ def _make_gptsovits_swap(tmp_path, *, mouth=None):
     """aris(fine-tune 가중치) 부팅 + example(base — 빈 ckpt) 카드로 핫스왑 분기 구성."""
     personas = tmp_path / "personas"
     personas.mkdir(exist_ok=True)
+    # 카드가 가리키는 자산을 실물로 깔아둔다 — 없으면 교체가 422로 막힌다(E4).
+    for name in ("aris.ckpt", "aris.pth", "ref_aris.wav", "ref_example.wav"):
+        (tmp_path / name).write_bytes(b"")
     _write_card(
         personas / "aris.yaml",
         "아리스",
@@ -492,6 +495,60 @@ def test_persona_swap_weights_rejected_while_playing(tmp_path):
     client, *_ = _make(swap=swap)
     assert client.post("/persona", json={"id": "example"}).status_code == 409
     assert pipeline._mouth.weight_calls == []  # 재생 중 모델 로드 금지
+
+
+# --- 자산 부재 시 교체 차단 (E4) ---
+
+
+def test_persona_swap_missing_ckpt_is_422_and_changes_nothing(tmp_path):
+    """카드가 가리키는 ckpt가 없으면 교체 자체가 막힌다 — 카드만 바뀐 반쪽 정체성 방지."""
+    swap, pipeline = _make_gptsovits_swap(tmp_path)
+    _write_card(
+        tmp_path / "personas" / "ghost.yaml",
+        "유령",
+        voice_block=_GPTSOVITS_VOICE.format(
+            name="ghost", gpt="없음.ckpt", sovits="없음.pth"
+        ),
+    )
+    client, *_ = _make(swap=swap)
+    before = pipeline.current_voice
+
+    resp = client.post("/persona", json={"id": "ghost"})
+    assert resp.status_code == 422
+    assert "없음.ckpt" in resp.json()["detail"]
+    assert swap.character == "아리스"  # 카드 그대로
+    assert pipeline.current_voice is before
+    assert pipeline._mouth.weight_calls == []  # 엔진도 안 건드림
+
+
+def test_persona_swap_missing_default_tone_wav_is_422(tmp_path):
+    """기본 톤 wav 부재 — 교체는 성공한 듯 보이고 첫 발화에서 터지므로 여기서 막는다."""
+    swap, _ = _make_gptsovits_swap(tmp_path)
+    _write_card(
+        tmp_path / "personas" / "noref.yaml",
+        "무레퍼런스",
+        voice_block=_GPTSOVITS_VOICE.format(name="noref", gpt='""', sovits='""'),
+    )  # ref_noref.wav를 만들지 않는다
+    client, *_ = _make(swap=swap)
+
+    resp = client.post("/persona", json={"id": "noref"})
+    assert resp.status_code == 422
+    assert "ref_noref.wav" in resp.json()["detail"]
+    assert swap.character == "아리스"
+
+
+def test_text_mode_swap_ignores_missing_voice_assets(tmp_path):
+    """텍스트 모드(pipeline=None)는 목소리를 안 건드린다 — 순진하게 짜면 전 카드가 막힌다."""
+    swap, _ = _make_swap(tmp_path, with_pipeline=False)
+    _write_card(
+        tmp_path / "personas" / "ghost.yaml",
+        "유령",
+        voice_block=_GPTSOVITS_VOICE.format(
+            name="ghost", gpt="없음.ckpt", sovits="없음.pth"
+        ),
+    )
+    client, *_ = _make(swap=swap)
+    assert client.post("/persona", json={"id": "ghost"}).status_code == 200
 
 
 def test_personas_scan_skips_broken_yaml(tmp_path):
