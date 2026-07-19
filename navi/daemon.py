@@ -462,6 +462,7 @@ async def _run(config, args) -> None:
     from navi.conductor import Conductor
     from navi.memory import MemoryStore
     from navi.persona import CharacterCard, mouth_options
+    from navi.persona import missing_assets as mouth_missing_assets
     from navi.pipeline import TurnPipeline
     from navi.schedule import ConfigSchedule
 
@@ -515,6 +516,15 @@ async def _run(config, args) -> None:
         default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
         if default_tone is not None:
             initial_voice = card.voice.profile(default_tone)
+        # 레퍼런스 wav 부재는 웜업을 통과하고 **첫 발화**에서 터진다(최악의 타이밍) —
+        # 부팅 시 미리 말해준다. 부팅을 막지는 않는다: 톤을 바꾸면 살아나고, 카드 하나가
+        # 데몬을 벽돌로 만드는 게 E1에서 고친 실패 유형이다. ckpt는 warmup이 막는다.
+        missing = mouth_missing_assets(config.mouth.vendor, vendor_voice)
+        if missing.tones:
+            log.warning(
+                "레퍼런스 wav가 없는 톤: %s — 그 톤으로 말하면 실패합니다",
+                ", ".join(missing.tones),
+            )
         mouth = create_mouth(config.mouth.vendor, **options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)

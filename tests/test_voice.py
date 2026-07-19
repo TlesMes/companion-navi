@@ -332,9 +332,18 @@ def _build_swappable(**kw):
     return mouth, w
 
 
-def test_gptsovits_set_weights_loads_both_and_updates_langs():
+@pytest.fixture
+def ckpts(tmp_path):
+    """실재하는 가중치 파일 한 쌍 — 어댑터가 교체 전에 존재를 검사한다(E4)."""
+    gpt, sovits = tmp_path / "a.ckpt", tmp_path / "a.pth"
+    gpt.write_bytes(b"")
+    sovits.write_bytes(b"")
+    return str(gpt), str(sovits)
+
+
+def test_gptsovits_set_weights_loads_both_and_updates_langs(ckpts):
     mouth, w = _build_swappable(ref_lang="ja", gen_lang="ja")
-    mouth.set_weights("a.ckpt", "a.pth", ref_lang="ko", gen_lang="ko")
+    mouth.set_weights(*ckpts, ref_lang="ko", gen_lang="ko")
 
     # SoVITS 먼저(제너레이터 소진) → GPT. 언어는 새 값으로 래핑돼 함께 넘어간다.
     assert [x[0] for x in w.loaded] == ["sovits", "gpt"]
@@ -343,26 +352,60 @@ def test_gptsovits_set_weights_loads_both_and_updates_langs():
     assert mouth._gpt_ckpt.endswith("a.ckpt") and mouth._sovits_ckpt.endswith("a.pth")
 
 
-def test_gptsovits_set_weights_empty_lang_keeps_current():
+def test_gptsovits_set_weights_empty_lang_keeps_current(ckpts):
     """빈 언어 = 현재 유지 — 부팅 배선(카드 언어 미지정 시 config 유지)과 같은 규칙."""
     mouth, w = _build_swappable(ref_lang="ja", gen_lang="ja")
-    mouth.set_weights("a.ckpt", "a.pth")
+    mouth.set_weights(*ckpts)
     assert (mouth._ref_lang, mouth._gen_lang) == ("ja", "ja")
     assert w.loaded[0][2:] == ("日文", "日文")
 
 
-def test_gptsovits_set_weights_invalid_lang_raises():
+def test_gptsovits_set_weights_invalid_lang_raises(ckpts):
     mouth, w = _build_swappable()
     with pytest.raises(ValueError, match="지원 언어"):
-        mouth.set_weights("a.ckpt", "a.pth", gen_lang="fr")
+        mouth.set_weights(*ckpts, gen_lang="fr")
     assert w.loaded == []  # 검증 실패 시 아무것도 안 올린다
 
 
-def test_gptsovits_set_weights_applies_to_next_synthesis():
+def test_gptsovits_set_weights_applies_to_next_synthesis(ckpts):
     """교체한 언어가 다음 합성 인자에 실제로 실린다 — 가중치와 언어의 원자 교체."""
     mouth, _w = _build_swappable(ref_lang="ja", gen_lang="ja")
-    mouth.set_weights("a.ckpt", "a.pth", ref_lang="ja", gen_lang="ko")
+    mouth.set_weights(*ckpts, ref_lang="ja", gen_lang="ko")
     assert (mouth._prompt_lang, mouth._text_lang) == ("日文", "韩文")
+
+
+# --- E4: 카드 지정 자산 존재 검사 ---
+
+
+def test_gptsovits_set_weights_missing_ckpt_changes_nothing(ckpts, tmp_path):
+    """없는 ckpt는 상태 변경 *이전*에 막힌다 — 어댑터와 엔진이 찢어지면 안 된다."""
+    mouth, w = _build_swappable(ref_lang="ja", gen_lang="ja")
+    mouth.set_weights(*ckpts)  # 정상 교체로 기준 상태를 만든다
+    w.loaded.clear()
+
+    with pytest.raises(FileNotFoundError, match="음색 가중치가 없습니다"):
+        mouth.set_weights(str(tmp_path / "없음.ckpt"), ckpts[1], ref_lang="ko", gen_lang="ko")
+
+    assert w.loaded == []  # 엔진에 아무것도 안 올렸다
+    assert (mouth._gpt_ckpt, mouth._sovits_ckpt) == ckpts  # 옛 가중치 그대로
+    assert (mouth._ref_lang, mouth._gen_lang) == ("ja", "ja")  # 언어도 안 바뀜
+    assert (mouth._prompt_lang, mouth._text_lang) == ("日文", "日文")
+
+
+def test_gptsovits_set_weights_missing_sovits_also_blocked(ckpts, tmp_path):
+    """sovits만 없어도 막는다 — 순차 로드라 부분 실패면 두 가중치가 다른 카드 것이 된다."""
+    mouth, w = _build_swappable()
+    with pytest.raises(FileNotFoundError, match="음색 가중치가 없습니다"):
+        mouth.set_weights(ckpts[0], str(tmp_path / "없음.pth"))
+    assert w.loaded == []
+
+
+def test_gptsovits_set_weights_empty_ckpt_is_base_intent():
+    """빈 ckpt = base(zero-shot) 의도 — 존재 검사 대상이 아니다."""
+    mouth, w = _build_swappable()
+    mouth.set_weights("", "")  # repo_path 없음 → base 해석도 무동작
+    assert w.loaded == []  # 올릴 가중치가 없을 뿐, 에러는 아니다
+    assert (mouth._gpt_ckpt, mouth._sovits_ckpt) == ("", "")
 
 
 def test_fake_mouth_warmup_is_noop():

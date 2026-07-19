@@ -57,6 +57,22 @@ _OUTPUT_SR = 32_000  # GPT-SoVITS 기본 출력 샘플레이트
 _GPTSOVITS_LANG = {"ja": "日文", "ko": "韩文", "zh": "中文", "en": "英文"}
 
 
+def _require_ckpt_files(gpt_ckpt: str | None, sovits_ckpt: str | None) -> None:
+    """카드가 가리키는 fine-tune 가중치가 실물로 있는지 — 없으면 읽을 수 있는 에러로.
+
+    빈 값은 base(zero-shot) 의도라 통과시킨다(_resolve_base_ckpts가 별도 검사).
+    `voice_ref/`와 `personas/aris*.yaml`이 gitignore된 로컬 자산이라, 새 클론·다른
+    머신에서는 이 실패가 기본값이다 — torch의 날것 에러 대신 카드를 고치라고 말한다.
+    """
+    missing = [p for p in (gpt_ckpt, sovits_ckpt) if p and not os.path.isfile(p)]
+    if missing:
+        raise FileNotFoundError(
+            "카드가 가리키는 음색 가중치가 없습니다: " + ", ".join(missing) + "\n"
+            "카드의 voice.gptsovits.gpt_ckpt·sovits_ckpt 경로를 확인하세요"
+            "(voice_ref/는 gitignore된 로컬 자산이라 머신마다 직접 갖춰야 합니다)."
+        )
+
+
 class GPTSoVITSMouth(MouthAdapter):
     def __init__(
         self,
@@ -106,6 +122,10 @@ class GPTSoVITSMouth(MouthAdapter):
             self._gpt_ckpt = os.path.abspath(self._gpt_ckpt)
         if self._sovits_ckpt:
             self._sovits_ckpt = os.path.abspath(self._sovits_ckpt)
+
+        # 부팅 검사도 chdir·env 오염 전에 — 없는 ckpt로 여기까지 가면 torch가 날것의
+        # 에러를 낸다. base(빈 ckpt)는 _resolve_base_ckpts가 따로 안내한다.
+        _require_ckpt_files(self._gpt_ckpt, self._sovits_ckpt)
 
         # repo 루트(= `from GPT_SoVITS.x`, `import config`)·GPT_SoVITS/ 하위(= 내부
         # `from text.x`)·eres2net(= sv.py의 `from ERes2NetV2 import`) 셋 다 path에 필요.
@@ -385,6 +405,11 @@ class GPTSoVITSMouth(MouthAdapter):
             if lang and lang not in _GPTSOVITS_LANG:
                 raise ValueError(f"지원 언어: {sorted(_GPTSOVITS_LANG)} ({name}={lang})")
         self._ensure_engine()  # 미웜업 상태에서의 교체도 성립시킨다(idempotent)
+        # 파일 검사는 **상태 변경 이전**이어야 한다 — 아래 대입 뒤에 _load_weights가
+        # 터지면 어댑터는 새 카드의 ckpt·언어를 기억하는데 엔진엔 옛 가중치가 남는다
+        # (sovits→gpt 순차 로드라 부분 실패 시 두 가중치가 서로 다른 카드 것이 되기도).
+        # 여기서 막아야 "실패하면 아무것도 안 바뀜"이 성립한다.
+        _require_ckpt_files(gpt_ckpt, sovits_ckpt)
         self._gpt_ckpt = os.path.abspath(gpt_ckpt) if gpt_ckpt else ""
         self._sovits_ckpt = os.path.abspath(sovits_ckpt) if sovits_ckpt else ""
         self._resolve_base_ckpts()
