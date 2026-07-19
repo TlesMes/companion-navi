@@ -354,15 +354,22 @@ def test_persona_swap_is_idempotent(tmp_path):
     assert client.post("/persona", json={"id": "navi"}).json()["character"] == "나비"
 
 
-def test_persona_swap_without_voice_section_keeps_voice(tmp_path):
-    """대상 카드에 voice 섹션 없음 → 카드만 교체, 톤 유지, voice_swapped false."""
+def test_persona_swap_without_voice_section_is_blocked(tmp_path):
+    """음성 세션에서 voice 섹션 없는 카드는 교체 불가(E3 ③) — 예전엔 카드만 바꿨다.
+
+    "인격만 바뀌고 목소리는 그대로"가 곧 정체성 혼합이라 연속성 원칙에 어긋난다.
+    voice 없는 카드가 **부팅** 카드로는 여전히 정당하다(config가 목소리를 공급).
+    """
     swap, pipeline = _make_swap(tmp_path)
     _write_card(tmp_path / "personas" / "plain.yaml", "민짜")  # voice 섹션 없음
     client, *_ = _make(swap=swap)
     before = pipeline.current_voice
-    body = client.post("/persona", json={"id": "plain"}).json()
-    assert body["voice_swapped"] is False
-    assert pipeline.current_voice is before  # 목소리 불변
+
+    resp = client.post("/persona", json={"id": "plain"})
+    assert resp.status_code == 422
+    assert "재기동" in resp.json()["detail"]  # 사유만이 아니라 해법까지
+    assert swap.character == "나비"  # 카드도 안 바뀜
+    assert pipeline.current_voice is before
 
 
 def test_voices_lists_current_tone(tmp_path):
@@ -549,6 +556,125 @@ def test_text_mode_swap_ignores_missing_voice_assets(tmp_path):
     )
     client, *_ = _make(swap=swap)
     assert client.post("/persona", json={"id": "ghost"}).status_code == 200
+
+
+# --- 전환 가능 여부 게이팅 (E3) ---
+#
+# 요점: 조회(GET /personas)와 실행(POST /persona)이 **같은 판정**을 써야 한다.
+# 두 벌이면 회색이 아닌데 막히거나 그 반대인 어긋남이 생긴다.
+
+
+def _persona(client, pid: str) -> dict:
+    return next(p for p in client.get("/personas").json() if p["id"] == pid)
+
+
+def test_vendor_mismatch_persona_is_unavailable_and_blocked(tmp_path):
+    """① supertonic 세션에서 gptsovits 카드 — 엔진 교체는 구조적 불가."""
+    swap, pipeline = _make_swap(tmp_path)  # 세션 벤더 = supertonic
+    _write_card(
+        tmp_path / "personas" / "aris.yaml",
+        "아리스",
+        voice_block=_GPTSOVITS_VOICE.format(name="aris", gpt='""', sovits='""'),
+    )
+    client, *_ = _make(swap=swap)
+
+    row = _persona(client, "aris")
+    assert row["available"] is False
+    assert "supertonic" in row["reason"] and "재기동" in row["reason"]
+
+    resp = client.post("/persona", json={"id": "aris"})
+    assert resp.status_code == 422  # 회색 처리와 같은 판정이 API에도 걸린다
+    assert swap.character == "나비"
+
+
+def test_missing_ckpt_persona_is_unavailable(tmp_path):
+    """② 같은 벤더인데 ckpt 파일 부재 — E4의 자산 검사가 사유를 공급한다."""
+    swap, _ = _make_gptsovits_swap(tmp_path)
+    _write_card(
+        tmp_path / "personas" / "ghost.yaml",
+        "유령",
+        voice_block=_GPTSOVITS_VOICE.format(name="ghost", gpt="없음.ckpt", sovits="없음.pth"),
+    )
+    client, *_ = _make(swap=swap)
+
+    row = _persona(client, "ghost")
+    assert row["available"] is False and "없음.ckpt" in row["reason"]
+    assert client.post("/persona", json={"id": "ghost"}).status_code == 422
+
+
+def test_no_voice_section_persona_is_unavailable_in_voice_session(tmp_path):
+    """③ voice 섹션 없는 카드 — 음성 세션의 교체 대상으로는 항상 정체성 혼합."""
+    swap, _ = _make_swap(tmp_path)
+    _write_card(tmp_path / "personas" / "plain.yaml", "민짜")
+    client, *_ = _make(swap=swap)
+    assert _persona(client, "plain")["available"] is False
+
+
+def test_missing_default_tone_ref_makes_persona_unavailable(tmp_path):
+    """④-a 기본 톤(첫 항목) wav 부재 — 교체 자체가 실패하므로 페르소나를 막는다."""
+    swap, _ = _make_gptsovits_swap(tmp_path)
+    _write_card(
+        tmp_path / "personas" / "noref.yaml",
+        "무레퍼런스",
+        voice_block=_GPTSOVITS_VOICE.format(name="noref", gpt='""', sovits='""'),
+    )  # ref_noref.wav를 만들지 않는다
+    client, *_ = _make(swap=swap)
+
+    row = _persona(client, "noref")
+    assert row["available"] is False and "기본 톤" in row["reason"]
+    assert client.post("/persona", json={"id": "noref"}).status_code == 422
+
+
+def test_missing_non_default_tone_blocks_only_that_chip(tmp_path):
+    """④-b 그 외 톤의 wav 부재 — 그 칩만 비활성, 페르소나는 정상."""
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    for name in ("w.ckpt", "w.pth", "ref_기본.wav"):  # ref_차분.wav는 없다
+        (tmp_path / name).write_bytes(b"")
+    _write_card(
+        personas / "two.yaml",
+        "둘톤",
+        voice_block=(
+            "voice:\n  name: two\n  gptsovits:\n"
+            "    gpt_ckpt: w.ckpt\n    sovits_ckpt: w.pth\n"
+            "    ref_lang: ja\n    gen_lang: ja\n    tones:\n"
+            "      - {name: 기본, voice_id: ref_기본.wav, ref_text: r}\n"
+            "      - {name: 차분, voice_id: ref_차분.wav, ref_text: r}\n"
+        ),
+    )
+    card = CharacterCard.load(personas / "two.yaml", root=tmp_path)
+    conductor = _StubConductor(card)
+    pipeline = TurnPipeline(
+        brain=None,
+        mouth=_HotSwapMouth(),
+        conductor=conductor,
+        voice=card.voice.profile(card.voice.default_tone("gptsovits")),
+    )
+    swap = SwapRuntime(
+        conductor=conductor, pipeline=pipeline, personas_dir=personas, root=tmp_path,
+        vendor="gptsovits", persona_id="two", loaded_ckpts=card.voice.vendor("gptsovits").ckpts,
+    )
+    client, *_ = _make(swap=swap)
+
+    assert _persona(client, "two")["available"] is True  # 페르소나는 멀쩡
+    tones = {v["name"]: v["available"] for v in client.get("/voices").json()}
+    assert tones == {"기본": True, "차분": False}
+    assert client.post("/voice", json={"name": "차분"}).status_code == 422
+    assert client.post("/voice", json={"name": "기본"}).status_code == 200
+
+
+def test_text_mode_marks_every_persona_available(tmp_path):
+    """텍스트 모드(pipeline=None)는 목소리를 안 건드린다 — 순진하면 전 카드가 회색."""
+    swap, _ = _make_swap(tmp_path, with_pipeline=False)
+    _write_card(tmp_path / "personas" / "plain.yaml", "민짜")
+    _write_card(
+        tmp_path / "personas" / "ghost.yaml",
+        "유령",
+        voice_block=_GPTSOVITS_VOICE.format(name="ghost", gpt="없음.ckpt", sovits="없음.pth"),
+    )
+    client, *_ = _make(swap=swap)
+    rows = client.get("/personas").json()
+    assert all(p["available"] for p in rows) and len(rows) == 4
 
 
 def test_personas_scan_skips_broken_yaml(tmp_path):

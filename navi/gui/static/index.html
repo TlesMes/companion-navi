@@ -127,6 +127,10 @@
   .pmenu-item .pm-file { font-size: 10px; color: var(--text-muted); }
   .pmenu-item.current { background: var(--bg-accent); }
   .pmenu-item.current .pm-name { color: var(--text-accent); }
+  /* 이 세션에서 못 쓰는 페르소나 — 사유는 title 툴팁이 말한다 */
+  .pmenu-item.blocked { opacity: .42; cursor: not-allowed; }
+  .pmenu-item.blocked:hover { background: transparent; }
+  .pmenu-item.blocked .pm-file { text-decoration: line-through; }
 
   /* ── 톤 칩 행 ── */
   .voice-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px 0; }
@@ -141,6 +145,7 @@
   .tone-chip.current {
     background: var(--bg-accent); border: 2px solid var(--border-accent); color: var(--text-accent);
   }
+  .tone-chip.blocked, .tone-row.blocked { opacity: .38; cursor: not-allowed; }
 
   /* ── 모드 버튼 ── */
   .mode-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 12px 16px 0; }
@@ -495,10 +500,11 @@ function renderToneChips() {
   $("voice-more").style.display = S.voices.length ? "" : "none";
   for (const v of S.voices.slice(0, 4)) {
     const b = document.createElement("button");
-    b.className = "tone-chip" + (v.current ? " current" : "");
-    b.title = v.name;
+    const blocked = v.available === false;  // 레퍼런스 wav 부재 — 그 칩만(④-b)
+    b.className = "tone-chip" + (v.current ? " current" : "") + (blocked ? " blocked" : "");
+    b.title = blocked ? `${v.name} — 레퍼런스 wav가 없어요` : v.name;
     b.innerHTML = icon(v.icon || "wave", 16);
-    b.onclick = () => postVoice(v.name);
+    b.onclick = () => blocked ? toast(b.title) : postVoice(v.name);
     box.appendChild(b);
   }
 }
@@ -568,8 +574,9 @@ async function postPersona(id) {
     const r = await api("POST", "/persona", { id });
     S.personaId = r.id; S.character = r.character;
     renderCharacter();
-    toast(r.voice_swapped === false && S.voices.length
-      ? "카드만 교체 — 목소리는 유지(가중치 불일치)" : `페르소나 「${r.character}」`);
+    // "카드만 교체" 안내는 사라졌다 — 목소리가 못 따라가는 조합은 데몬이 422로 막는다
+    // (핫스왑 미지원 엔진만 voice_swapped=false로 남고, 그건 프리셋 기반이라 정상)
+    toast(`페르소나 「${r.character}」`);
     await refreshVoices();
   } catch (e) { toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message); }
 }
@@ -584,10 +591,19 @@ function renderPersonaMenu(list) {
   }
   for (const p of list) {
     const item = document.createElement("button");
-    item.className = "pmenu-item" + (p.current ? " current" : "");
+    // available은 데몬 판정 — GUI는 그리기만 한다(같은 판정이 POST도 422로 막는다)
+    const blocked = p.available === false;
+    item.className = "pmenu-item" + (p.current ? " current" : "") + (blocked ? " blocked" : "");
+    // disabled 속성은 안 쓴다 — 클릭 이벤트까지 죽어서 사유를 띄울 기회가 사라진다
+    item.title = blocked ? p.reason : p.character;
     item.innerHTML = `<div class="avatar">${esc(p.character[0] || "?")}</div>` +
       `<span class="pm-name">${esc(p.character)}</span><span class="pm-file">${esc(p.id)}.yaml</span>`;
-    item.onclick = () => { closePersonaMenu(); if (!p.current) postPersona(p.id); };
+    // 비활성 항목은 클릭해도 사유만 띄운다 — 툴팁을 못 본 채 누르는 경로의 보완
+    item.onclick = () => {
+      if (blocked) { toast(p.reason); return; }
+      closePersonaMenu();
+      if (!p.current) postPersona(p.id);
+    };
     menu.appendChild(item);
   }
 }
@@ -619,11 +635,14 @@ function renderTonePanel() {
   }
   for (const v of S.voices) {
     const row = document.createElement("button");
-    row.className = "tone-row" + (v.current ? " current" : "");
+    const blocked = v.available === false;
+    row.className = "tone-row" + (v.current ? " current" : "") + (blocked ? " blocked" : "");
     const bars = [6, 12, 8, 13, 5].map((h) => `<span style="height:${h}px"></span>`).join("");
-    row.innerHTML = `${icon(v.icon || "wave", 17)}<span class="tname">${esc(v.name)}</span>` +
+    const label = blocked ? `${v.name} · 레퍼런스 wav 없음` : v.name;
+    row.title = label;
+    row.innerHTML = `${icon(v.icon || "wave", 17)}<span class="tname">${esc(label)}</span>` +
       `<span class="wave">${bars}</span><span class="play" title="시청취">${icon("play", 15)}</span>`;
-    row.onclick = () => postVoice(v.name);
+    row.onclick = () => blocked ? toast(`「${v.name}」의 레퍼런스 wav가 없어요`) : postVoice(v.name);
     row.querySelector(".play").onclick = (e) => { e.stopPropagation(); playPreview(v.name); };
     box.appendChild(row);
   }

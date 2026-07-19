@@ -35,6 +35,13 @@ class SwapBusy(RuntimeError):
     """재생 중 교체 시도 — HTTP 409로 번역된다."""
 
 
+class PersonaUnavailable(RuntimeError):
+    """이 세션에서 쓸 수 없는 페르소나·톤 — HTTP 422로 번역된다.
+
+    파일 부재(FileNotFoundError)만이 아니라 벤더 불일치 같은 구조적 불가도 포함한다.
+    """
+
+
 class SwapRuntime:
     def __init__(
         self,
@@ -74,11 +81,17 @@ class SwapRuntime:
             except Exception:
                 log.warning("페르소나 카드 파싱 실패 — 건너뜀: %s", path, exc_info=True)
                 continue
+            # 평가 시점을 응답 생성 시로 둔 이유: 이 스캔이 이미 캐시 없이 매 요청
+            # 전수 재파싱이라 isfile 몇 번이 추가 비용의 전부고, 세션 중 ckpt를 갖추면
+            # 다음 요청에 자동 반영된다. 부팅 시 1회 캐시면 영영 회색으로 남는다.
+            available, reason = self.availability(path.stem, card.voice)
             out.append(
                 {
                     "id": path.stem,
                     "character": card.character,
                     "current": path.stem == self._persona_id,
+                    "available": available,
+                    "reason": reason,
                 }
             )
         return out
@@ -95,9 +108,14 @@ class SwapRuntime:
         if not path.exists():
             raise LookupError(f"페르소나 없음: {persona_id!r}")
         card = CharacterCard.load(path, root=self._root)
+        # 판정은 카드 교체(set_card) *이전*에 — 통과 뒤 터지면 인격만 바뀌고 목소리는
+        # 옛것인 반쪽 정체성이 남는다. GUI가 회색 처리해도 이 가드는 필요하다:
+        # GUI를 우회하는 호출자(직접 HTTP·스크립트)에게도 같은 규칙이 걸려야 한다.
+        available, reason = self.availability(persona_id, card.voice)
+        if not available:
+            raise PersonaUnavailable(f"{card.character}로 바꿀 수 없어요 — {reason}")
         vendor_voice = card.voice.vendor(self._vendor) if card.voice else None
         tone = card.voice.default_tone(self._vendor) if card.voice else None
-        self._require_assets(card, vendor_voice, tone)
 
         self._conductor.set_card(card)
         self._persona_id = persona_id
@@ -118,26 +136,49 @@ class SwapRuntime:
             "voice_swapped": voice_swapped,
         }
 
-    def _require_assets(self, card, vendor_voice, tone) -> None:
-        """카드 자산이 실물로 있는지 — 카드 교체(set_card) *이전*에 본다.
+    def availability(self, persona_id: str, voice: PersonaVoice | None) -> tuple[bool, str]:
+        """이 세션에서 이 페르소나로 갈아탈 수 있는가 + 못 하면 왜 (E3 차단 조건 4개).
 
-        여기서 걸러야 "실패하면 아무것도 안 바뀜"이 성립한다. 통과 뒤에 터지면 카드는
-        새 페르소나인데 목소리는 옛것인 반쪽 정체성이 남는다(연속성 원칙 위반).
-        막는 것은 **교체를 실패시키는 것만** — 가중치와 기본 톤이다. 나머지 톤의
-        wav 부재는 그 칩만 못 쓸 뿐이라 교체를 막지 않는다(E3 ④-b).
-        텍스트 모드(pipeline=None)는 목소리를 안 건드리므로 검사 대상이 아니다.
+        **조회(GET /personas)와 실행(POST /persona)이 같은 함수를 쓴다** — 두 벌로 짜면
+        회색이 아닌데 막히거나 그 반대인 어긋남이 생긴다. 판정은 데몬 소유고 GUI는
+        이 결과를 그리기만 한다(GUI를 우회하는 호출자도 막혀야 하므로).
+
+        막는 기준은 하나: **목소리가 카드를 따라가지 못하면 막는다.** 인격만 바뀌고
+        목소리는 그대로인 반쪽 정체성이 연속성 원칙(설계 원칙 2) 위반이라서다.
+        사유에 해법까지 담는다 — 비활성화만 하면 "그럼 영영 못 쓰나"가 된다.
+
+        텍스트 모드(pipeline=None)는 애초에 목소리를 안 건드리므로 전부 허용이다.
+        순진하게 짜면 여기서 **전 카드가 비활성화**된다.
         """
-        if self._pipeline is None or vendor_voice is None:
-            return
-        missing = missing_assets(self._vendor, vendor_voice)
-        blocking = list(missing.ckpts)
-        if tone is not None and tone.name in missing.tones:
-            blocking.append(tone.voice_id)
-        if blocking:
-            raise FileNotFoundError(
-                f"{card.character}의 목소리 자산이 없어 교체할 수 없습니다: "
-                + ", ".join(blocking)
+        if self._pipeline is None:
+            return True, ""
+        restart = f"`run_navi.ps1 -Persona {persona_id}`로 재기동하면 쓸 수 있어요"
+        if voice is None:  # ③ voice 섹션 없음 (example_kr 등)
+            return False, (
+                "이 카드엔 목소리 번들이 없어서 음성 세션에서 바꾸면 인격만 바뀌어요 — "
+                f"{restart}"
             )
+        vendor_voice = voice.vendor(self._vendor)
+        if vendor_voice is None:  # ① 벤더 불일치 — 엔진 교체는 구조적 불가
+            declared = ", ".join(voice.vendors) or "없음"
+            return False, (
+                f"이 세션은 {self._vendor} 엔진이라 이 목소리({declared})를 쓸 수 없어요 — "
+                f"{restart}"
+            )
+        missing = missing_assets(self._vendor, vendor_voice)
+        if missing.ckpts:  # ② 같은 벤더인데 ckpt 파일 부재
+            return False, (
+                "음색 가중치 파일이 없어요: "
+                + ", ".join(Path(p).name for p in missing.ckpts)
+                + " — 카드의 경로를 확인하거나 파일을 갖춰주세요"
+            )
+        tones = vendor_voice.tones
+        if tones and tones[0].name in missing.tones:  # ④-a 기본 톤 레퍼런스 부재
+            return False, (
+                f"기본 톤「{tones[0].name}」의 레퍼런스 wav가 없어요: "
+                f"{Path(tones[0].voice_id).name} — 파일을 갖춰주세요"
+            )
+        return True, ""  # ④-b(그 외 톤 부재)는 그 칩만 막는다 — list_voices 참조
 
     async def _swap_weights(self, vendor_voice) -> bool:
         """새 음색 가중치를 엔진에 올린다. 성공 시 True — 미지원 엔진이면 False(카드만 교체).
@@ -168,8 +209,16 @@ class SwapRuntime:
         if vendor_voice is None:
             return []  # 번들 없는 부팅(구 config 폴백) — 톤 교체 대상 없음
         current_id = pipeline.current_voice.vendor_voice_id
+        # ④-b: 레퍼런스 wav가 없는 톤은 그 칩만 막는다(페르소나는 정상) — 안 막으면
+        # 교체는 성공한 듯 보이고 **말을 시켜야** 터진다(실패 타이밍이 최악).
+        missing = missing_assets(self._vendor, vendor_voice)
         return [
-            {"name": t.name, "icon": t.icon, "current": t.voice_id == current_id}
+            {
+                "name": t.name,
+                "icon": t.icon,
+                "current": t.voice_id == current_id,
+                "available": t.name not in missing.tones,
+            }
             for t in vendor_voice.tones
         ]
 
@@ -182,6 +231,10 @@ class SwapRuntime:
             tone = next((t for t in vendor_voice.tones if t.name == name), None)
         if tone is None:
             raise LookupError(f"톤 없음: {name!r}")
+        if tone.name in missing_assets(self._vendor, vendor_voice).tones:
+            raise PersonaUnavailable(
+                f"톤「{name}」의 레퍼런스 wav가 없어요: {Path(tone.voice_id).name}"
+            )
         pipeline.set_voice(self._voice.profile(tone))
         return {"name": name, "applied": "next_turn"}
 
