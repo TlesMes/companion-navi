@@ -419,6 +419,16 @@ def test_unknown_vendor_raises_value_error():
         create_mouth("nope")
 
 
+def test_supertonic_rejects_gptsovits_kwargs():
+    """팩토리는 kwargs를 걸러내지 않는다 — 의도된 결정이므로 고정한다.
+
+    시그니처를 보고 낯선 kwarg를 버리면 config 오타가 조용한 오동작이 된다.
+    벤더 경계는 상류(persona.mouth_options)가 지키고, 여기선 시끄럽게 죽는 게 맞다.
+    """
+    with pytest.raises(TypeError):
+        create_mouth("supertonic", gpt_ckpt="x")
+
+
 # --- FasterWhisperStt: 가짜 모델 주입, 실 추론 없이 계약 검증 ---
 
 

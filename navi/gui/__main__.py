@@ -11,6 +11,7 @@ import argparse
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 # 대기 화면 — 프런트(index.html)와 같은 다크 팔레트. 데몬이 뜨면 파이썬 폴러가 갈아끼운다.
 _WAITING_HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>
@@ -64,11 +65,17 @@ class _Api:
 
 
 def _control_port() -> int:
-    """config.yaml의 control.port — 못 읽으면 기본 8765 (GUI는 데몬 없이도 떠야 한다)."""
-    try:
-        from navi.config import load_config
+    """config.yaml의 control.port — 못 읽으면 기본 8765 (GUI는 데몬 없이도 떠야 한다).
 
-        return load_config().control.port
+    정수 하나 때문에 load_config를 부르지 않는다 — 그쪽은 .env 로드와 페르소나 카드
+    파싱까지 딸려 와서, 카드가 깨져 있으면 포트만 원하는 이 호출이 경고를 뱉는다.
+    GUI는 오디오도 페르소나도 만지지 않으므로 필요한 키만 직접 읽는다.
+    """
+    try:
+        import yaml
+
+        raw = yaml.safe_load(Path.cwd().joinpath("config.yaml").read_text(encoding="utf-8"))
+        return int(raw["control"]["port"])
     except Exception:
         return 8765
 

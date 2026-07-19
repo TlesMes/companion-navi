@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from datetime import time
@@ -12,6 +13,8 @@ import yaml
 from dotenv import load_dotenv
 
 from navi.models import VoiceProfile
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,31 @@ def _resolve(root: Path, value: str) -> str:
     return str((root / value).resolve()) if value else value
 
 
+def _vendor_from_card(root: Path, card_path: Path, config_default: str) -> str:
+    """활성 카드의 목소리 번들에서 TTS 벤더를 해석한다. 실패하면 config 기본.
+
+    카드의 `voice:` 섹션만 필요하므로 CharacterCard 전체를 짓지 않는다 — profiles가
+    비었거나 스키마가 어긋난 카드도 목소리 번들은 멀쩡할 수 있고, 그 판정은 여기가
+    아니라 카드를 실제로 쓰는 쪽(daemon._run)의 몫이다.
+
+    **깨진 카드를 여기서 삼켜도 부팅이 구제되지는 않는다** — daemon._run이 곧바로
+    같은 파일을 CharacterCard.load로 읽다 죽는다(의도된 fail-fast: 페르소나 없이
+    돌 수 있는 데몬은 없다). 이 except의 목적은 그 실패를 *가리는* 게 아니라
+    **벤더 해석이 새로운 실패 지점이 되지 않게** 하는 것뿐이라, 진짜 사인을 보고할
+    daemon 쪽과 겹쳐 시끄럽지 않도록 debug로만 남긴다.
+    """
+    from navi.persona import PersonaVoice, select_vendor
+
+    try:
+        raw = yaml.safe_load(card_path.read_text(encoding="utf-8")) or {}
+        section = raw.get("voice")
+        voice = PersonaVoice.parse(section, root=root) if section else None
+    except Exception:
+        log.debug("벤더 해석용 카드 읽기 실패 — config 기본 사용: %s", card_path, exc_info=True)
+        return config_default
+    return select_vendor(voice, config_default=config_default)
+
+
 def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
     raw_mouth = raw.get("mouth", {})
     vendor = raw_mouth.get("vendor", "fake")
@@ -244,8 +272,16 @@ def load_config(
     root = root or Path.cwd()
     load_dotenv(root / ".env")
     raw = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    card_path = root / (persona_card or raw["persona"]["card_path"])
     if mouth_vendor:
         raw.setdefault("mouth", {})["vendor"] = mouth_vendor
+    else:
+        # 카드가 목소리 번들을 소유하면 벤더도 카드가 정한다(2026.07.10 결정).
+        # _load_mouth가 벤더 하위 섹션을 읽으므로 그 전에 확정해야 하고, 여기서
+        # 정하면 mouth.options·SwapRuntime·부팅 톤이 한 번에 일관된다.
+        raw.setdefault("mouth", {})["vendor"] = _vendor_from_card(
+            root, card_path, raw.get("mouth", {}).get("vendor", "fake")
+        )
     return Config(
         root=root.resolve(),
         brain=BrainConfig(
@@ -259,7 +295,7 @@ def load_config(
         control=_load_control(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
-        persona_card_path=root / (persona_card or raw["persona"]["card_path"]),
+        persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
     )

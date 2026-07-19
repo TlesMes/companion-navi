@@ -461,7 +461,7 @@ async def _run(config, args) -> None:
     from navi.brain import create_brain
     from navi.conductor import Conductor
     from navi.memory import MemoryStore
-    from navi.persona import CharacterCard
+    from navi.persona import CharacterCard, mouth_options
     from navi.pipeline import TurnPipeline
     from navi.schedule import ConfigSchedule
 
@@ -508,24 +508,14 @@ async def _run(config, args) -> None:
     if args.voice:
         from navi.mouth import create_mouth
 
-        mouth_options = dict(config.mouth.options)
+        # 벤더 경계는 persona.mouth_options가 지킨다 — 가중치 kwarg는 그걸 받는
+        # 벤더에만 간다(예전엔 무조건 주입해 SupertonicMouth(gpt_ckpt=…)로 죽었다).
+        options = mouth_options(config.mouth.vendor, config.mouth.options, vendor_voice)
         initial_voice = config.mouth.voice
-        if vendor_voice is not None:
-            # 카드가 voice 번들을 소유하면 가중치는 카드가 권위 — 빈 ckpt = base(zero-shot)
-            # 의도이므로 config 폴백(아리스 fine-tune)을 덮어 비운다. config의 gptsovits
-            # ckpt 폴백은 voice 섹션 없는 카드용(하위호환). 언어는 빈 값이면 config 유지.
-            mouth_options["gpt_ckpt"] = vendor_voice.gpt_ckpt
-            mouth_options["sovits_ckpt"] = vendor_voice.sovits_ckpt
-            for key, value in (
-                ("ref_lang", vendor_voice.ref_lang),
-                ("gen_lang", vendor_voice.gen_lang),
-            ):
-                if value:
-                    mouth_options[key] = value
         default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
         if default_tone is not None:
             initial_voice = card.voice.profile(default_tone)
-        mouth = create_mouth(config.mouth.vendor, **mouth_options)
+        mouth = create_mouth(config.mouth.vendor, **options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
         pipeline = TurnPipeline(
@@ -810,16 +800,27 @@ def main() -> None:
         print(f"이미 실행 중입니다 (PID {_read_pid(PID_FILE)}) — stop으로 먼저 내리세요")
         raise SystemExit(1)
     STOP_FILE.unlink(missing_ok=True)  # 이전 실행의 잔여 센티널 제거
+    failed = False
     try:
         asyncio.run(_run(config, args))
         print("(나비 데몬 내려감)")
     except KeyboardInterrupt:  # 핸들러 설치 전 인터럽트·두 번째 Ctrl+C(강제)
         print("\n(나비 데몬 내려감)")
+    except BaseException:
+        failed = True
+        if args.voice:
+            # --voice는 아래 finally에서 os._exit로 프로세스를 즉시 없앤다 — 파이썬의
+            # 기본 traceback 출력에 도달하지 못해 "로그 2줄 남기고 exit 0"으로 위장했다
+            # (부팅 실패가 이렇게 숨어 있었다). 그 경로에서만 사인을 직접 남긴다.
+            # 비음성 경로는 예외가 정상 전파돼 파이썬이 알아서 찍으므로 여기서 찍으면 중복.
+            log.exception("데몬이 예외로 종료됨")
+        raise
     finally:
         release_pidfile()
         if args.voice:
-            # cli.py os._exit(0)과 동일 사유 — torch/PortAudio 잔여 스레드가 종료를 막는다
-            os._exit(0)
+            # cli.py os._exit(0)과 동일 사유 — torch/PortAudio 잔여 스레드가 종료를 막는다.
+            # 실패는 반드시 0이 아닌 코드로 — 실행 스크립트가 이걸 보고 판단한다.
+            os._exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

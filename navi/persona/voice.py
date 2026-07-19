@@ -25,16 +25,22 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from navi.models import VoiceProfile
 
+log = logging.getLogger(__name__)
+
 # 예약 키 — 이 외의 최상위 키는 전부 벤더명 하위 섹션으로 취급한다.
 _RESERVED = {"name", "speed"}
 # voice_id를 경로로 해석해야 하는 벤더 (supertonic은 프리셋명)
 _PATH_VOICE_ID_VENDORS = {"gptsovits"}
+# 가중치·언어 kwarg를 생성자로 받는 벤더 — 다른 벤더에 넘기면 TypeError다.
+# (SupertonicMouth는 model/lang/total_steps만 받는다)
+_CKPT_VENDORS = {"gptsovits"}
 
 
 def _abs(root: Path | None, value: str) -> str:
@@ -125,3 +131,52 @@ class PersonaVoice:
             speed=self.speed,
             ref_text=tone.ref_text,
         )
+
+
+def select_vendor(voice: PersonaVoice | None, *, config_default: str) -> str:
+    """부팅 시 쓸 TTS 벤더 — 카드가 번들을 소유하면 카드가 정한다(2026.07.10 결정).
+
+    config는 번들 없는 카드(하위호환)의 폴백이자, 카드가 여러 벤더를 선언했을 때의
+    타이브레이커. CLI --mouth는 이 함수에 도달하기 전에 처리된다(load_config).
+
+    **절대 raise 하지 않는다** — 카드 하나가 부팅을 벽돌로 만드는 게 지금 고치려는
+    실패 유형이다. 판단이 애매하면 고르고 로그로 알린다.
+    """
+    declared = list(voice.vendors) if voice else []
+    if not declared:
+        return config_default  # 번들 없음 = config의 ckpt 폴백이 계속 권위
+    if config_default in declared:
+        # 단독 선언이든 다중 선언이든, config와 일치하면 이견이 없다
+        return config_default
+    picked = declared[0]  # dict는 YAML 선언 순서를 보존한다
+    if len(declared) > 1:
+        log.warning(
+            "카드가 벤더 %s를 선언했는데 config 기본(%s)이 없음 — %s 선택",
+            declared, config_default, picked,
+        )
+    else:
+        log.info("카드 목소리 번들이 벤더를 결정 — %s (config 기본: %s)", picked, config_default)
+    return picked
+
+
+def mouth_options(
+    vendor: str, config_options: dict[str, Any], vendor_voice: VendorVoice | None
+) -> dict[str, Any]:
+    """create_mouth에 넘길 kwargs — config 옵션 위에 카드 번들을 덮는다.
+
+    가중치·언어는 그 kwarg를 받는 벤더에만 넘긴다. 예전에는 벤더와 무관하게 주입해
+    `SupertonicMouth(gpt_ckpt=…)` TypeError로 --voice 부팅이 항상 죽었다.
+
+    빈 ckpt는 "base(zero-shot) 의도"라 config 폴백(아리스 fine-tune)을 **덮어 비운다** —
+    카드가 번들을 소유하면 빈 값도 카드의 권위다. 언어는 빈 값이면 config를 유지한다
+    (가중치와 달리 "미지정=현재 유지"가 부팅·핫스왑 공통 규칙, VendorVoice 참조).
+    """
+    options = dict(config_options)
+    if vendor_voice is None or vendor not in _CKPT_VENDORS:
+        return options
+    options["gpt_ckpt"] = vendor_voice.gpt_ckpt
+    options["sovits_ckpt"] = vendor_voice.sovits_ckpt
+    for key, value in (("ref_lang", vendor_voice.ref_lang), ("gen_lang", vendor_voice.gen_lang)):
+        if value:
+            options[key] = value
+    return options
