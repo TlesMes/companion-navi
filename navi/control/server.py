@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from navi.bus import Event, EventBus, EventKind
-from navi.control.runtime import SwapBusy, SwapRuntime
+from navi.control.runtime import PersonaUnavailable, SwapBusy, SwapRuntime
 from navi.daemon import DaemonCore
 from navi.heartbeat import Mode, ModeCommand, SleepWindow
 
@@ -150,7 +150,7 @@ def create_app(
             raise HTTPException(404, str(exc)) from exc
         except SwapBusy as exc:
             raise HTTPException(409, str(exc)) from exc
-        except FileNotFoundError as exc:  # 카드가 가리키는 ckpt·레퍼런스 wav 부재
+        except PersonaUnavailable as exc:  # 자산 부재·벤더 불일치 — 이 세션에선 불가
             raise HTTPException(422, str(exc)) from exc
 
     @app.get("/voices")
@@ -176,6 +176,8 @@ def create_app(
             raise HTTPException(404, str(exc)) from exc
         except SwapBusy as exc:
             raise HTTPException(409, str(exc)) from exc
+        except PersonaUnavailable as exc:  # 레퍼런스 wav 부재 톤(④-b)
+            raise HTTPException(422, str(exc)) from exc
         except RuntimeError as exc:  # 파이프라인 없음(텍스트 모드)
             raise HTTPException(503, str(exc)) from exc
 
