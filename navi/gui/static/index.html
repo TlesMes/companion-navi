@@ -612,10 +612,11 @@ function renderPersonaMenu(list) {
     item.title = blocked ? p.reason : p.character;
     item.innerHTML = `<div class="avatar">${esc(p.character[0] || "?")}</div>` +
       `<span class="pm-name">${esc(p.character)}</span><span class="pm-file">${esc(p.id)}.yaml</span>`;
-    // 비활성 항목은 클릭해도 사유만 띄운다 — 툴팁을 못 본 채 누르는 경로의 보완
+    // 어느 항목이든 1회 선택하면 메뉴는 닫는다 — 열린 리스트가 화면 아래 토스트를
+    // 가려서, 안 닫으면 비활성 사유를 띄워놓고 그걸 리스트로 덮는 꼴이 된다.
     item.onclick = () => {
-      if (blocked) { toast(p.reason); return; }
       closePersonaMenu();
+      if (blocked) { toast(p.reason); return; }  // 툴팁을 못 본 채 누르는 경로의 보완
       if (!p.current) postPersona(p.id);
     };
     menu.appendChild(item);
