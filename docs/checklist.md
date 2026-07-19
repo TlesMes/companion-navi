@@ -32,14 +32,14 @@
 `--voice` 부팅이 어떤 카드로도 죽던 버그에서 출발한 묶음. 순서 강제: E1 → E2 → E4 → E3 → E6
 (E4가 E3의 데이터 소스라 먼저, E6는 스크립트 기본값이 실사용으로 자리잡은 뒤, E5는 그 뒤 검토).
 
-- [x] **E1. 벤더 해석을 카드 번들로 이관** — `fix/mouth-vendor-from-card`(3커밋, 로컬).
+- [x] **E1. 벤더 해석을 카드 번들로 이관** — **머지 완료(PR #24)**.
       config 기본 supertonic + 카드 gptsovits kwarg 무조건 주입 → `SupertonicMouth(gpt_ckpt=…)`
       TypeError. 기본 카드 navi.yaml도 해당돼 **보편적 실패**였다. `--mouth` 불요.
       `os._exit(0)`의 traceback 은폐도 함께 수정(실패 시 exit 1). 241 tests green.
-- [ ] **E2. 표준 실행 스크립트 `scripts/run_navi.ps1`** — venv 선택·필수 인자·cwd 고정을 한 곳에.
-      무인자 기본 = **음성 + 웨이크워드 + Claude brain**(`--brain anthropic`으로 넘김, D1 보류라
-      config는 안 건드림). GUI 대기 화면 안내 문구 정정(현재 **틀린 명령**을 가르침)도 이 PR.
-      계획: `~/.claude/plans/cozy-tinkering-walrus.md`.
+- [x] **E2. 표준 실행 스크립트 `scripts/run_navi.ps1`** — **머지 완료(PR #25)**. venv 선택·필수
+      인자·cwd 고정을 한 곳에. 무인자 = 음성 + 웨이크워드 + Claude brain. GUI 대기 화면 안내도 정정.
+      코드리뷰 반영: gui를 API 키 검사에서 제외 / stop은 있는 venv 사용 / 환경변수 키 인정 /
+      소수점 로케일 / 자동 변수 섀도잉. **다음은 E4 → E3.**
 - [ ] **E3. 페르소나 전환 가능 여부 게이팅(GUI 비활성화)** — E2 직후. 엔진은 부팅 시 고정인데
       **어떤 카드로 부팅했느냐**가 다른 페르소나의 사용 가능 여부를 좌우한다(기본값으로 부팅하면
       다른 4장 중 3장이 반쪽 전환). 안내 로그보다 **버튼 비활성화 + 사유 툴팁**이 직관적이라
