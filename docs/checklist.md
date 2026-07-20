@@ -81,8 +81,9 @@
       `assets/wakeword/`로 커밋. 웨이크워드는 제품 정체성 — "하이 빅스비" 위상. 영어 폴백·
       `ready` early-return 수정이 불필요해짐. **gitignore 예외는 불필요** — `assets/`는 무시
       목록에 없다) · **E6-2** `python -m navi.preflight [--json]`
-      (순수 판정, `select_vendor`·`missing_assets`·`WakeWordConfig.ready` 재사용 + venv·brain키 추가,
-      클론 doctor 겸용) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
+      (파일 시스템·환경변수만 읽는 판정 — `select_vendor`·`missing_assets`·`WakeWordConfig.ready`
+      재사용 + venv·brain키 추가. **환경·모델 doctor 겸용**: 설치 환경과 모델 자산이 갖춰졌는지
+      보는 진단) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
       아예 없음** — 센티널화만으론 값이 사라진다, config 키 신설 + CLI 미지정 시 폴백 필수) ·
       **E6-4** `_Api.launch(engine)` detached+DEVNULL + `wait_for_daemon` 타임아웃 ~90s +
       `logs/navi.log` 안내.

@@ -7,7 +7,7 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
-**E6-2 — preflight: 부팅 전 판정 · 클론 doctor (2026.07.20, 체크리스트 E6-2):**
+**E6-2 — preflight: 부팅 전 판정 · 환경·모델 doctor (2026.07.20, 체크리스트 E6-2):**
 - **한 줄:** `python -m navi.preflight [--json]` — torch·마이크·포트·pid 없이 "지금 이 머신에서
   무엇으로 띄울 수 있나"를 답한다. 런처(E6-4)의 게이트이자 클론한 사람의 진단.
 - **왜 필요한가:** E6-4는 `DETACHED_PROCESS`+`DEVNULL`로 띄우므로 부팅이 죽으면 **에러가 전부
