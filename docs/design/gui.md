@@ -153,6 +153,95 @@ voice:
       - { name: 신남, icon: mood-happy, voice_id: secrets/voice_ref/happy.wav, ref_text: "..." }
 ```
 
+## E6 — 클론 가능성을 고려한 실행 버튼 (2026.07.20 설계 확정)
+
+대기 화면([navi/gui/__main__.py](../../navi/gui/__main__.py) `_WAITING_HTML`)은 지금 기동 명령을
+텍스트로 **안내만** 한다 — 사용자가 터미널에서 직접 쳐야 한다. E6는 여기에 실행 버튼을 붙여
+GUI가 데몬을 (소유하지 않고) 띄운다. repo가 public이므로 **클론 가능성**을 같은 설계로 푼다.
+
+### 코드로 재확인된 사실 3개
+
+1. **무인자 실행은 유지보수자 전용.** `run_navi.ps1` 무인자 = voice + wakeword + anthropic인데
+   프레시 클론엔 `.venv-voice`도 `secrets/`도 없어 즉사한다. 버튼이 무인자를 그대로 실행하면
+   클론한 사람은 100% 실패한다.
+2. **데몬엔 stdin 입력 경로가 없다.** 마이크·STT는 `if args.wakeword:` 안에서만 생성되고
+   ([daemon.py:642](../../navi/daemon.py:642)), `console()`은 버스 구독자라 **출력 전용**이다
+   ([daemon.py:727](../../navi/daemon.py:727)). 즉 웨이크워드 없는 기동은 대화가 아니라
+   **tick만 도는 점검용 골격**이다(→ D17).
+3. **웨이크워드 모델이 없으면 데몬은 뜨는 게 아니라 죽는다.** `config.wakeword.ready`가 거짓이면
+   print 후 `return`([daemon.py:647-651](../../navi/daemon.py:647)). detached+DEVNULL이면 그 print가
+   사라져 **GUI가 무한 대기**한다. `config.yaml:45`의 "모델 없이도 데몬은 뜬다" 주석은 stale.
+
+### 확정 설계
+
+**축은 엔진 하나** — `[gptsovits] [supertonic] [목소리 없이(점검용)]`. 부팅에서 **되돌릴 수 없는
+유일한 선택이 엔진**이기 때문이다(톤·페르소나는 런타임 교체 가능, 엔진 핫스왑은 안 함 —
+아래 보류 결정). mode 축은 소멸한다.
+
+**`-Mouth` 금지, `-Persona`로 전달.** `--mouth`를 주면 [config.py:276](../../navi/config.py:276)이
+카드 해석(`_vendor_from_card`)을 **건너뛰어** config의 벤더 섹션이 이기고, "나비 인격 + 아리스
+목소리"라는 **E3가 막은 반쪽 정체성이 부팅 시점에 되살아난다.** 그래서 런처는 엔진을 직접
+넘기지 않고 **preflight가 `엔진 → 부팅 가능한 카드`를 매핑**해 `-Persona`로 전달한다.
+
+> 부품 번호는 **E6-n** — checklist.md의 최상위 묶음 A~E와 헷갈리지 않게. 번호 순서 = 구현 순서.
+
+**E6-1. 웨이크워드 번들** — `secrets/navi_ko.onnx`(**164,989 B ≈ 161 KB**, 자체 학습이라 라이선스
+무관)를 `assets/wakeword/`로 옮겨 **커밋**한다. 웨이크워드는 부속이 아니라 **제품 정체성**이다
+("하이 빅스비" 위상) — 클론한 사람이 "나비야"를 못 쓰면 이 제품이 아니다. 부수 효과로 영어
+폴백·`ready` early-return 수정이 **불필요해진다**(잠재 함정은 백로그로). `.venv-voice`는 여전히 필요.
+
+**E6-2. preflight** — `python -m navi.preflight [--json]`. 순수 판정(torch·포트·pid 없음).
+데몬이 실제 부팅에 쓰는 함수를 재사용해 판정 이중화(E3)를 안 깬다:
+[`select_vendor`](../../navi/persona/voice.py:176)·[`missing_assets`](../../navi/persona/voice.py:147)·
+[`WakeWordConfig.ready`](../../navi/config.py:69) + **venv·brain 키 판정 추가**. 클론 doctor 겸용.
+
+**E6-3. `config.local.yaml` 오버레이**(gitignore) — `-VadThreshold 50` 같은 머신 전용값을 커밋
+파일에서 분리. `run_navi.ps1`의 `-VadThreshold` 기본값은 센티널(미전달)로.
+⚠ **선행 조건:** 마이크 energy VAD 임계는 **지금 config 경로가 아예 없다** — `--vad-threshold`
+CLI만 읽고([daemon.py:657](../../navi/daemon.py:657)), `config.wakeword.vad_threshold`는
+openWakeWord 내부 Silero VAD라 **다른 손잡이**다([wakeword.py:209](../../navi/ear/wakeword.py:209)).
+따라서 E6-3은 "기본값을 센티널로" 만으로 부족하고 **config 키 신설 + CLI 미지정 시 config 폴백**을
+함께 해야 한다. 안 그러면 값이 옮겨지는 게 아니라 사라진다(VAD 꺼짐).
+
+**E6-4. 실행 버튼** — `_Api.launch(engine)`:
+```python
+DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP = 0x00000008, 0x00000200
+subprocess.Popen(
+    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+     "-File", str(script), "-Persona", best.persona],
+    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+    stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, cwd=root, close_fds=True,
+)  # Popen 즉시 폐기 — .wait()·.communicate() 없음(파이프가 차면 데몬이 막힌다)
+```
+**새 폴러 금지**(기존 `wait_for_daemon` 인계) + **타임아웃 ~90s** + 초과 시 `logs/navi.log` 안내.
+타임아웃이 사실 3의 무한 대기를 메우는 안전망이다.
+
+**클론 경로 완결:** `clone` → `setup_voice_env.ps1` → **supertonic 음성 + "나비야"**가 동작한다.
+남는 장벽은 `.venv-voice` 하나로 줄어든다.
+
+**덤 — 엔진 전환:** 기존 `POST /shutdown`을 쓰면 *끄기 → 대기화면 → 다른 엔진 → 실행*이 되어
+**"재시작 버튼"을 새로 만들지 않고** 엔진을 바꿀 수 있다.
+
+### E6 양보 불가 제약 대조
+
+| 제약 | 지키는 법 |
+| :-- | :-- |
+| detached·DEVNULL·핸들 폐기 | E6-4 Popen 그대로 |
+| 새 폴링 금지 | 기존 `wait_for_daemon` 인계, preflight는 버튼당 1회 in-process |
+| GUI는 스크립트 파일명만 | venv·인자는 `run_navi.ps1` 소유. GUI는 엔진 라벨만 알고, 카드 매핑은 preflight |
+| 판정=데몬 소유(E3) | preflight가 `select_vendor`·`missing_assets`·`ready` 재사용 + `-Mouth` 금지로 부팅 시점 반쪽 정체성 차단 |
+| 비목표: 인자 선택 UI | 축이 엔진 하나뿐 — mode·brain·vad 노출 없음 |
+
+### 구현 순서 (PR 4개, E8 뒤)
+
+**E6-1 → E6-2 → E6-3 → E6-4** — E6-1이 가장 작고 독립적이라 먼저.
+
+1. **E6-1 웨이크워드 번들**: `assets/wakeword/`로 이동 + config 경로 갱신 + gitignore 예외.
+   검증: `secrets/` 지운 상태에서 `--wakeword` 기동.
+2. **E6-2 preflight**: 순수 판정 + `--json`. 검증: 오프라인 유닛(임시 카드 `zz_*` 재활용).
+3. **E6-3 config 오버레이**: 위 ⚠ 선행 조건 포함. 검증: 오버레이 없으면 기존 거동 동일 + 오버레이가 base를 이김.
+4. **E6-4 실행 버튼**: E6-1~3 전제. 검증: 위 PR ③ 검증 ③"GUI kill 무영향" 유지 + 자산부족 시 부팅 전 사유 표시 + 타임아웃 동작.
+
 ## 보류·후순위
 
 - 엔진 핫스왑(Supertonic↔GPT-SoVITS) — **안 함으로 결정(2026.07.10)**. 모델(STT·TTS·KWS)은
