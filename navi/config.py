@@ -46,7 +46,10 @@ class WakeWordConfig:
     """웨이크워드(D7) 설정. engine으로 엔진 선택 — openwakeword(채택) | vosk | porcupine(보존).
 
     모델·키 파일이 아직 없어도 Config는 만들어진다 — 실제 사용은 CLI --wakeword 줄 때만.
-    porcupine의 access_key는 비밀(.env), 모델·키워드 파일 경로는 secrets/(커밋 금지).
+    openwakeword의 한국어 모델만 **커밋 자산**(assets/wakeword/) — 자체 학습물이고, 없으면
+    --wakeword 기동이 죽어 클론한 사람이 호출어를 못 쓰기 때문이다(E6-1).
+    나머지(porcupine의 access_key는 .env, vosk·porcupine 모델·키워드 파일)는 재배포 불가라
+    secrets/(커밋 금지)에 남는다.
     """
 
     engine: str
@@ -206,7 +209,8 @@ def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
     vosk_model = vosk.get("model_path")
     pkw = porc.get("keyword_path")
     pmodel = porc.get("model_path")
-    # 모델·키 파일은 secrets/ — 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해).
+    # 경로만 루트 기준 절대화(파일이 없어도 resolve는 무해). openwakeword 모델은 커밋
+    # 자산(assets/wakeword/), vosk·porcupine 것은 secrets/ — 위 docstring 참조.
     return WakeWordConfig(
         engine=ww.get("engine", "openwakeword"),
         keywords=tuple(vosk.get("keywords") or ()),  # Vosk 전용(호출어 포함 매칭)

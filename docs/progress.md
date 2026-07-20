@@ -7,6 +7,27 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**E6-1 — 웨이크워드 모델을 커밋 자산으로 (2026.07.20, 체크리스트 E6-1):**
+- **한 줄:** `secrets/navi_ko.onnx`(gitignore) → **`assets/wakeword/navi_ko.onnx`(커밋)**.
+  비밀 자산 하나가 공개 자산으로 위상이 바뀐 **정책 변경**이라 기록한다.
+- **왜:** repo가 public인데 모델이 gitignore라 클론한 사람에겐 없었고, 없으면 `--wakeword`
+  기동은 데몬이 뜨는 게 아니라 **죽는다**(`config.wakeword.ready` 거짓 → print 후 return).
+  E6-4가 붙일 실행 버튼은 detached+DEVNULL이라 그 print마저 사라져 GUI가 무한 대기한다.
+  웨이크워드는 부속이 아니라 **제품 정체성**("하이 빅스비" 위상) — 클론한 사람이 "나비야"를
+  못 쓰면 이 제품이 아니다. 자체 학습물(livekit-wakeword·VoxCPM2)이라 라이선스 제약이 없고
+  164,989 B로 작다.
+- **경계는 유지:** `secrets/`는 계속 gitignore다 — vosk·porcupine 경로가 여전히 거기를
+  가리킨다. **재배포 가능한 자체 학습물만** `assets/`로 나온다는 것이 이 분리의 기준.
+- **설계와 달랐던 것:** 계획서의 "gitignore 예외 추가"는 **불필요**했다 — `assets/`는 애초에
+  무시 목록에 없다(`git check-ignore`로 확인). gui.md·checklist의 해당 문구를 정정했다.
+- **특징모델(melspectrogram·embedding)은 번들하지 않는다** — 타사 모델 재배포 리스크를 피했다.
+  openWakeWord가 최초 1회 받아 venv에 캐시하고 이후 오프라인 안전(`download_models`는 파일이
+  있으면 즉시 통과). 이 주의는 `assets/wakeword/README.md`에 적었다.
+- **검증:** 262 tests green(신규 `tests/test_assets.py` 3건 — 이 파일만 tmp_path가 아니라
+  **진짜 리포 루트**를 본다. "클론하면 무엇이 딸려 오는가"가 질문이라 합성 트리로는 성립하지
+  않는다). 클론 시뮬 — `git archive`로 깨끗한 트리를 뽑아 `secrets/` 부재를 재현한 뒤 그
+  트리에서 `wakeword.ready` → **True**(경로도 클론 트리 안을 가리킴). 실기 "나비야" 감지는 사용자 확인.
+
 **E 묶음 — 데몬 기동 정상화: 자산 검사·전환 게이팅 (2026.07.19, PR #26·#27, 체크리스트 E4·E3):**
 - **한 줄:** 카드가 가리키는 목소리 자산이 없거나 이 세션 엔진과 안 맞는 페르소나를
   **읽을 수 있는 에러로 막고**, 그 판정을 GUI가 미리 회색으로 보여준다. E 묶음은 E6·E7·E5만 남았다.

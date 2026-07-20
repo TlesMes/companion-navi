@@ -77,9 +77,10 @@
       카드 해석을 건너뛰어 "나비 인격 + 아리스 목소리"(E3가 막은 반쪽 정체성)를 부팅 시점에
       되살린다. preflight가 `엔진 → 부팅 가능한 카드`를 매핑한다.
       **부품 4개(번호 순서 = 구현 순서. 위 최상위 묶음 A~E와 헷갈리지 않게 `E6-n`으로 쓴다):**
-      **E6-1** 웨이크워드 번들(`secrets/navi_ko.onnx` 164,989 B, 자체 학습이라 라이선스 무관 →
+      **E6-1** 웨이크워드 번들(`navi_ko.onnx` 164,989 B, 자체 학습이라 라이선스 무관 →
       `assets/wakeword/`로 커밋. 웨이크워드는 제품 정체성 — "하이 빅스비" 위상. 영어 폴백·
-      `ready` early-return 수정이 불필요해짐) · **E6-2** `python -m navi.preflight [--json]`
+      `ready` early-return 수정이 불필요해짐. **gitignore 예외는 불필요** — `assets/`는 무시
+      목록에 없다) · **E6-2** `python -m navi.preflight [--json]`
       (순수 판정, `select_vendor`·`missing_assets`·`WakeWordConfig.ready` 재사용 + venv·brain키 추가,
       클론 doctor 겸용) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
       아예 없음** — 센티널화만으론 값이 사라진다, config 키 신설 + CLI 미지정 시 폴백 필수) ·
