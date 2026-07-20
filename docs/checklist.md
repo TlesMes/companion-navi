@@ -90,6 +90,9 @@
       `.venv-voice` 하나. **덤:** 기존 `/shutdown` 활용 → 끄기→대기화면→다른 엔진→실행으로
       "재시작 버튼" 없이 엔진 전환.
       **구현 순서: E6-1 → E6-2 → E6-3 → E6-4** (E6-1이 가장 작고 독립적).
+      **E6-1 구현 완료(2026.07.20, `feat/wakeword-bundle`)** — 262 tests green + 클론 시뮬
+      (`git archive` 트리에서 `wakeword.ready`=True) + **실기 통과**("나비야" 감지).
+      다음은 **E6-2(preflight)**.
       **양보 불가:** GUI가 데몬을 소유 금지(`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
       핸들 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`이 유일한
       피드백 경로) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.
