@@ -5,7 +5,7 @@ CPU 점유율을 주기 출력한다(검증2: <2% 눈으로 확인). predict는 
 다운로드 후 네트워크 0(검증3). 데몬과 독립이라 openWakeWord만 떼어 자원·동작을 본다.
 
 실행(.venv-voice):
-  python scripts/try/owww_mic.py [--model hey_jarvis | --model secrets/navi_ko.onnx] [--mic 1] [--threshold 0.5]
+  python scripts/try/owww_mic.py [--model hey_jarvis | --model assets/wakeword/navi_ko.onnx] [--mic 1] [--threshold 0.5]
 """
 
 from __future__ import annotations

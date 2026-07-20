@@ -236,8 +236,10 @@ subprocess.Popen(
 
 **E6-1 → E6-2 → E6-3 → E6-4** — E6-1이 가장 작고 독립적이라 먼저.
 
-1. **E6-1 웨이크워드 번들**: `assets/wakeword/`로 이동 + config 경로 갱신 + gitignore 예외.
-   검증: `secrets/` 지운 상태에서 `--wakeword` 기동.
+1. **E6-1 웨이크워드 번들**: `assets/wakeword/`로 이동 + config 경로 갱신 + 출처 README.
+   **gitignore 예외는 불필요**(`assets/`는 무시 목록에 없음 — 2026.07.20 확인). `secrets/`
+   규칙은 유지한다: vosk·porcupine 경로가 여전히 거기를 가리킨다.
+   검증: 깨끗한 트리(`git archive`)에서 `wakeword.ready`가 True + 실기 "나비야" 감지.
 2. **E6-2 preflight**: 순수 판정 + `--json`. 검증: 오프라인 유닛(임시 카드 `zz_*` 재활용).
 3. **E6-3 config 오버레이**: 위 ⚠ 선행 조건 포함. 검증: 오버레이 없으면 기존 거동 동일 + 오버레이가 base를 이김.
 4. **E6-4 실행 버튼**: E6-1~3 전제. 검증: 위 PR ③ 검증 ③"GUI kill 무영향" 유지 + 자산부족 시 부팅 전 사유 표시 + 타임아웃 동작.
