@@ -654,7 +654,11 @@ async def _run(config, args) -> None:
         from navi.stt.fasterwhisper import FasterWhisperStt
 
         wakeword = _build_wakeword(config.wakeword)
-        vad = create_vad("energy", threshold=args.vad_threshold) if args.vad_threshold else None
+        # 층위: CLI > config.local.yaml > config.yaml > daemon 기본(mic.py의 EnergyVad(150)).
+        # 0·미지정은 "미지정"과 같이 취급 — falsy 가드로 vad=None 유지, MicListener가 기본으로 뜬다.
+        # 마이크 임계 0을 그대로 쓰면 모든 프레임이 음성이라 발화 끝점이 안 잡혀 STT가 영영 안 돈다.
+        threshold = args.vad_threshold or config.energy_vad_threshold
+        vad = create_vad("energy", threshold=threshold) if threshold else None
         session = ListenSession(
             wakeword,
             vad=vad,

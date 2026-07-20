@@ -1,0 +1,15 @@
+# 머신 전용 설정 오버레이 — 이 파일을 config.local.yaml로 복사해 자기 값으로 편집하세요.
+# config.yaml 위에 deep merge됩니다: 여기 적은 키만 덮고 나머지는 base 값 유지.
+# config.local.yaml은 gitignore — 남의 머신에 강요되지 않습니다.
+#
+# 튜닝하기 좋은 값들의 자리입니다 — 마이크·방·오디오 장치처럼 방마다 다른 것.
+# API 키 같은 비밀은 여기가 아니라 .env에 둡니다.
+
+ear:
+  # 마이크 입력 → STT 게이트. 프레임 RMS가 이 값 이상이어야 발화로 친다.
+  # 미설정·0 = daemon 기본(150). 저게인 USB 마이크는 50~80이 흔한 값이다.
+  # 조용한 방인데 말해도 안 잡히면 낮추고, 생활소음이 STT로 새면 올린다.
+  #
+  # ⚠ 웨이크워드의 vad_threshold와 다른 손잡이다 — 그쪽은 "나비야" 오탐 억제
+  # (openWakeWord 내부 Silero VAD). 이쪽은 마이크 프레임이 STT로 갈지를 가른다.
+  energy_vad_threshold: 50

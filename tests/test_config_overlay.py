@@ -112,3 +112,28 @@ def test_load_config_applies_overlay(tmp_path):
     """오버레이가 실제 Config에 반영되는가 — 브랜치 하나만 바꿔 확인(다른 필드 변경은 뒤 커밋)."""
     _write_repo(tmp_path, local={"ear": {"wakeword": {"openwakeword": {"threshold": 0.9}}}})
     assert load_config(tmp_path).wakeword.threshold == 0.9
+
+
+def test_energy_vad_threshold_default_is_zero(tmp_path):
+    """미설정 = 0 = "daemon 기본(150)"으로 폴백 — 이 규약이 안 지켜지면 스크립트 무인자 기동이 깨진다."""
+    _write_repo(tmp_path)
+    assert load_config(tmp_path).energy_vad_threshold == 0.0
+
+
+def test_energy_vad_threshold_overlay_beats_base(tmp_path):
+    """이 필드가 config.local.yaml로 옮기려는 첫 실사용값 — 오버레이가 실제로 이겨야 의미가 있다."""
+    _write_repo(tmp_path, local={"ear": {"energy_vad_threshold": 50}})
+    assert load_config(tmp_path).energy_vad_threshold == 50.0
+
+
+def test_energy_vad_threshold_from_base_yaml(tmp_path):
+    """config.yaml에 직접 넣어도 읽힌다(오버레이 없이도 동작)."""
+    import yaml as _yaml
+    config = dict(_CONFIG)
+    config["ear"] = {**_CONFIG["ear"], "energy_vad_threshold": 80}
+    (tmp_path / "config.yaml").write_text(_yaml.safe_dump(config), encoding="utf-8")
+    (tmp_path / "personas").mkdir()
+    (tmp_path / "personas" / "navi.yaml").write_text(
+        _yaml.safe_dump(_CARD, allow_unicode=True), encoding="utf-8"
+    )
+    assert load_config(tmp_path).energy_vad_threshold == 80.0

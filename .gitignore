@@ -10,6 +10,10 @@ __pycache__/
 # 비밀 — API 키는 .env에만 (커밋 금지)
 .env
 
+# 머신 전용 설정 오버레이 (E6-3) — 마이크 게인 등 이 방에서 잰 값들의 자리.
+# 템플릿은 config.local.yaml.example로 커밋된다.
+config.local.yaml
+
 # 웨이크워드 비밀 파일 (Picovoice .ppn 키워드·.pv 언어 모델 — 라이선스/개인 자산, 커밋 금지)
 secrets/
 

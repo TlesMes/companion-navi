@@ -151,6 +151,14 @@ class Config:
     persona_card_path: Path
     gemini_api_key: str | None
     anthropic_api_key: str | None
+    # 마이크 입력 1관문 — RMS 에너지 VAD 임계(D15 캐스케이드의 energy 층).
+    # config `ear.energy_vad_threshold`, 미지정·0이면 CLI에서 안 준 것과 같은 취급이라
+    # daemon이 자기 기본(EnergyVad=150)으로 뜬다(mic.py:46, listening.py:62의 `vad or EnergyVad()`).
+    # **wakeword.vad_threshold와 다른 손잡이다** — 그쪽은 openWakeWord 내부 Silero VAD로
+    # 호출어 오탐을 억제하고(wakeword.py:209), 이쪽은 마이크 프레임이 STT로 넘어갈지를 가른다.
+    # 마이크 게인·방 소음을 타는 머신 전용값이라 config.local.yaml이 제자리다(E6-3).
+    # 기본값을 둔 건 필드 추가로 기존 생성부가 안 깨지게 하려는 것.
+    energy_vad_threshold: float = 0.0
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -345,4 +353,5 @@ def load_config(
         persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+        energy_vad_threshold=float(raw.get("ear", {}).get("energy_vad_threshold", 0.0)),
     )
