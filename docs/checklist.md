@@ -81,8 +81,9 @@
       `assets/wakeword/`로 커밋. 웨이크워드는 제품 정체성 — "하이 빅스비" 위상. 영어 폴백·
       `ready` early-return 수정이 불필요해짐. **gitignore 예외는 불필요** — `assets/`는 무시
       목록에 없다) · **E6-2** `python -m navi.preflight [--json]`
-      (순수 판정, `select_vendor`·`missing_assets`·`WakeWordConfig.ready` 재사용 + venv·brain키 추가,
-      클론 doctor 겸용) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
+      (파일 시스템·환경변수만 읽는 판정 — `select_vendor`·`missing_assets`·`WakeWordConfig.ready`
+      재사용 + venv·brain키 추가. **환경·모델 doctor 겸용**: 설치 환경과 모델 자산이 갖춰졌는지
+      보는 진단) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
       아예 없음** — 센티널화만으론 값이 사라진다, config 키 신설 + CLI 미지정 시 폴백 필수) ·
       **E6-4** `_Api.launch(engine)` detached+DEVNULL + `wait_for_daemon` 타임아웃 ~90s +
       `logs/navi.log` 안내.
@@ -90,9 +91,16 @@
       `.venv-voice` 하나. **덤:** 기존 `/shutdown` 활용 → 끄기→대기화면→다른 엔진→실행으로
       "재시작 버튼" 없이 엔진 전환.
       **구현 순서: E6-1 → E6-2 → E6-3 → E6-4** (E6-1이 가장 작고 독립적).
-      **E6-1 구현 완료(2026.07.20, `feat/wakeword-bundle`)** — 262 tests green + 클론 시뮬
-      (`git archive` 트리에서 `wakeword.ready`=True) + **실기 통과**("나비야" 감지).
-      다음은 **E6-2(preflight)**.
+      **E6-1 완료(PR #29, 2026.07.20)** — 262 tests green + 클론 시뮬 + 실기("나비야" 감지) 통과.
+      **E6-2 구현 완료(2026.07.20, `feat/preflight`)** — 273 tests green. `python -m navi.preflight
+      [--json]`. **핵심 발견: 부팅 판정 ≠ 교체 판정** — 레퍼런스 wav 부재는 E3 `availability()`에선
+      차단이지만 부팅에선 warning만이고 데몬은 뜬다 → preflight는 **차단(blockers)과 경고(warnings)를
+      분리**한다(그 구분이 이 모듈의 정확성). 엔진 매핑은 계산하지 않고 `load_config(persona_card=)`가
+      해석한 것을 그대로 쓴다(데몬 부팅과 동일 경로). base 가중치 경로는
+      `mouth.gptsovits.missing_base_ckpts()`로 추출해 엔진과 공유.
+      **실기 대조 통과** — `zz_no_ref`(판정 O+경고)는 경고 찍고 **정상 부팅**,
+      `zz_no_ckpt`(판정 X)는 지목한 그 파일로 `FileNotFoundError`+종료 1. 판정=현실 확인.
+      다음은 **E6-3**.
       **양보 불가:** GUI가 데몬을 소유 금지(`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
       핸들 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`이 유일한
       피드백 경로) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.
