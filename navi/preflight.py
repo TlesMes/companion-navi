@@ -77,6 +77,10 @@ class EngineOption:
     bootable: bool            # 이 엔진으로 띄울 수 있는 카드가 하나라도 있는가
     reason: str = ""
     cards: list[CardOption] = field(default_factory=list)
+    # 런처가 이 엔진을 클릭했을 때 `-Persona`로 넘길 카드. 사용자는 엔진만 고르고 카드는
+    # 안 고른다(gui.md) — 판정을 preflight에 둔다(E3: GUI는 넘기기만). None이면 `-Persona`
+    # 없음(목소리 없이=`-Mode text`, 또는 부팅 가능한 카드가 아예 없는 엔진).
+    launch_persona: str | None = None
 
 
 @dataclass
@@ -195,12 +199,26 @@ def _gptsovits_blockers(config, vendor_voice) -> list[str]:
     return []
 
 
+def _pick_launch_persona(cards: list[CardOption], default_stem: str) -> str | None:
+    """이 엔진을 클릭했을 때 `-Persona`로 넘길 카드 — config 기본이 여기 있고 부팅 가능하면
+    그것, 아니면 첫 부팅 가능 카드. 부팅 가능한 게 없으면 None.
+
+    config 기본을 우선하는 이유: 알파벳 첫 카드가 테스트 페르소나(example_kr=소민)일 수 있어
+    "첫 부팅가능"만으론 엉뚱한 걸 띄운다. 사용자 의도의 기본은 config가 가리키는 카드다.
+    """
+    bootable = [c.id for c in cards if c.bootable]
+    if default_stem in bootable:
+        return default_stem
+    return bootable[0] if bootable else None
+
+
 def evaluate(root: Path | None = None) -> PreflightReport:
     """이 머신의 부팅 가능성 전체 — 런처와 doctor가 함께 쓰는 진입점."""
     root = (root or Path.cwd()).resolve()
 
     # 전제조건은 카드와 무관하므로 기본 카드 기준으로 한 번만 읽는다.
     config = load_config(root)
+    default_persona = config.persona_card_path.stem
     pre = Prerequisites(
         base_venv=(root / _BASE_VENV / "Scripts" / "python.exe").is_file(),
         voice_venv=(root / _VOICE_VENV / "Scripts" / "python.exe").is_file(),
@@ -232,6 +250,7 @@ def evaluate(root: Path | None = None) -> PreflightReport:
             EngineOption(
                 id=engine, label=_engine_label(engine),
                 bootable=not blockers, reason=" · ".join(blockers), cards=cards,
+                launch_persona=_pick_launch_persona(cards, default_persona),
             )
         )
 
