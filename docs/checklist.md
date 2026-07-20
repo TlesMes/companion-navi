@@ -96,7 +96,10 @@
       차단이지만 부팅에선 warning만이고 데몬은 뜬다 → preflight는 **차단(blockers)과 경고(warnings)를
       분리**한다(그 구분이 이 모듈의 정확성). 엔진 매핑은 계산하지 않고 `load_config(persona_card=)`가
       해석한 것을 그대로 쓴다(데몬 부팅과 동일 경로). base 가중치 경로는
-      `mouth.gptsovits.missing_base_ckpts()`로 추출해 엔진과 공유. 다음은 **E6-3**.
+      `mouth.gptsovits.missing_base_ckpts()`로 추출해 엔진과 공유.
+      **실기 대조 통과** — `zz_no_ref`(판정 O+경고)는 경고 찍고 **정상 부팅**,
+      `zz_no_ckpt`(판정 X)는 지목한 그 파일로 `FileNotFoundError`+종료 1. 판정=현실 확인.
+      다음은 **E6-3**.
       **양보 불가:** GUI가 데몬을 소유 금지(`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
       핸들 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`이 유일한
       피드백 경로) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.
