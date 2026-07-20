@@ -47,7 +47,9 @@ param(
 
     [string]$Persona = "",          # 이름만 (personas/<이름>.yaml). 빈 값 = config의 card_path
     [string]$Db = "",               # 실구동 테스트 격리용
-    [double]$VadThreshold = 50,     # 이 머신 마이크 실측 — 기본 150은 발화가 STT로 안 넘어감
+    [double]$VadThreshold = 0,      # 0 = 미전달 취급 — config.local.yaml의 ear.energy_vad_threshold가
+                                    # 결정한다(E6-3). 기존 하드코딩 50은 그 파일로 이관됐다.
+                                    # 이 인자는 이제 이번 실행만 다른 값을 시험할 때 쓴다.
                                     # (config의 ear.wakeword.openwakeword.vad_threshold와 다른 손잡이)
     [int]$Mic = -1,                 # -1 = 기본 입력 장치
     [switch]$NoWakeWord,            # voice 모드는 웨이크워드 기본 ON
@@ -109,9 +111,13 @@ if ($Mode -eq "stop") {
     if ($Mode -eq "voice") {
         $PyArgs += "--voice"
         if (-not $NoWakeWord) { $PyArgs += "--wakeword" }
-        # 불변 로케일로 직렬화 — 쉼표 소수점 로케일(de-DE 등)에서 [double] 37.5가
-        # "37,5"가 되어 argparse float 파싱이 거부한다.
-        $PyArgs += @("--vad-threshold", $VadThreshold.ToString([cultureinfo]::InvariantCulture))
+        # 0(기본)은 안 넘긴다 — daemon이 config.local.yaml → daemon 기본 순으로 폴백한다(E6-3).
+        # 값을 명시했을 때만 이번 실행이 config를 이기도록 층위(CLI > config)를 유지한다.
+        if ($VadThreshold -ne 0) {
+            # 불변 로케일로 직렬화 — 쉼표 소수점 로케일(de-DE 등)에서 [double] 37.5가
+            # "37,5"가 되어 argparse float 파싱이 거부한다.
+            $PyArgs += @("--vad-threshold", $VadThreshold.ToString([cultureinfo]::InvariantCulture))
+        }
         if ($Mic -ge 0) { $PyArgs += @("--mic", $Mic) }
     }
     if ($Brain)   { $PyArgs += @("--brain", $Brain) }
