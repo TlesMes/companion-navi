@@ -203,12 +203,25 @@ openWakeWord 내부 Silero VAD라 **다른 손잡이**다([wakeword.py:209](../.
 따라서 E6-3은 "기본값을 센티널로" 만으로 부족하고 **config 키 신설 + CLI 미지정 시 config 폴백**을
 함께 해야 한다. 안 그러면 값이 옮겨지는 게 아니라 사라진다(VAD 꺼짐).
 
-**E6-4. 실행 버튼** — `_Api.launch(engine)`:
+**E6-4. 대기 화면(제시) + 실행 버튼** — preflight 결과를 **그리고**, 고른 것을 **띄운다**.
+제시와 실행을 쪼개지 않는 이유: "화면은 그려지는데 눌러도 아무 일 없음"은 독립 검증 가치가 없다.
+
+- **제시** — 엔진 칩 3개(`gptsovits`/`supertonic`/`목소리 없이(점검용)`). 각 칩의 활성 여부는
+  preflight의 `bootable`, 회색 칩을 누르면 `reason` 토스트(E3·E8과 같은 규약 — `disabled`를
+  쓰지 않는다: 클릭이 죽으면 사유를 볼 기회가 사라진다). 카드별 `warnings`도 함께 보인다
+  ("뜨긴 뜨는데 그 톤으로 말하면 실패"를 미리 알린다).
+- **카드는 고르지 않는다(2026.07.20 결정)** — 엔진만 고르고, 카드는 preflight가 그 엔진에
+  지정한 것(config 기본 카드가 그 엔진이면 그것, 아니면 부팅 가능한 첫 카드)을 쓴다.
+  근거: **부팅에서 되돌릴 수 없는 선택만 노출한다**는 원칙. 카드는 뜬 뒤 기존 페르소나
+  그리드로 교체되므로 되돌릴 수 있고, 대기 화면에 카드까지 늘어놓으면 "인자 선택 UI"가 된다.
+- **실행** — `_Api.launch(engine)`:
 ```python
 DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP = 0x00000008, 0x00000200
 subprocess.Popen(
+    # 카드는 preflight가 그 엔진에 지정한 것 — GUI가 고르지 않는다.
+    # -Mouth는 쓰지 않는다(위 "확정 설계" 참조 — 부팅 시점 반쪽 정체성 방지).
     ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-     "-File", str(script), "-Persona", best.persona],
+     "-File", str(script), "-Persona", persona],
     creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
     stdin=DEVNULL, stdout=DEVNULL, stderr=DEVNULL, cwd=root, close_fds=True,
 )  # Popen 즉시 폐기 — .wait()·.communicate() 없음(파이프가 차면 데몬이 막힌다)
@@ -230,7 +243,7 @@ subprocess.Popen(
 | 새 폴링 금지 | 기존 `wait_for_daemon` 인계, preflight는 버튼당 1회 in-process |
 | GUI는 스크립트 파일명만 | venv·인자는 `run_navi.ps1` 소유. GUI는 엔진 라벨만 알고, 카드 매핑은 preflight |
 | 판정=데몬 소유(E3) | preflight가 `select_vendor`·`missing_assets`·`ready` 재사용 + `-Mouth` 금지로 부팅 시점 반쪽 정체성 차단 |
-| 비목표: 인자 선택 UI | 축이 엔진 하나뿐 — mode·brain·vad 노출 없음 |
+| 비목표: 인자 선택 UI | **엔진 축만** 노출한다(칩 3개) — 카드·mode·brain·vad는 대기 화면에 없다. 되돌릴 수 없는 선택만 묻는다는 뜻이지 "버튼이 물리적으로 1개"라는 뜻이 아니다(v1 표현 폐기) |
 
 ### 구현 순서 (PR 4개, E8 뒤)
 
