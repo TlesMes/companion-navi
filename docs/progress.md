@@ -7,6 +7,31 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**E6-4 — 대기 화면 런처: E6 완결 (2026.07.21, 체크리스트 E6-4):**
+- **한 줄:** 죽은 대기 화면(손으로 명령을 쳐야 했던)을 런처로 바꾼다. preflight(E6-2)로 엔진
+  칩을 그리고, 클릭하면 데몬을 창 없이 독립 기동한다. 앞의 셋(모델·판정·설정)이 여기서 조립된다.
+- **구성:** ① preflight에 `launch_persona` 추가 — 엔진 클릭 시 넘길 `-Persona`(config 기본 우선,
+  아니면 첫 부팅가능. 알파벳 첫 카드가 테스트 페르소나라 "첫 부팅가능"만으론 소민이 뽑힘) ·
+  ② `waiting.html`(인라인 문자열에서 정적 파일로 분리) — 엔진 칩 3개, 회색 클릭은 사유 토스트 ·
+  ③ `_Api.launch`가 run_navi.ps1을 창 없이 기동 · ④ 기존 폴러에 데드라인(~90s)만 추가.
+- **★ 설계 플래그가 실물에서 틀렸다.** gui.md·초안이 `DETACHED_PROCESS`를 지정했는데, 그건 콘솔을
+  **아예 없애** run_navi.ps1의 `Write-Host`(콘솔 호스트 필요)가 `ErrorActionPreference=Stop`과 만나
+  **데몬 실행 전에 스크립트를 조용히 죽였다**(powershell exit 0, 출력 0, 데몬 안 뜸). 파이프로
+  캡처하면 뜨는데 DETACHED면 안 뜨는 대조로 원인을 좁혔다. `CREATE_NO_WINDOW`(숨은 콘솔)로 교체 —
+  호스트가 살고, "GUI 죽어도 데몬 생존"은 부모 사망 시 자식 생존이 Windows 기본이라 그대로 성립.
+  gui.md 정정. **detached+DEVNULL의 조용한 실패를 실측한 셈** — E6-4가 데드라인·회색 게이트로
+  막으려던 바로 그 실패 유형이 구현 중에 실제로 나타났다.
+- **양보 불가 준수:** 새 폴러 없이 기존 `wait_for_daemon`에 데드라인만 얹었다(클릭이 무장, 초과 시
+  칩 재활성 + logs 안내). GUI는 스크립트 파일명 + preflight가 준 라벨만 안다. 판정(회색·사유·카드
+  선택)은 전부 preflight 소유.
+- **검증(헤드리스로 전 계층):** 292 tests green(launch_persona 4 + argv 4). 브리지 preflight
+  in-process 호출 · `_Api.launch('none')` → 텍스트 데몬 2초 기동 · **부모 python 종료 후에도 데몬
+  생존**(소유 안 함) · 텍스트 데몬이 `/status`·`GET /`(index.html) 서빙(폴러 전환 대상 확인). UI 상태
+  전이(칩 렌더·회색 토스트·기동 전환·타임아웃 복귀)는 브라우저에 mock 브리지를 주입해 확인.
+  **남은 사용자 실기:** 실제 pywebview 창에서 클릭 → 시각 전환(기능 계층은 다 검증됨).
+- **E6 완결:** clone → `setup_voice_env.ps1` → GUI 열기 → 엔진 클릭 한 번으로 데몬 기동까지 이어진다.
+  E6-1(모델 커밋)·E6-2(preflight)·E6-3(설정)·E6-4(런처)가 클론 가능성이라는 한 목표로 묶였다.
+
 **E6-3 — config.local.yaml 오버레이: 머신 전용값의 자리 (2026.07.21, 체크리스트 E6-3):**
 - **한 줄:** `run_navi.ps1`의 `-VadThreshold 50`(이 방·이 마이크 실측)이 커밋 스크립트에
   박혀 남에게 강요됐다. `config.local.yaml`(gitignore) 계층을 신설해 그 자리를 만든다.

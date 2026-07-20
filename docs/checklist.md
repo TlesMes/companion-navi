@@ -36,10 +36,9 @@
 
 ## E. 데몬 기동 정상화 — 진행 중 (2026.07.19 시작, A·B보다 우선)
 
-`--voice` 부팅이 어떤 카드로도 죽던 버그에서 출발한 묶음. **E1·E2·E4·E3·E8 머지 완료 + A5 실기 통과.**
-남은 순서: **E6 → E7 → E5**. E6는 설계 확정(2026.07.20)으로 PR 4개(E6-1~4)로 쪼개져 있다 —
-기존 "스크립트 기본값이 실사용으로 자리잡은 뒤" 유보는 **해소**됐다(머신 전용값 분리가 E6-3에
-포함돼 그 대기가 불필요해짐).
+`--voice` 부팅이 어떤 카드로도 죽던 버그에서 출발한 묶음. **E1·E2·E4·E3·E8 머지 + A5 실기 통과.
+E6-1~E6-4 구현 완료(E6-1~3 머지, E6-4 리뷰 대기).** 남은 순서: **E7 → E5**.
+E6(대기 화면 런처)은 PR 4개로 완결 — 클론 → setup → 엔진 클릭 한 번으로 데몬 기동까지 이어진다.
 
 - [x] **E1. 벤더 해석을 카드 번들로 이관** — **머지 완료(PR #24)**.
       config 기본 supertonic + 카드 gptsovits kwarg 무조건 주입 → `SupertonicMouth(gpt_ckpt=…)`
@@ -63,7 +62,8 @@
       `available`·`reason`)와 실행(422)이 같은 판정을 쓴다 — GUI 회색은 안내, 방어는 데몬 소유.
       사유엔 `-Persona` 재기동 해법 포함. 259 tests green. 설계 기록 → [gui.md](./design/gui.md) PR② 개정.
       **툴팁·회색 렌더링 실기 미확인 → A5.**
-- [ ] **E6. GUI 대기 화면에서 데몬 분리 기동(실행 버튼)** — **설계 확정(2026.07.20), 구현 대기.**
+- [x] **E6. GUI 대기 화면에서 데몬 분리 기동(실행 버튼)** — **E6-1~4 구현 완료(E6-1~3 머지,
+      E6-4 리뷰 대기).** 클론 → setup → 엔진 클릭 한 번으로 데몬 기동까지 이어진다.
       상세 → [gui.md](./design/gui.md) "E6 — 클론 가능성을 고려한 실행 버튼".
       **코드로 재확인된 사실 3개:** ① 무인자 실행(voice+wakeword+anthropic)은 유지보수자 전용 —
       프레시 클론은 즉사 ② **데몬엔 stdin 입력 경로가 없다** — 마이크·STT는 `if args.wakeword:`
@@ -102,10 +102,16 @@
       `mouth.gptsovits.missing_base_ckpts()`로 추출해 엔진과 공유.
       **실기 대조 통과** — `zz_no_ref`(판정 O+경고)는 경고 찍고 **정상 부팅**,
       `zz_no_ckpt`(판정 X)는 지목한 그 파일로 `FileNotFoundError`+종료 1. 판정=현실 확인.
-      다음은 **E6-3**.
-      **양보 불가:** GUI가 데몬을 소유 금지(`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
-      핸들 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`이 유일한
-      피드백 경로) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.
+      **E6-3 완료(PR #31, 2026.07.21)** — `config.local.yaml` 오버레이. 머신 전용값(마이크 VAD 50)을
+      커밋 파일에서 분리. 284 tests + 백그라운드 데몬 로그로 층위(CLI>config) 실증.
+      **E6-4 구현 완료(2026.07.21, `feat/gui-launcher`)** — 대기 화면을 런처로. 292 tests green.
+      **★ 플래그 발견:** 설계의 `DETACHED_PROCESS`는 실물 실패 — 콘솔을 없애 run_navi.ps1의
+      `Write-Host`가 죽어 데몬이 안 떴다. `CREATE_NO_WINDOW`로 교체(gui.md 정정). 헤드리스 검증:
+      브리지 preflight in-process · argv 유닛 · 텍스트 데몬 기동 2초 · 부모 종료 후 데몬 생존 ·
+      텍스트 데몬이 index.html 서빙. UI 상태 전이는 브라우저 mock. **창→클릭→시각 전환만 사용자 실기.**
+      **양보 불가:** GUI가 데몬을 소유 금지(`CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
+      Popen 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`에 데드라인만
+      추가) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.
       비목표: 정지 버튼·인자 선택 UI.
 - [x] **E8. GUI 표시 결함 2건 (360px 창을 못 견딤)** — **머지 완료(PR #28)**. A5 실기에서
       관측(2026.07.19). 게이팅 로직은 정상이고 **보여주는 쪽만** 문제였다. 커밋 `5b00a07`(토스트
