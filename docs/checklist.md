@@ -90,9 +90,13 @@
       `.venv-voice` 하나. **덤:** 기존 `/shutdown` 활용 → 끄기→대기화면→다른 엔진→실행으로
       "재시작 버튼" 없이 엔진 전환.
       **구현 순서: E6-1 → E6-2 → E6-3 → E6-4** (E6-1이 가장 작고 독립적).
-      **E6-1 구현 완료(2026.07.20, `feat/wakeword-bundle`)** — 262 tests green + 클론 시뮬
-      (`git archive` 트리에서 `wakeword.ready`=True) + **실기 통과**("나비야" 감지).
-      다음은 **E6-2(preflight)**.
+      **E6-1 완료(PR #29, 2026.07.20)** — 262 tests green + 클론 시뮬 + 실기("나비야" 감지) 통과.
+      **E6-2 구현 완료(2026.07.20, `feat/preflight`)** — 273 tests green. `python -m navi.preflight
+      [--json]`. **핵심 발견: 부팅 판정 ≠ 교체 판정** — 레퍼런스 wav 부재는 E3 `availability()`에선
+      차단이지만 부팅에선 warning만이고 데몬은 뜬다 → preflight는 **차단(blockers)과 경고(warnings)를
+      분리**한다(그 구분이 이 모듈의 정확성). 엔진 매핑은 계산하지 않고 `load_config(persona_card=)`가
+      해석한 것을 그대로 쓴다(데몬 부팅과 동일 경로). base 가중치 경로는
+      `mouth.gptsovits.missing_base_ckpts()`로 추출해 엔진과 공유. 다음은 **E6-3**.
       **양보 불가:** GUI가 데몬을 소유 금지(`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, DEVNULL,
       핸들 즉시 폐기 — `wait()`·파이프 금지) / **새 폴링 추가 금지**(기존 `wait_for_daemon`이 유일한
       피드백 경로) / venv·인자 지식을 GUI에 두지 않는다 / 중복 클릭은 `acquire_pidfile`이 거부.

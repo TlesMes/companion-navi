@@ -7,6 +7,34 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**E6-2 — preflight: 부팅 전 판정 · 클론 doctor (2026.07.20, 체크리스트 E6-2):**
+- **한 줄:** `python -m navi.preflight [--json]` — torch·마이크·포트·pid 없이 "지금 이 머신에서
+  무엇으로 띄울 수 있나"를 답한다. 런처(E6-4)의 게이트이자 클론한 사람의 진단.
+- **왜 필요한가:** E6-4는 `DETACHED_PROCESS`+`DEVNULL`로 띄우므로 부팅이 죽으면 **에러가 전부
+  사라진다**. 부팅을 즉사시키는 지점 3개를 코드로 확인했다 — brain 키 부재(`create_brain`의
+  `RuntimeError`, 가장 이른 사망) · ckpt 부재(`FileNotFoundError`) · 웨이크워드 미비(E6-1로 해소).
+- **★ 핵심 발견: 부팅 판정 ≠ 런타임 교체 판정.** 레퍼런스 wav 부재는 E3 `availability()`(④-a)에선
+  **차단**이지만 부팅에선 **warning만 찍고 데몬은 뜬다**(카드 하나가 데몬을 벽돌로 만드는 게
+  E1에서 고친 실패 유형이라 그렇게 설계돼 있다). `availability()`를 그대로 재사용했다면 런처가
+  **뜰 수 있는 조합을 못 뜬다고** 말했을 것이다 → preflight는 **차단(blockers)과 경고(warnings)를
+  분리**한다. 자산을 보는 눈은 같은 `missing_assets()`를 써서 판정 이중화는 만들지 않았다.
+  이 구분은 `test_missing_reference_wav_warns_but_still_boots`로 계약화했다.
+- **엔진 매핑을 계산하지 않는다.** 카드마다 `load_config(root, persona_card=…)`를 부르면
+  `config.mouth.vendor`가 **데몬이 실제로 부팅할 그 엔진**이다(`_vendor_from_card`→`select_vendor`).
+  벤더 옵션(repo_path·ckpt)까지 같이 나와 자산 검사 입력이 된다. 직접 계산하면 그 순간 갈라진다.
+- **base 가중치 판정을 어댑터에서 추출.** 경로 지식이 `_resolve_base_ckpts` 안에만 있어 부팅 전
+  판정이 불가능했다 → `base_ckpt_paths()`·`missing_base_ckpts()`를 module 함수로 꺼내 엔진과
+  preflight가 **같은 것을 본다**(E3 원칙의 부팅 축 적용). 동작 보존 — raise·안내 메시지는 엔진에 남겼다.
+  `example_jp`(커밋 카드)가 base zero-shot이라 이 판정이 클론 경로에 직결된다.
+- **두뇌는 벤더별 가용성만 보고**한다 — config는 `gemini`인데 run_navi는 `-Brain anthropic`을
+  넘겨 둘이 어긋난다. 스크립트 기본값을 Python에 복제하지 않고 `{anthropic, gemini, echo}`
+  가용성을 전제조건으로 내보낸 뒤 "실키가 하나도 없으면 전 선택지 차단"으로 판정한다.
+- **파이프에서 죽지 않게** stdout을 UTF-8로 재설정했다 — 콘솔에선 되는데 파이프(GUI·CI·리다이렉트)
+  에선 로케일이 cp949라 기호에서 `UnicodeEncodeError`가 났다. 진단 도구가 진단 중에 죽으면 안 된다.
+- **검증:** 273 tests green(신규 11). 클론 시뮬(`git archive` 트리)에서 venv·키 부재를 정확히
+  지적하고 커밋된 카드 3장만 노출. `--json` 파이프 파싱 확인(E6-4가 쓸 계약).
+- **남은 실기:** preflight가 가능하다고 한 조합으로 `run_navi.ps1`이 실제로 뜨는지 1회 대조.
+
 **E6-1 — 웨이크워드 모델을 커밋 자산으로 (2026.07.20, 체크리스트 E6-1):**
 - **한 줄:** `secrets/navi_ko.onnx`(gitignore) → **`assets/wakeword/navi_ko.onnx`(커밋)**.
   비밀 자산 하나가 공개 자산으로 위상이 바뀐 **정책 변경**이라 기록한다.
