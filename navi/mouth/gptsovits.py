@@ -57,6 +57,38 @@ _OUTPUT_SR = 32_000  # GPT-SoVITS 기본 출력 샘플레이트
 _GPTSOVITS_LANG = {"ja": "日文", "ko": "韩文", "zh": "中文", "en": "英文"}
 
 
+# base(zero-shot) 가중치 — repo 안 pretrained_models 기준 상대경로.
+# v2ProPlus를 쓰는 이유는 _resolve_base_ckpts docstring 참조(v2는 EOS 실패가 잦아 기각).
+_BASE_CKPT_RELPATHS = (
+    ("s1v3.ckpt",),                                    # GPT
+    ("v2Pro", "s2Gv2ProPlus.pth"),                     # SoVITS
+    ("sv", "pretrained_eres2netv2w24s4ep4.ckpt"),      # 화자 임베딩(v2ProPlus가 요구)
+)
+
+
+def base_ckpt_paths(repo_path: str) -> tuple[str, str, str]:
+    """base(zero-shot) 가중치 3종의 절대경로 — (gpt, sovits, sv).
+
+    이 경로 지식이 엔진 안에만 있으면 "이 리포로 zero-shot이 되나"를 **엔진을 띄우지 않고는**
+    알 수 없다. 부팅 전 판정(navi.preflight)이 같은 것을 봐야 하므로 모듈 함수로 꺼내 둔다 —
+    조회와 실행이 같은 출처를 쓴다는 원칙(E3)을 부팅 축에 적용한 것.
+    """
+    pre = os.path.join(repo_path, "GPT_SoVITS", "pretrained_models")
+    gpt, sovits, sv = (os.path.join(pre, *parts) for parts in _BASE_CKPT_RELPATHS)
+    return gpt, sovits, sv
+
+
+def missing_base_ckpts(repo_path: str) -> tuple[str, ...]:
+    """base 가중치 중 실물이 없는 것 — 파일 시스템만 본다(torch·엔진 불요).
+
+    빈 튜플이면 zero-shot 부팅 가능. repo_path가 비면 판정 대상이 아니라 빈 튜플이다
+    (repo 부재 자체는 호출부가 먼저 걸러야 할 별개 조건).
+    """
+    if not repo_path:
+        return ()
+    return tuple(p for p in base_ckpt_paths(repo_path) if not os.path.isfile(p))
+
+
 def _require_ckpt_files(gpt_ckpt: str | None, sovits_ckpt: str | None) -> None:
     """카드가 가리키는 fine-tune 가중치가 실물로 있는지 — 없으면 읽을 수 있는 에러로.
 
@@ -257,11 +289,10 @@ class GPTSoVITSMouth(MouthAdapter):
         if not self._repo_path or (self._gpt_ckpt and self._sovits_ckpt):
             return
         # _repo_path는 _ensure_engine이 chdir 전에 절대경로로 고정해 둔다.
+        # 경로·존재 판정은 module 함수 소유 — navi.preflight가 같은 것을 본다.
         pre = os.path.join(self._repo_path, "GPT_SoVITS", "pretrained_models")
-        base_gpt = os.path.join(pre, "s1v3.ckpt")
-        base_sovits = os.path.join(pre, "v2Pro", "s2Gv2ProPlus.pth")
-        base_sv = os.path.join(pre, "sv", "pretrained_eres2netv2w24s4ep4.ckpt")
-        missing = [p for p in (base_gpt, base_sovits, base_sv) if not os.path.isfile(p)]
+        base_gpt, base_sovits, _base_sv = base_ckpt_paths(self._repo_path)
+        missing = list(missing_base_ckpts(self._repo_path))
         if missing:
             raise FileNotFoundError(
                 "base(zero-shot) 가중치가 없습니다: "
