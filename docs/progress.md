@@ -7,6 +7,32 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**E6-3 — config.local.yaml 오버레이: 머신 전용값의 자리 (2026.07.21, 체크리스트 E6-3):**
+- **한 줄:** `run_navi.ps1`의 `-VadThreshold 50`(이 방·이 마이크 실측)이 커밋 스크립트에
+  박혀 남에게 강요됐다. `config.local.yaml`(gitignore) 계층을 신설해 그 자리를 만든다.
+- **층위:** CLI > `config.local.yaml`(머신 전용) > `config.yaml`(공유) > daemon 기본. 오버레이
+  병합은 `_deep_merge` — dict끼리만 재귀하고 나머지는 통째 교체. 얕은 병합이면 `ear:` 한 줄이
+  wakeword 설정을 통째로 날리는 사고가 나서 그 실수를 계약으로 박았다
+  (`test_deep_merge_recurses_into_dicts`).
+- **★ 계획 초안이 오독이었다.** 초기 문서엔 "센티널화만으론 값이 사라진다=VAD 꺼짐"이라고
+  적었는데, [mic.py:46](../navi/ear/mic.py:46)과 [listening.py:62](../navi/ear/listening.py:62)이 둘 다
+  `vad or EnergyVad()`라 인자를 안 줘도 **꺼지지 않고 기본 150으로 폴백**한다. 이 사실이 뒤늦게
+  잡혀 부분 편집을 되돌리고 계획을 다시 세웠다(플랜 파일). 커밋 규모는 훨씬 줄었다.
+- **0의 의미도 확정:** 임계 0을 그대로 쓰면 모든 프레임이 음성이라 발화 끝점이 안 잡혀 STT가
+  영영 안 돈다 — 시스템이 조용히 망가진다. 그래서 0은 "VAD 없음"이 아니라 "미지정"이고,
+  daemon 기본(150)으로 폴백한다. daemon.py의 falsy 가드가 이 규약의 실행이다.
+- **첫 실사용값**은 `ear.energy_vad_threshold`(마이크 프레임 → STT 게이트). `wakeword.vad_threshold`
+  (openWakeWord 내부 Silero, 호출어 오탐 억제)와 이름이 비슷하지만 **다른 층**이라 필드
+  docstring과 예시 파일에 각각 명시했다.
+- **정책 변경:** `config.local.yaml.example`은 커밋 자산(템플릿), `config.local.yaml` 자체는
+  gitignore. 이 방식이 flutter 등 표준. `Config`에 기본값 0.0을 둬서 `test_conductor`의
+  직접 생성이 안 깨졌다.
+- **검증:** 284 tests green(오버레이 8 + 필드 3). 클론 시뮬(`git archive` 트리)에서
+  `config.local.yaml` 딸려가지 않음 + `.example`은 딸려감 + base default `energy_vad_threshold=0.0`
+  확인. **실기 대조** — 오버레이 있는 상태로 무인자 기동 → 기존과 동일 감지 · 오버레이 없는
+  깨끗한 트리는 daemon 기본으로 폴백(사용자 확인 대기).
+- **다음:** E6-4(대기 화면 + 실행 버튼).
+
 **E6-2 — preflight: 부팅 전 판정 · 환경·모델 doctor (2026.07.20, 체크리스트 E6-2):**
 - **한 줄:** `python -m navi.preflight [--json]` — torch·마이크·포트·pid 없이 "지금 이 머신에서
   무엇으로 띄울 수 있나"를 답한다. 런처(E6-4)의 게이트이자 클론한 사람의 진단.

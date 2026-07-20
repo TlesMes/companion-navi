@@ -488,7 +488,8 @@ def main() -> None:
                 listen=args.listen,
                 wakeword=args.wakeword,
                 mic_device=args.mic,
-                vad_threshold=args.vad_threshold,
+                # CLI > config > daemon 기본. daemon.py:657의 규약과 같다.
+                vad_threshold=args.vad_threshold or config.energy_vad_threshold or None,
                 stt_model=args.stt_model,
                 active_timeout_ms=active_timeout_ms,
             )

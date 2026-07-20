@@ -1,4 +1,12 @@
-"""설정 로더 — config.yaml(튜닝값) + .env(비밀)를 합쳐 불변 Config로."""
+"""설정 로더 — config.yaml(공유 기본값) + config.local.yaml(머신 전용) + .env(비밀).
+
+**세 층으로 나눈 이유(E6-3).** config.yaml은 커밋 파일이라 거기 담긴 값은 모든 머신에
+강요된다. 그런데 마이크 임계처럼 **이 방·이 마이크에서 잰 값**은 남의 머신에서 틀리고,
+그렇다고 커밋 안 되는 자리가 없으면 실행 스크립트 기본값에 박히게 된다(실제로 그랬다 —
+run_navi.ps1의 -VadThreshold 50). config.local.yaml(gitignore)이 그 자리다.
+
+층위: config.yaml(공유) < config.local.yaml(머신 전용) < CLI 인자(이번 실행만).
+"""
 
 from __future__ import annotations
 
@@ -143,6 +151,49 @@ class Config:
     persona_card_path: Path
     gemini_api_key: str | None
     anthropic_api_key: str | None
+    # 마이크 입력 1관문 — RMS 에너지 VAD 임계(D15 캐스케이드의 energy 층).
+    # config `ear.energy_vad_threshold`, 미지정·0이면 CLI에서 안 준 것과 같은 취급이라
+    # daemon이 자기 기본(EnergyVad=150)으로 뜬다(mic.py:46, listening.py:62의 `vad or EnergyVad()`).
+    # **wakeword.vad_threshold와 다른 손잡이다** — 그쪽은 openWakeWord 내부 Silero VAD로
+    # 호출어 오탐을 억제하고(wakeword.py:209), 이쪽은 마이크 프레임이 STT로 넘어갈지를 가른다.
+    # 마이크 게인·방 소음을 타는 머신 전용값이라 config.local.yaml이 제자리다(E6-3).
+    # 기본값을 둔 건 필드 추가로 기존 생성부가 안 깨지게 하려는 것.
+    energy_vad_threshold: float = 0.0
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """오버레이를 base 위에 재귀 병합 — dict끼리만 파고들고 나머지는 통째로 교체.
+
+    얕은 병합이면 `ear:` 한 줄 덮으려다 `ear` 아래 전체(wakeword 설정 등)를 날린다.
+    오버레이는 "한 값만 바꾸는" 용도라 그 사고가 기본 동작이면 안 된다. 리스트를 병합하지
+    않고 교체하는 것도 같은 이유 — 원소 단위 병합은 의도가 모호하다.
+    """
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_raw(root: Path) -> dict[str, Any]:
+    """config.yaml 위에 config.local.yaml(있으면)을 덮은 설정 원본.
+
+    로컬 파일은 gitignore라 **없는 것이 정상**이다 — 없으면 base 그대로. 있는데 매핑이
+    아니면 무시(잘못된 파일 하나로 데몬을 못 띄우는 게 더 나쁘다). 비어 있으면(`{}`) 무영향.
+    """
+    raw = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    local_path = root / "config.local.yaml"
+    if not local_path.exists():
+        return raw
+    local = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+    if not isinstance(local, dict):
+        if local is not None:  # None은 빈 파일 — 조용히 통과
+            log.warning("config.local.yaml이 매핑이 아니라 무시함: %s", local_path)
+        return raw
+    log.info("config.local.yaml 적용 — 머신 전용 설정이 config.yaml을 덮는다")
+    return _deep_merge(raw, local)
 
 
 def _resolve(root: Path, value: str) -> str:
@@ -275,7 +326,7 @@ def load_config(
     """
     root = root or Path.cwd()
     load_dotenv(root / ".env")
-    raw = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
+    raw = _load_raw(root)
     card_path = root / (persona_card or raw["persona"]["card_path"])
     if mouth_vendor:
         raw.setdefault("mouth", {})["vendor"] = mouth_vendor
@@ -302,4 +353,5 @@ def load_config(
         persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+        energy_vad_threshold=float(raw.get("ear", {}).get("energy_vad_threshold", 0.0)),
     )

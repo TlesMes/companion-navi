@@ -83,8 +83,10 @@
       목록에 없다) · **E6-2** `python -m navi.preflight [--json]`
       (파일 시스템·환경변수만 읽는 판정 — `select_vendor`·`missing_assets`·`WakeWordConfig.ready`
       재사용 + venv·brain키 추가. **환경·모델 doctor 겸용**: 설치 환경과 모델 자산이 갖춰졌는지
-      보는 진단) · **E6-3** `config.local.yaml` 오버레이(⚠ 마이크 energy VAD는 **config 경로가
-      아예 없음** — 센티널화만으론 값이 사라진다, config 키 신설 + CLI 미지정 시 폴백 필수) ·
+      보는 진단) · **E6-3** `config.local.yaml` 오버레이(deep merge, gitignore) — 층위
+      CLI > local > base > daemon 기본. 첫 실사용값 `ear.energy_vad_threshold`(마이크→STT 게이트).
+      **0=미지정** 취급(임계 0은 발화 끝점을 못 잡아 시스템을 망가뜨림).
+      `wakeword.vad_threshold`와 다른 손잡이임을 명시. `config.local.yaml.example` 커밋 자산 ·
       **E6-4** `_Api.launch(engine)` detached+DEVNULL + `wait_for_daemon` 타임아웃 ~90s +
       `logs/navi.log` 안내.
       **클론 경로 완결:** clone → `setup_voice_env.ps1` → supertonic 음성 + "나비야". 남는 장벽은
