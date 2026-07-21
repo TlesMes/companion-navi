@@ -472,6 +472,44 @@ def test_supertonic_rejects_gptsovits_kwargs():
         create_mouth("supertonic", gpt_ckpt="x")
 
 
+# --- 벤더 스펙: "이 벤더가 무슨 kwarg를 받는가"의 단일 출처 (E7) ---
+
+
+def test_vendor_spec_preset_vendors_have_no_special_requirements():
+    """supertonic·fake는 가중치 kwarg가 없고 voice_id도 경로가 아니다 —
+    이 빈 스펙이 '가중치 kwarg를 supertonic에 주입하지 마라'의 근거다."""
+    from navi.mouth import vendor_spec
+
+    for vendor in ("supertonic", "fake"):
+        spec = vendor_spec(vendor)
+        assert spec.voice_id_is_path is False
+        assert spec.weight_kwargs == ()
+        assert spec.lang_kwargs == ()
+
+
+def test_vendor_spec_unknown_vendor_is_empty_default():
+    """미등록 벤더는 특수 요구 없음 — 실제 부팅은 create_mouth가 ValueError로 막는다."""
+    from navi.mouth import VendorSpec, vendor_spec
+
+    assert vendor_spec("nope") == VendorSpec()
+
+
+def test_spec_kwargs_map_to_vendor_voice_fields():
+    """스펙 kwarg명 = VendorVoice 필드명 불변식 — mouth_options가 getattr로 조회한다.
+    스펙에 오타 난 kwarg명을 넣으면 mouth_options가 런타임에 AttributeError로 터진다.
+    그 실패를 빌드 타임에 앞당겨 잡는다(새 벤더가 고유 kwarg를 들고 올 때의 안전망).
+    """
+    from dataclasses import fields
+
+    from navi.mouth import _VENDORS
+    from navi.persona import VendorVoice
+
+    vv_fields = {f.name for f in fields(VendorVoice)}
+    for vendor, entry in _VENDORS.items():
+        for key in (*entry.spec.weight_kwargs, *entry.spec.lang_kwargs):
+            assert key in vv_fields, f"{vendor}: {key!r}는 VendorVoice 필드가 아님"
+
+
 # --- FasterWhisperStt: 가짜 모델 주입, 실 추론 없이 계약 검증 ---
 
 

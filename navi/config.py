@@ -21,6 +21,7 @@ import yaml
 from dotenv import load_dotenv
 
 from navi.models import VoiceProfile
+from navi.mouth import vendor_spec
 
 log = logging.getLogger(__name__)
 
@@ -236,16 +237,17 @@ def _load_mouth(root: Path, raw: dict[str, Any]) -> MouthConfig:
     options = dict(raw_mouth.get(vendor, {}))
     # voice_id는 VoiceProfile로 빠지므로 create_mouth kwargs에서 제거한다.
     voice_id = options.pop("voice_id", "") or mv.get("vendor_voice_id", "")
-    # gptsovits는 voice_id가 레퍼런스 wav 경로 → 절대경로로 풀어둔다.
-    # supertonic은 음색 이름(F1 등)이라 _resolve가 그대로 통과시킨다(파일이 아니어도 무해).
-    if vendor == "gptsovits" and voice_id:
+    # 벤더가 voice_id를 경로로 다루는지(gptsovits=레퍼런스 wav)는 vendor_spec이 안다(E7) —
+    # supertonic은 음색 이름(F1 등)이라 False라 _resolve를 안 탄다.
+    spec = vendor_spec(vendor)
+    if spec.voice_id_is_path and voice_id:
         voice_id = _resolve(root, voice_id)
     voice = VoiceProfile(
         name=mv.get("name", "navi"),
         vendor_voice_id=voice_id,
         speed=float(mv.get("speed", 1.0)),
     )
-    for key in ("repo_path", "gpt_ckpt", "sovits_ckpt"):
+    for key in spec.path_option_keys:
         if options.get(key):
             options[key] = _resolve(root, options[key])
     return MouthConfig(vendor=vendor, voice=voice, options=options)
