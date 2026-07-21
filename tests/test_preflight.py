@@ -100,6 +100,50 @@ def test_supertonic_card_boots_with_zero_files(tmp_path):
     assert _card_opt(evaluate(tmp_path), "supertonic", "navi").bootable is True
 
 
+# --- launch_persona: 런처가 이 엔진으로 띄울 카드 (부품 0, E6-4) -----------
+
+
+def test_launch_persona_prefers_config_default(tmp_path):
+    """config 기본(navi)이 그 엔진에 있고 부팅 가능하면 그것 — 알파벳 첫 카드(소민)가 아니라.
+
+    이게 없으면 supertonic 클릭이 테스트 페르소나 example_kr(소민)을 띄운다(카드 정렬이 알파벳).
+    """
+    _write_root(tmp_path, {
+        "example_kr": _card("소민", None),  # voice 섹션 없음 → supertonic 폴백, 알파벳상 앞
+        "navi": _card("나비", {"name": "navi", "supertonic": {"tones": [{"name": "기본", "voice_id": "F1"}]}}),
+    })
+    assert _engine(evaluate(tmp_path), "supertonic").launch_persona == "navi"
+
+
+def test_launch_persona_falls_back_to_first_bootable(tmp_path):
+    """config 기본이 그 엔진에 없으면(navi=supertonic, gptsovits엔 없음) 첫 부팅가능 카드."""
+    _write_root(tmp_path, {
+        "navi": _card("나비", {"name": "navi", "supertonic": {"tones": [{"name": "기본", "voice_id": "F1"}]}}),
+        "rei": _card("레이", {"name": "rei", "gptsovits": {"ref_lang": "ja", "gen_lang": "ja"}}),
+    })
+    assert _engine(evaluate(tmp_path), "gptsovits").launch_persona == "rei"
+
+
+def test_launch_persona_skips_unbootable(tmp_path):
+    """부팅 불가 카드는 건너뛴다 — 클릭했을 때 못 뜨는 걸 넘기면 안 된다."""
+    _write_root(tmp_path, {
+        "aris": _card("아리스", {"name": "aris", "gptsovits": {
+            "gpt_ckpt": "voice_ref/none.ckpt", "sovits_ckpt": "voice_ref/none.pth",  # 없음 → 차단
+        }}),
+        "rei": _card("레이", {"name": "rei", "gptsovits": {"ref_lang": "ja", "gen_lang": "ja"}}),  # base로 부팅
+    })
+    # aris가 알파벳상 앞이지만 차단이라 rei가 뽑힌다
+    assert _engine(evaluate(tmp_path), "gptsovits").launch_persona == "rei"
+
+
+def test_launch_persona_none_for_text_only(tmp_path):
+    """목소리 없이는 -Mode text라 -Persona가 없다 → None."""
+    _write_root(tmp_path, {
+        "navi": _card("나비", {"name": "navi", "supertonic": {"tones": [{"name": "기본", "voice_id": "F1"}]}}),
+    })
+    assert _engine(evaluate(tmp_path), "none").launch_persona is None
+
+
 # --- 차단 vs 경고 (이 모듈의 핵심 정확성) --------------------------------
 
 
