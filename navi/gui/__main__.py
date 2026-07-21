@@ -75,10 +75,12 @@ class _Api:
     스레드가 멎는다(실측). launch가 무장하는 데드라인(_launch_at)도 폴러와 공유하는 상태다.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, base_url: str) -> None:
         self._window = None
         self._root = root
+        self._base_url = base_url
         self._launch_at: float | None = None  # 클릭 시각 — 폴러가 데드라인 판정에 쓴다
+        self._polling = False                  # 폴러 중복 기동 방지
 
     # --- 창 조작 (frameless라 OS 제목줄이 없다) --------------------------
 
@@ -89,6 +91,54 @@ class _Api:
     def minimize(self) -> None:
         if self._window is not None:
             self._window.minimize()
+
+    # --- 폴러 (유일한 피드백 경로, gui.md 양보 불가) --------------------
+
+    def _poll_loop(self) -> None:
+        """데몬이 뜨면 실제 GUI로 갈아끼운다. launch 데드라인 초과 시 화면에 안내한다.
+
+        새 폴러를 만들지 않고 이 한 루프가 '전환'과 '실패 안내'를 겸한다. 시작 시 한 번,
+        종료 후 런처 복귀 시 한 번 — 같은 로직을 재사용한다(return_to_launcher).
+        """
+        notified_timeout = False
+        while True:
+            time.sleep(1.0)
+            if _daemon_up(self._base_url):
+                self._window.load_url(self._base_url)
+                self._polling = False
+                return
+            launched = self._launch_at
+            if (
+                launched is not None
+                and not notified_timeout
+                and time.monotonic() - launched > _LAUNCH_DEADLINE_S
+            ):
+                notified_timeout = True
+                self._launch_at = None  # 데드라인 해제 — 재시도를 위해 칩 재활성
+                self._window.evaluate_js("window.naviLaunchTimedOut && window.naviLaunchTimedOut()")
+
+    def start_poller(self) -> None:
+        if self._polling:
+            return
+        self._polling = True
+        threading.Thread(target=self._poll_loop, daemon=True).start()
+
+    def return_to_launcher(self) -> None:
+        """index.html의 종료 버튼이 부른다 — 대기 화면(런처)으로 되돌려 다른 엔진을 고를 수 있게.
+
+        죽어가는 데몬이 잠깐 더 /status에 답할 수 있어, 바로 폴러를 켜면 그 死者로 되튄다.
+        그래서 데몬이 **완전히 내려간 뒤** 폴러를 무장한다(별 스레드에서 대기 — 브리지 블록 금지).
+        """
+        self._launch_at = None
+        self._window.load_html(_waiting_html())
+        threading.Thread(target=self._resume_after_shutdown, daemon=True).start()
+
+    def _resume_after_shutdown(self) -> None:
+        for _ in range(15):
+            if not _daemon_up(self._base_url):
+                break
+            time.sleep(1.0)
+        self.start_poller()
 
     # --- 런처 -----------------------------------------------------------
 
@@ -156,7 +206,7 @@ def main() -> None:
     root = Path.cwd()
     base_url = f"http://127.0.0.1:{args.port or _control_port()}"
     up = _daemon_up(base_url)
-    api = _Api(root)
+    api = _Api(root, base_url)
     # frameless — OS 제목줄 없이 앱 헤더가 제목줄 역할(드래그 영역은 프런트가
     # pywebview-drag-region 클래스로 지정, 창 조작은 js_api로).
     window = webview.create_window(
@@ -172,31 +222,10 @@ def main() -> None:
     )
     api._window = window
 
-    def wait_for_daemon() -> None:
-        """유일한 피드백 경로(gui.md 양보 불가) — 데몬이 뜨면 실제 GUI로 갈아끼운다.
-
-        런처에서 엔진을 클릭하면 api._launch_at이 무장되고, 그 뒤 데드라인까지 안 뜨면
-        detached+DEVNULL이라 조용히 죽은 것으로 보고 화면에 안내한다(부팅 실패 가시성).
-        새 폴러를 만들지 않고 이 한 루프가 '전환'과 '실패 안내'를 겸한다.
-        """
-        notified_timeout = False
-        while True:
-            time.sleep(1.0)
-            if _daemon_up(base_url):
-                window.load_url(base_url)
-                return
-            launched = api._launch_at
-            if (
-                launched is not None
-                and not notified_timeout
-                and time.monotonic() - launched > _LAUNCH_DEADLINE_S
-            ):
-                notified_timeout = True
-                api._launch_at = None  # 데드라인 해제 — 재시도를 위해 칩 재활성
-                window.evaluate_js("window.naviLaunchTimedOut && window.naviLaunchTimedOut()")
-
+    # 데몬이 아직 없으면 런처를 띄운 채 폴러를 무장한다. 이미 떠 있으면 실제 GUI로
+    # 바로 들어갔으므로 폴러는 종료 후 복귀(return_to_launcher) 때 시작된다.
     if not up:
-        threading.Thread(target=wait_for_daemon, daemon=True).start()
+        api.start_poller()
     webview.start()
 
 
