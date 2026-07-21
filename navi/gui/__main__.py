@@ -128,9 +128,14 @@ class _Api:
 
         죽어가는 데몬이 잠깐 더 /status에 답할 수 있어, 바로 폴러를 켜면 그 死者로 되튄다.
         그래서 데몬이 **완전히 내려간 뒤** 폴러를 무장한다(별 스레드에서 대기 — 브리지 블록 금지).
+
+        load_html은 이 함수 반환 *뒤*로 한 틱 늦춘다: pywebview는 이 함수가 끝난 뒤 원래
+        페이지의 JS 콜백에 반환값을 돌려주려 하는데, 여기서 바로 페이지를 갈아끼우면 그
+        콜백이 사라진 채라 매 종료마다 "callback is not a function"이 뜬다(무해하지만
+        정상 경로 로그 오염 — util.py의 js_bridge_call 참고).
         """
         self._launch_at = None
-        self._window.load_html(_waiting_html())
+        threading.Timer(0.05, self._window.load_html, args=(_waiting_html(),)).start()
         threading.Thread(target=self._resume_after_shutdown, daemon=True).start()
 
     def _resume_after_shutdown(self) -> None:
