@@ -31,16 +31,14 @@ from pathlib import Path
 from typing import Any
 
 from navi.models import VoiceProfile
+from navi.mouth import vendor_spec
 
 log = logging.getLogger(__name__)
 
 # 예약 키 — 이 외의 최상위 키는 전부 벤더명 하위 섹션으로 취급한다.
 _RESERVED = {"name", "speed"}
-# voice_id를 경로로 해석해야 하는 벤더 (supertonic은 프리셋명)
-_PATH_VOICE_ID_VENDORS = {"gptsovits"}
-# 가중치·언어 kwarg를 생성자로 받는 벤더 — 다른 벤더에 넘기면 TypeError다.
-# (SupertonicMouth는 model/lang/total_steps만 받는다)
-_CKPT_VENDORS = {"gptsovits"}
+# "이 벤더가 무슨 kwarg를 받고 voice_id를 경로로 다루는가"는 navi.mouth의 vendor_spec이
+# 단일 출처로 소유한다(E7). 여기선 그걸 조회만 한다 — 벤더명 하드코딩 금지.
 
 
 def _abs(root: Path | None, value: str) -> str:
@@ -90,7 +88,7 @@ class PersonaVoice:
         for key, section in raw.items():
             if key in _RESERVED or not isinstance(section, dict):
                 continue
-            as_path = key in _PATH_VOICE_ID_VENDORS
+            as_path = vendor_spec(key).voice_id_is_path
             tones = tuple(
                 ToneSpec(
                     name=t["name"],
@@ -156,15 +154,17 @@ def missing_assets(vendor: str, vendor_voice: VendorVoice | None) -> MissingAsse
     """
     if vendor_voice is None:
         return MissingAssets()
+    spec = vendor_spec(vendor)
     ckpts: tuple[str, ...] = ()
-    if vendor in _CKPT_VENDORS:
+    if spec.weight_kwargs:
         ckpts = tuple(
             p
-            for p in (vendor_voice.gpt_ckpt, vendor_voice.sovits_ckpt)
+            for key in spec.weight_kwargs
+            for p in (getattr(vendor_voice, key),)
             if p and not Path(p).is_file()
         )
     tones: tuple[str, ...] = ()
-    if vendor in _PATH_VOICE_ID_VENDORS:
+    if spec.voice_id_is_path:
         tones = tuple(
             t.name
             for t in vendor_voice.tones
@@ -212,11 +212,13 @@ def mouth_options(
     (가중치와 달리 "미지정=현재 유지"가 부팅·핫스왑 공통 규칙, VendorVoice 참조).
     """
     options = dict(config_options)
-    if vendor_voice is None or vendor not in _CKPT_VENDORS:
+    spec = vendor_spec(vendor)
+    if vendor_voice is None or not spec.weight_kwargs:
         return options
-    options["gpt_ckpt"] = vendor_voice.gpt_ckpt
-    options["sovits_ckpt"] = vendor_voice.sovits_ckpt
-    for key, value in (("ref_lang", vendor_voice.ref_lang), ("gen_lang", vendor_voice.gen_lang)):
-        if value:
+    for key in spec.weight_kwargs:
+        options[key] = getattr(vendor_voice, key)  # 빈 값도 카드 권위(base 의도) — 덮어 비운다
+    for key in spec.lang_kwargs:
+        value = getattr(vendor_voice, key)
+        if value:  # 언어는 "미지정=현재 유지" — 빈 값이 config를 덮지 않는다
             options[key] = value
     return options
