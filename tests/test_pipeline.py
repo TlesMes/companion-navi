@@ -126,6 +126,52 @@ async def test_no_resolver_ignores_mood_but_still_strips_tag():
     assert result.full_text == "오."
 
 
+# --- mouth=None (텍스트 모드): 합성만 건너뛰고 나머지 턴 경로는 공유 ---
+
+
+def _build_textmode(tokens: list[str]):
+    """mouth 없는 파이프라인 — 텍스트 모드(합성 없음)."""
+    brain = _FakeBrain(tokens)
+    conductor = _StubConductor()
+    pipe = TurnPipeline(brain=brain, mouth=None, conductor=conductor, voice=VOICE)
+    return pipe, brain, conductor
+
+
+async def test_textmode_streams_to_echo_and_strips_mood_tag():
+    """mouth 없이도 echo·last_result가 확정되고, 무드 태그는 기억에서 제거된다(오염 제거)."""
+    pipe, _brain, conductor = _build_textmode(["[mood:calm] 그런 ", "날 있지."])
+    echoed: list[str] = []
+    result = await pipe.run_turn("x", user_id=1, session_id="s", echo=echoed.append)
+    # 태그는 peel_mood가 흡수 — echo(화면)로도 안 샌다
+    assert "".join(echoed) == "그런 날 있지."
+    assert "[mood" not in "".join(echoed)
+    # full_text는 strip_mood_tag로 정리돼 기억 저장 시 오염되지 않는다
+    assert result is not None and result.full_text == "그런 날 있지."
+    assert conductor.calls == [("x", 1, "s")]  # 요청 조립은 그대로 탄다
+
+
+async def test_textmode_has_no_mouth_flag():
+    pipe, _brain, _conductor = _build_textmode(["안녕."])
+    assert pipe.has_mouth is False
+    # is_playing·interrupt가 mouth None에서 안전
+    assert pipe.is_playing() is False
+    pipe.interrupt()  # 크래시 없음(brain.cancel만)
+
+
+async def test_voice_mode_has_mouth_flag():
+    pipe, _brain, _mouth, _conductor = _build(["안녕."])
+    assert pipe.has_mouth is True
+
+
+async def test_textmode_swap_weights_rejected():
+    """텍스트 모드는 교체할 가중치가 없다 — 명확한 에러로 막는다."""
+    import pytest
+
+    pipe, _brain, _conductor = _build_textmode(["안녕."])
+    with pytest.raises(RuntimeError):
+        await pipe.swap_weights("g.ckpt", "s.pth")
+
+
 # --- on_stage: STAGE 계측(Stage 15) — brain 첫 토큰(TTFT)·tts 진입/종료 ---
 
 
