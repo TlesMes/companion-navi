@@ -222,6 +222,14 @@ def _mood_swap(tmp_path):
     return swap, pipeline
 
 
+def test_list_voices_exposes_voice_id_for_autolight(tmp_path):
+    """자동 점등이 mood 이벤트의 voice_id로 칩을 특정하려면 /voices가 voice_id를 실어야 한다."""
+    swap, _p = _make_swap(tmp_path)
+    voices = swap.list_voices()
+    assert all("voice_id" in v for v in voices)
+    assert [v["voice_id"] for v in voices] == ["F1", "F2"]  # supertonic 프리셋명
+
+
 def test_resolve_mood_voice_selects_declared_tone(tmp_path):
     swap, _p = _mood_swap(tmp_path)
     voice = swap._resolve_mood_voice("bright")

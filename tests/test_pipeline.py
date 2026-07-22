@@ -100,6 +100,32 @@ async def test_mood_tag_selects_turn_voice_and_never_synthesizes_or_stores_tag()
     assert result.full_text == "자랑해 봐."  # 기억 저장 전문에서 태그 제거
 
 
+async def test_mood_event_emitted_with_tone_voice_id():
+    """자동 점등 — 이번 턴 톤의 voice_id를 STAGE("mood","picked")로 발행한다."""
+    stages: list = []
+    brain = _FakeBrain(["[mood:", "bright] 오."])
+    pipe = TurnPipeline(
+        brain=brain, mouth=FakeMouth(), conductor=_StubConductor(), voice=VOICE,
+        on_stage=lambda s, p, d: stages.append((s, p, d)),
+    )
+    pipe.set_mood_resolver(lambda m: BRIGHT_VOICE if m == "bright" else None)
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    mood_ev = [d for s, p, d in stages if s == "mood"]
+    assert mood_ev == [{"mood": "bright", "voice_id": "bright.wav"}]
+
+
+async def test_textmode_emits_no_mood_event():
+    """텍스트 모드(mouth 없음)는 점등할 톤이 없어 mood 이벤트를 안 낸다."""
+    stages: list = []
+    brain = _FakeBrain(["[mood:bright] 오."])
+    pipe = TurnPipeline(
+        brain=brain, mouth=None, conductor=_StubConductor(), voice=VOICE,
+        on_stage=lambda s, p, d: stages.append((s, p, d)),
+    )
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    assert not any(s == "mood" for s, p, d in stages)
+
+
 async def test_neutral_mood_keeps_base_voice():
     pipe, _brain, mouth, _conductor = _build(["[mood:neutral] 안녕."])
     pipe.set_mood_resolver(lambda m: BRIGHT_VOICE if m == "bright" else None)
@@ -186,9 +212,11 @@ async def test_on_stage_emits_brain_ttft_and_tts_span():
         on_stage=lambda s, p, d: stages.append((s, p, d)),
     )
     await pipe.run_turn("x", user_id=1, session_id="s")
-    # 토큰은 speak_stream이 당길 때 흐른다(_tee는 lazy) — brain done은 tts start 뒤
+    # 토큰은 speak_stream이 당길 때 흐른다(_tee는 lazy) — brain done은 tts start 뒤.
+    # mood picked는 합성 진입 직전(tts start 앞)에 이번 턴 톤을 GUI로 알린다.
     assert [(s, p) for s, p, _ in stages] == [
         ("brain", "start"),
+        ("mood", "picked"),
         ("tts", "start"),
         ("brain", "done"),
         ("tts", "done"),
