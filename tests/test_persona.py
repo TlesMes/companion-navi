@@ -50,6 +50,14 @@ def test_system_prompt_is_cache_stable_and_contains_card():
     assert "실제로 있었던 대화가 아니다" in prompt
 
 
+def test_system_prompt_carries_mood_output_rule():
+    """무드 선행 태그 출력 규칙이 프롬프트 말미에 강제돼야 한다."""
+    prompt = CharacterCard.load(CARD_PATH).system_prompt(0)
+    assert "[mood:neutral]" in prompt and "[mood:bright]" in prompt
+    assert "[mood:calm]" in prompt
+    assert "대사가 아니다" in prompt  # 태그는 읽히지 않는 시스템 신호
+
+
 # --- voice 번들 (Stage 15-② — 음색·톤은 페르소나 소유) ---
 
 
