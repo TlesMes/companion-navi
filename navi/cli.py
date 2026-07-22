@@ -391,9 +391,15 @@ async def _listen_wakeword(
 def main() -> None:
     # 파이프로 받으면(리다이렉트·CI) stdout이 로케일 인코딩(Windows 한글이면 cp949)이라
     # 한글 아닌 기호(예: 인사말의 em-dash —)에서 UnicodeEncodeError로 죽는다
-    # (navi.preflight와 같은 함정 — 이유는 그쪽 주석 참조). stdin은 타이핑 입력이라 그대로 둔다.
+    # (navi/preflight.py `main()`의 stdout 재설정과 같은 함정 — 배경은 그 주석 참조).
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # stdin도 파이프면 로케일로 디코딩돼 한글이 surrogate로 깨지고, 그 문자열이 LLM 요청에
+    # 실리면 UnicodeEncodeError로 턴이 죽는다(`printf '한글' | navi` 등 자동화·CI 경로).
+    # 단 **대화형 콘솔(tty)은 이미 Unicode 입력이 되므로 건드리지 않는다** — 오늘과 동일하게
+    # 유지해 타이핑 경로의 회귀 위험을 0으로 둔다. 깨진 바이트는 replace로 무해화.
+    if hasattr(sys.stdin, "reconfigure") and not sys.stdin.isatty():
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(prog="navi", description="companion-navi CLI 대화")
     parser.add_argument(
