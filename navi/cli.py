@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 import time
 import uuid
 from dataclasses import replace
@@ -395,6 +396,12 @@ async def _listen_wakeword(
 
 
 def main() -> None:
+    # 파이프로 받으면(리다이렉트·CI) stdout이 로케일 인코딩(Windows 한글이면 cp949)이라
+    # 한글 아닌 기호(예: 인사말의 em-dash —)에서 UnicodeEncodeError로 죽는다
+    # (navi.preflight와 같은 함정 — 이유는 그쪽 주석 참조). stdin은 타이핑 입력이라 그대로 둔다.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(prog="navi", description="companion-navi CLI 대화")
     parser.add_argument(
         "--brain",
