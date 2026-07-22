@@ -180,16 +180,13 @@
   음성 모드에서도 "실제 발화 문자열 확인" 진단 가치가 있어 텍스트 모드 전용으로 좁히지 않는다.
   **2단계:** `POST /say` — STT만 건너뛰고 `check_gate`→`_run_turn` **동일 경로**(게이트 우회 금지) +
   채팅 입력창. 착륙 시 E6 런처의 "목소리 없이(점검용)" 라벨 개정. 상세 → architecture.md D17.
-- **턴 경로 통합(리팩터) — mouth 옵셔널 파이프라인** (신설 2026.07.22, B3 실증 중 발견). 현재
-  텍스트 모드는 `TurnPipeline`을 우회(cli.py·daemon.py의 else 분기가 brain 스트리밍을 맨손 재구현)해
-  **mood 파싱·`strip_mood_tag`가 안 걸린다** — 텍스트 모드에서 `[mood:...]` 태그가 그대로 기억에 저장돼
-  오염된다(임시 DB 실증: assistant 턴이 `'[mood:calm] ...'`로 저장됨). 근본 원인은 턴 경로 중복.
-  **해법:** `TurnPipeline.mouth`를 옵셔널로 — None이면 `speak_stream`만 건너뛰고 build_request→
-  peel_mood→(voice skip)→_tee(echo)→strip을 그대로 태운다. cli/daemon의 else 분기 제거, SwapRuntime의
-  `pipeline=None` 처리 정리. 무거운 의존성은 mouth 인스턴스(create_mouth+warmup)에 있지 파이프라인
-  클래스에 없어 "가볍게" 근거가 유지된다. **D17 2단계(`_run_turn 동일 경로`)의 선행**이자 그 일부를
-  닫는다. 덤: `navi.cli` stdout UTF-8 재설정(파이프에서 em-dash `—`가 cp949로 죽음 — preflight가 고친
-  부류, cli 미적용)도 같이. 별도 PR(2026.07.22 합의 — 검증 단위가 mood와 다름).
+- [x] **턴 경로 통합(리팩터) — mouth 옵셔널 파이프라인** — **완료(`refactor/turn-path-unify`).**
+  텍스트 모드가 `TurnPipeline`을 우회하던 구조(cli.py·daemon.py의 else 분기가 brain 스트리밍을 맨손
+  재구현)를 없앴다. `TurnPipeline.mouth`를 옵셔널로 만들어(None이면 `speak_stream`만 건너뜀) 텍스트·음성이
+  `run_turn` 하나를 공유 → mood 정리(`peel_mood`·`strip_mood_tag`)가 양쪽에 걸려 **텍스트 모드 오염이
+  구조적으로 사라짐**(실기 대조: 텍스트 CLI 한 턴이 태그 없이 저장, 전엔 `'[mood:calm] ...'`). SwapRuntime은
+  `pipeline is None` → `_voice_enabled`(= `has_mouth`)로 판정 전환. `args.voice`의 `os._exit`는 유지(TTS
+  로드 게이트). **D17 2단계(`POST /say` 동일 경로)의 선행.** cli UTF-8은 별도 선행 처리(PR #36).
 - 웨이크워드 **영어 폴백·`ready` early-return 잠재 함정** — E6 부품 D(모델 커밋)로 실해가 사라져
   강등. 모델을 다시 gitignore로 되돌리면 재소환.
 - TTS **엔진** 핫스왑(gptsovits↔타 어댑터): in-process 로드가 sys.path·CWD·env를 전역 오염시켜

@@ -7,6 +7,23 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**턴 경로 통합 — mouth 옵셔널 파이프라인 (2026.07.22, `refactor/turn-path-unify`):**
+- **한 줄:** 텍스트 모드가 `TurnPipeline`을 우회하던 구조를 없앤다. `mouth`를 옵셔널로 만들어
+  텍스트·음성이 `run_turn` 하나를 공유 → mood 정리가 양쪽에 걸린다.
+- **왜:** cli·daemon이 `--voice` 없을 때 brain 스트리밍을 else 분기에서 맨손 재구현(cli 1곳,
+  daemon 2곳: `run_turn`·`run_initiation`)해서, mood PR(B3)의 `peel_mood`·`strip_mood_tag`가 텍스트
+  모드엔 안 닿았다. 그래서 `[mood:...]` 태그가 그대로 단기기억에 저장돼 오염됐다(daemon proactive 포함).
+- **해법:** `TurnPipeline.mouth: MouthAdapter | None`. None이면 `speak_stream`만 건너뛰고 나머지
+  (요청 조립·`peel_mood`·`_tee(echo)`·`strip`)는 공유. 호출부 3곳의 중복 분기 → 파이프라인 1곳의
+  분기로 집중. 무거운 TTS 의존성은 mouth 인스턴스에만 있어 텍스트 모드는 여전히 가볍다.
+- **판정 전환:** 파이프라인이 항상 생성되므로 SwapRuntime의 "텍스트 모드" 판정을 `pipeline is None`
+  → `_voice_enabled`(= 파이프라인이 있고 `has_mouth`)로 옮겼다. 텍스트 모드 parity(전 카드 허용·
+  카드만 교체·톤 조작 거부)는 그대로. `args.voice`의 `os._exit`·예외 로깅은 유지(TTS 로드 게이트지
+  파이프라인 유무 아님).
+- **검증:** 322 tests green(신규 pipeline 4 + control 3). **실기 대조** — 텍스트 CLI 한 턴(`--db` 임시)
+  후 기억의 assistant 턴에 `[mood` 없음(전엔 `'[mood:calm] ...'`로 저장). **D17 2단계(`POST /say` 동일
+  경로)의 선행** — 단일 `run_turn`이 그 착지점이다. cli UTF-8 파이프 수정은 선행 처리(PR #36).
+
 **감정 태그 → 레퍼런스 전환: 헤드리스 구현 (2026.07.22, 체크리스트 B3, `feat/mood-reference`):**
 - **한 줄:** 두뇌가 응답 첫 토큰으로 `[mood:key]`를 뱉고, 데몬이 그걸 흡수해 그 무드의 레퍼런스(톤)로
   이번 턴만 합성한 뒤 **본문만** TTS로 흘린다. D3의 "톤=레퍼런스 제어"를 처음 실제로 쓴다 —
