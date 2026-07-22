@@ -33,12 +33,15 @@ class TurnPipeline:
         self,
         *,
         brain: BrainAdapter,
-        mouth: MouthAdapter,
+        mouth: MouthAdapter | None,
         conductor: Conductor,
         voice: VoiceProfile,
         on_stage: Callable[[str, str, dict | None], None] | None = None,
         mood_voice: Callable[[str], VoiceProfile | None] | None = None,
     ) -> None:
+        # mouth=None은 텍스트 모드 — 합성만 건너뛰고 나머지 턴 경로(요청 조립·무드·기억
+        # 정리)는 음성과 공유한다. 무거운 TTS 의존성은 mouth 인스턴스에만 있어 텍스트
+        # 모드는 여전히 가볍다. has_mouth가 "음성 세션인가"의 단일 판정(SwapRuntime가 씀).
         self._brain = brain
         self._mouth = mouth
         self._conductor = conductor
@@ -54,6 +57,14 @@ class TurnPipeline:
         # 데몬이 bus.publish로 연결한다(Stage 15). 1차는 brain 첫 토큰·tts 진입/종료만,
         # TTFA(첫 오디오)는 어댑터 확장이 필요해 후속.
         self._on_stage = on_stage or (lambda stage, phase, detail=None: None)
+
+    @property
+    def has_mouth(self) -> bool:
+        """음성 세션 여부 — mouth가 붙어 있으면 True. 텍스트 모드는 False.
+
+        SwapRuntime이 목소리 연속성 판정(페르소나·톤 교체 가능 여부)을 이걸로 가른다.
+        """
+        return self._mouth is not None
 
     async def run_turn(
         self,
@@ -83,12 +94,18 @@ class TurnPipeline:
             if mood != "neutral" or voice is not self._voice:
                 log.info("무드 %s → 목소리 %s", mood, voice.name)
             tokens = self._tee(body, echo, brain_t0=tts_t0)
-            # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
-            self._on_stage("tts", "start", None)
-            await self._mouth.speak_stream(tokens, voice)
-            tts_ms = (time.perf_counter() - tts_t0) * 1000
-            self._on_stage("tts", "done", {"ms": round(tts_ms)})
-            log.info("TTS(합성+재생) %.0fms", tts_ms)
+            if self._mouth is not None:
+                # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
+                self._on_stage("tts", "start", None)
+                await self._mouth.speak_stream(tokens, voice)
+                tts_ms = (time.perf_counter() - tts_t0) * 1000
+                self._on_stage("tts", "done", {"ms": round(tts_ms)})
+                log.info("TTS(합성+재생) %.0fms", tts_ms)
+            else:
+                # 텍스트 모드 — 합성 없이 스트림을 소진해 echo(화면)·last_result를 확정한다.
+                # 소진하지 않으면 brain이 끝까지 안 흘러 full_text가 비고 echo도 안 나온다.
+                async for _ in tokens:
+                    pass
             return self._clean_result(self._brain.last_result)
 
     @staticmethod
@@ -149,6 +166,8 @@ class TurnPipeline:
         이벤트 루프가 통째로 멎어 GUI·컨트롤 플레인이 응답하지 않는다. 교체 구간엔
         턴 락을 쥐고 있어 그 사이 발화가 끼어들지 못한다(is_playing이 True를 반환).
         """
+        if self._mouth is None:
+            raise RuntimeError("텍스트 모드(mouth 없음) — 가중치 교체 대상이 없습니다")
         async with self._turn_lock:
             log.info("음색 가중치 교체 시작 — %s", gpt_ckpt or "(base)")
             await asyncio.to_thread(
@@ -169,10 +188,12 @@ class TurnPipeline:
         턴 락이 잡혀 있으면 발화 준비 중(두뇌 생성)이거나 가중치 교체 중이라 새 교체를
         받으면 안 된다 — 재생 플래그만으로는 이 구간이 비어 보인다.
         """
-        return self._mouth.is_playing() or self._turn_lock.locked()
+        playing = self._mouth.is_playing() if self._mouth is not None else False
+        return playing or self._turn_lock.locked()
 
     def interrupt(self) -> None:
         """barge-in — 재생 즉시 중단 + LLM 생성 취소를 동시에(kill switch)."""
         log.info("barge-in — 재생 중단 + 생성 취소")
-        self._mouth.stop()
+        if self._mouth is not None:
+            self._mouth.stop()
         self._brain.cancel()

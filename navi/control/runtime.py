@@ -71,6 +71,15 @@ class SwapRuntime:
             pipeline.set_mood_resolver(self._resolve_mood_voice)
 
     @property
+    def _voice_enabled(self) -> bool:
+        """음성 세션인가 — 파이프라인이 있고 mouth가 붙어 있으면 True.
+
+        텍스트 모드는 파이프라인이 있어도(리팩터 후 항상 생성) mouth가 없다. "음성을
+        건드릴 수 있나"의 단일 판정 — 예전 `pipeline is None`을 이걸로 대체한다.
+        """
+        return self._pipeline is not None and self._pipeline.has_mouth
+
+    @property
     def character(self) -> str:
         """현재 카드의 캐릭터명 — 데몬 프롬프트(run_turn)의 동적 참조용."""
         return self._conductor.card.character
@@ -126,7 +135,7 @@ class SwapRuntime:
         self._persona_id = persona_id
 
         voice_swapped = False
-        if self._pipeline is not None and vendor_voice is not None and tone is not None:
+        if self._voice_enabled and vendor_voice is not None and tone is not None:
             if vendor_voice.ckpts != self._loaded_ckpts:
                 voice_swapped = await self._swap_weights(vendor_voice)
             else:
@@ -152,10 +161,10 @@ class SwapRuntime:
         목소리는 그대로인 반쪽 정체성이 연속성 원칙(설계 원칙 2) 위반이라서다.
         사유에 해법까지 담는다 — 비활성화만 하면 "그럼 영영 못 쓰나"가 된다.
 
-        텍스트 모드(pipeline=None)는 애초에 목소리를 안 건드리므로 전부 허용이다.
+        텍스트 모드(mouth 없음)는 애초에 목소리를 안 건드리므로 전부 허용이다.
         순진하게 짜면 여기서 **전 카드가 비활성화**된다.
         """
-        if self._pipeline is None:
+        if not self._voice_enabled:
             return True, ""
         restart = f"`run_navi.ps1 -Persona {persona_id}`로 재기동하면 쓸 수 있어요"
         if voice is None:  # ③ voice 섹션 없음 (example_kr 등)
@@ -280,8 +289,11 @@ class SwapRuntime:
     # --- 가드 -----------------------------------------------------------
 
     def _require_pipeline(self) -> TurnPipeline:
-        if self._pipeline is None:
-            raise RuntimeError("음성 파이프라인 없음 — --voice 없이 기동됨")
+        # 톤 조작(list_voices·set_voice·tone_file)은 음성 세션 전용 — 텍스트 모드는
+        # 파이프라인이 있어도 mouth가 없어 목소리를 못 건드린다.
+        if not self._voice_enabled:
+            raise RuntimeError("음성 파이프라인 없음 — 음성 없이 기동됨")
+        assert self._pipeline is not None  # _voice_enabled가 보장
         return self._pipeline
 
     def _guard_not_playing(self) -> None:

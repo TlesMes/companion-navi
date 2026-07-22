@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from datetime import time as dtime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from navi.bus import Event, EventBus, EventKind
@@ -265,6 +266,48 @@ def test_resolve_mood_voice_missing_reference_wav_falls_back(tmp_path):
         loaded_ckpts=card.voice.vendor("gptsovits").ckpts,
     )
     assert swap._resolve_mood_voice("bright") is None  # wav 부재 → 폴백
+
+
+# --- 텍스트 모드(mouth 없는 파이프라인): 음성 세션 아님 → 전 카드 허용·카드만 교체 ---
+
+
+def _make_textmode_swap(tmp_path):
+    """리팩터 후 텍스트 모드 — 파이프라인은 있지만 mouth가 없다(has_mouth=False)."""
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    _write_card(personas / "navi.yaml", "나비", voice_block=_SUPERTONIC_VOICE.format(name="navi"))
+    _write_card(personas / "other.yaml", "다른애", voice_block=_SUPERTONIC_VOICE.format(name="other"))
+    card = CharacterCard.load(personas / "navi.yaml", root=tmp_path)
+    conductor = _StubConductor(card)
+    tone = card.voice.default_tone("supertonic")
+    pipeline = TurnPipeline(
+        brain=None, mouth=None, conductor=conductor, voice=card.voice.profile(tone)
+    )
+    swap = SwapRuntime(
+        conductor=conductor, pipeline=pipeline, personas_dir=personas, root=tmp_path,
+        vendor="supertonic", persona_id="navi", loaded_ckpts=("", ""),
+    )
+    return swap, pipeline
+
+
+def test_textmode_pipeline_allows_all_personas(tmp_path):
+    swap, pipeline = _make_textmode_swap(tmp_path)
+    assert pipeline.has_mouth is False
+    # 음성 세션 아님 → 목소리 연속성 판정 없이 전 카드 허용(pipeline=None 때와 동일 parity)
+    assert all(p["available"] for p in swap.list_personas())
+
+
+async def test_textmode_swap_persona_is_card_only(tmp_path):
+    swap, _p = _make_textmode_swap(tmp_path)
+    result = await swap.swap_persona("other")
+    assert result["character"] == "다른애"
+    assert result["voice_swapped"] is False  # 카드만 교체(목소리 안 건드림)
+
+
+def test_textmode_tone_ops_rejected(tmp_path):
+    swap, _p = _make_textmode_swap(tmp_path)
+    with pytest.raises(RuntimeError):
+        swap.list_voices()  # 톤 조작은 음성 세션 전용
 
 
 # --- GET /status: DaemonState.snapshot 그대로 ---
