@@ -7,6 +7,28 @@
 
 ## Phase 3 — 능동성 (진행 중)
 
+**감정 태그 → 레퍼런스 전환: 헤드리스 구현 (2026.07.22, 체크리스트 B3, `feat/mood-reference`):**
+- **한 줄:** 두뇌가 응답 첫 토큰으로 `[mood:key]`를 뱉고, 데몬이 그걸 흡수해 그 무드의 레퍼런스(톤)로
+  이번 턴만 합성한 뒤 **본문만** TTS로 흘린다. D3의 "톤=레퍼런스 제어"를 처음 실제로 쓴다 —
+  **음색(가중치) 고정, 레퍼런스만 무드별 교체.**
+- **왜 이 형태:** 무드는 합성 *전에* 필요해 느린 경로에 못 둔다(aliveness §0) → 빠른 경로 맨 앞
+  선행 태그. Mouth 어댑터는 이미 턴마다 `VoiceProfile`을 받으므로 **무수정** — 무드는 "이번 턴 voice만
+  바꾸기"로 환원. 페르소나의 `tones`가 이미 그 데이터 그릇. Brain 계약도 무변경(태그는 스트림 텍스트).
+- **★ 탐색 중 드러난 함정 — 기억 오염:** `BrainResult.full_text`에 태그가 남아 `store.append_turn`으로
+  단기기억에 저장되면 다음 턴 맥락으로 되먹여져 **LLM이 태그를 대사로 학습**한다. `strip_mood_tag`로
+  full_text를 정리해 막았다(`peel_mood`는 합성 경로만 막음 — 두 경로를 각각 처리).
+- **폴백 단일화:** 미지 키·형식 오류·태그 부재·카드에 없는 무드·레퍼런스 wav 부재 → **전부 base
+  (neutral) 목소리로 수렴.** 크래시·무음 없음. LLM이 스키마 밖 키를 뱉어도 안전(aliveness §1.2).
+- **소유 경계:** 파서(`navi/mouth/mood.py`)는 벤더 중립. resolver(`mood→톤→profile`)는 SwapRuntime
+  소유 — 바운드 메서드를 파이프라인에 1회 주입해 `swap_persona`의 페르소나 교체가 자동 반영된다.
+  사용자가 고른 기본 톤(`set_voice`)이 neutral 폴백 기준. 1차 키 neutral(필수)·bright·calm(comfort는
+  스키마만 열어둠).
+- **검증:** 315 tests green(신규 test_mood 11 + pipeline 4 + control 4 + persona 1). 파서 분할토큰/
+  누락/미지키/정상, 태그가 body·full_text·echo로 안 샘, resolver neutral→base·wav부재→base.
+  **남은 것: 실기 청취(A-트랙)** — aris 카드에 bright·calm 레퍼런스 wav(gitignore 로컬) 추가 후
+  무드별 전환 청취. supertonic(navi)은 톤 1개라 항상 neutral 폴백(무해). 설계 →
+  [design/mood_reference.md](./design/mood_reference.md).
+
 **E6-4 — 대기 화면 런처: E6 완결 (2026.07.21, 체크리스트 E6-4):**
 - **한 줄:** 죽은 대기 화면(손으로 명령을 쳐야 했던)을 런처로 바꾼다. preflight(E6-2)로 엔진
   칩을 그리고, 클릭하면 데몬을 창 없이 독립 기동한다. 앞의 셋(모델·판정·설정)이 여기서 조립된다.

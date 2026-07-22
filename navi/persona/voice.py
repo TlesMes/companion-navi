@@ -56,6 +56,7 @@ class ToneSpec:
     icon: str = ""
     voice_id: str = ""  # gptsovits=레퍼런스 wav 경로 / supertonic=프리셋명
     ref_text: str = ""  # voice_id(wav)의 전사 — gptsovits 전용, wav와 한 쌍
+    mood: str = ""  # 이 톤이 대응하는 감정 키 — 빈 값 = 무드 자동선택 대상 아님
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,16 @@ class VendorVoice:
     def ckpts(self) -> tuple[str, str]:
         """가중치 식별자 — 페르소나 교체 시 '같은 음색인가' 비교 키(SwapRuntime)."""
         return (self.gpt_ckpt, self.sovits_ckpt)
+
+    def tone_for_mood(self, mood: str) -> ToneSpec | None:
+        """이 무드에 대응하는 톤 — 없으면 None(호출부가 base로 폴백).
+
+        빈 무드는 매칭 대상이 아니다(neutral 폴백은 호출부가 base로 처리). 첫 매칭을
+        쓴다 — 한 무드에 톤이 여럿이면 카드 선언 순서가 우선순위다.
+        """
+        if not mood:
+            return None
+        return next((t for t in self.tones if t.mood == mood), None)
 
 
 @dataclass(frozen=True)
@@ -97,6 +108,7 @@ class PersonaVoice:
                     if as_path
                     else t.get("voice_id", ""),
                     ref_text=t.get("ref_text", ""),
+                    mood=t.get("mood", ""),
                 )
                 for t in section.get("tones") or ()
             )
