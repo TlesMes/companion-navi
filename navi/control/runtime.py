@@ -26,6 +26,7 @@ from navi.persona import CharacterCard, PersonaVoice, missing_assets
 
 if TYPE_CHECKING:
     from navi.conductor import Conductor
+    from navi.models import VoiceProfile
     from navi.pipeline import TurnPipeline
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class SwapRuntime:
         # 톤 세트의 주인 — 부팅 페르소나의 번들(voice 섹션 없으면 None = 톤 목록 빈 배열)
         self._voice_persona_id = persona_id
         self._voice: PersonaVoice | None = conductor.card.voice
+        # 무드→목소리 해석기를 파이프라인에 건다. 바운드 메서드라 swap_persona의
+        # self._voice 갱신이 자동 반영 — 재주입 불요. 사용자가 고른 기본 톤이 폴백 기준.
+        if pipeline is not None:
+            pipeline.set_mood_resolver(self._resolve_mood_voice)
 
     @property
     def character(self) -> str:
@@ -237,6 +242,26 @@ class SwapRuntime:
             )
         pipeline.set_voice(self._voice.profile(tone))
         return {"name": name, "applied": "next_turn"}
+
+    def _resolve_mood_voice(self, mood: str) -> VoiceProfile | None:
+        """무드 → 이번 턴 목소리. 파이프라인이 턴마다 부른다.
+
+        neutral·미매칭·카드에 없는 무드·레퍼런스 wav 부재 → None(파이프라인이 base로
+        폴백). 즉 **모든 폴백이 base=neutral로 수렴** — 크래시·무음 없음. base는
+        사용자가 고른 기본 톤(set_voice로 파이프라인에 박힌 self._voice).
+        """
+        if mood == "neutral" or self._voice is None:
+            return None
+        vendor_voice = self._voice.vendor(self._vendor)
+        if vendor_voice is None:
+            return None
+        tone = vendor_voice.tone_for_mood(mood)
+        if tone is None:
+            return None
+        if tone.name in missing_assets(self._vendor, vendor_voice).tones:
+            log.warning("무드 %s 톤「%s」레퍼런스 wav 부재 — 기본 톤 유지", mood, tone.name)
+            return None
+        return self._voice.profile(tone)
 
     def tone_file(self, name: str) -> Path | None:
         """톤 레퍼런스 wav 경로 — GUI 시청취용. 파일이 아니면(프리셋명 등) None.

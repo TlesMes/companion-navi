@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator, Callable
 
 from navi.brain.base import BrainAdapter
 from navi.conductor import Conductor
+from navi.mouth.mood import peel_mood, strip_mood_tag
 from navi.models import BrainResult, VoiceProfile
 from navi.mouth.base import MouthAdapter
 
@@ -36,11 +37,15 @@ class TurnPipeline:
         conductor: Conductor,
         voice: VoiceProfile,
         on_stage: Callable[[str, str, dict | None], None] | None = None,
+        mood_voice: Callable[[str], VoiceProfile | None] | None = None,
     ) -> None:
         self._brain = brain
         self._mouth = mouth
         self._conductor = conductor
         self._voice = voice
+        # 무드→이번 턴 목소리 해석기. None이면 무드 무시(self._voice 고정).
+        # 소유는 SwapRuntime — 페르소나·기본 톤을 쥔 쪽이 self._voice.profile로 해석한다.
+        self._mood_voice = mood_voice
         # 턴과 가중치 교체의 상호배제 — 교체는 torch.load(~2-5s) 때문에 스레드로 나가며
         # 그동안 루프를 놓는다. 락이 없으면 그 틈에 tick의 선제 발화가 시작돼 교체 중인
         # 모델로 합성한다. 락을 잡은 쪽이 끝나야 상대가 진행한다(is_playing이 이를 표면화).
@@ -69,16 +74,42 @@ class TurnPipeline:
             )
             self._on_stage("brain", "start", None)
             tts_t0 = time.perf_counter()
-            tokens = self._tee(
-                self._brain.generate_stream(request), echo, brain_t0=tts_t0
-            )
+            # 무드 선행 태그를 합성 전에 떼어 이번 턴 목소리를 고른다. 태그는
+            # peel_mood가 흡수하므로 echo(_tee)·TTS로 새지 않는다. 폴백은 전부 self._voice.
+            mood, body = await peel_mood(self._brain.generate_stream(request))
+            voice = self._voice
+            if self._mood_voice is not None:
+                voice = self._mood_voice(mood) or self._voice
+            if mood != "neutral" or voice is not self._voice:
+                log.info("무드 %s → 목소리 %s", mood, voice.name)
+            tokens = self._tee(body, echo, brain_t0=tts_t0)
             # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
             self._on_stage("tts", "start", None)
-            await self._mouth.speak_stream(tokens, self._voice)
+            await self._mouth.speak_stream(tokens, voice)
             tts_ms = (time.perf_counter() - tts_t0) * 1000
             self._on_stage("tts", "done", {"ms": round(tts_ms)})
             log.info("TTS(합성+재생) %.0fms", tts_ms)
-            return self._brain.last_result
+            return self._clean_result(self._brain.last_result)
+
+    @staticmethod
+    def _clean_result(result: BrainResult | None) -> BrainResult | None:
+        """확정 전문에서 무드 태그를 제거한 결과 — 기억 오염 방지.
+
+        peel_mood는 합성 경로만 막는다. 두뇌 어댑터의 full_text엔 태그가 남아, 벗기지
+        않으면 단기기억에 저장돼 다음 턴 맥락으로 되먹여진다(LLM이 태그를 대사로 학습).
+        """
+        if result is None:
+            return None
+        cleaned = strip_mood_tag(result.full_text)
+        if cleaned == result.full_text:
+            return result
+        return BrainResult(full_text=cleaned, usage=result.usage)
+
+    def set_mood_resolver(
+        self, resolver: Callable[[str], VoiceProfile | None] | None
+    ) -> None:
+        """무드→목소리 해석기 주입(SwapRuntime 소유). None이면 무드 무시."""
+        self._mood_voice = resolver
 
     async def _tee(
         self,

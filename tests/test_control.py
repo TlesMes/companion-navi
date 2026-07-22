@@ -183,6 +183,90 @@ def _make_gptsovits_swap(tmp_path, *, mouth=None):
     return swap, pipeline
 
 
+# --- _resolve_mood_voice: 무드 → 이번 턴 목소리 ---
+
+# supertonic 톤에 mood 선언 — voice_id가 프리셋명이라 파일 검사 없이 매핑만 검증한다.
+_MOOD_VOICE = (
+    "voice:\n"
+    "  name: navi\n"
+    "  supertonic:\n"
+    "    tones:\n"
+    "      - {name: 기본, voice_id: F1}\n"
+    "      - {name: 신남, voice_id: F2, mood: bright}\n"
+)
+
+
+def _mood_swap(tmp_path):
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    _write_card(personas / "navi.yaml", "나비", voice_block=_MOOD_VOICE)
+    card = CharacterCard.load(personas / "navi.yaml", root=tmp_path)
+    conductor = _StubConductor(card)
+    tone = card.voice.default_tone("supertonic")
+    pipeline = TurnPipeline(
+        brain=None,
+        mouth=FakeMouth(),
+        conductor=conductor,
+        voice=card.voice.profile(tone),
+    )
+    swap = SwapRuntime(
+        conductor=conductor,
+        pipeline=pipeline,
+        personas_dir=personas,
+        root=tmp_path,
+        vendor="supertonic",
+        persona_id="navi",
+        loaded_ckpts=("", ""),
+    )
+    return swap, pipeline
+
+
+def test_resolve_mood_voice_selects_declared_tone(tmp_path):
+    swap, _p = _mood_swap(tmp_path)
+    voice = swap._resolve_mood_voice("bright")
+    assert voice is not None and voice.vendor_voice_id == "F2"  # 신남 톤
+
+
+def test_resolve_mood_voice_neutral_and_unmatched_return_none(tmp_path):
+    swap, _p = _mood_swap(tmp_path)
+    assert swap._resolve_mood_voice("neutral") is None  # base=neutral 유지
+    assert swap._resolve_mood_voice("calm") is None  # 카드에 없는 무드
+
+
+def test_construction_injects_resolver_into_pipeline(tmp_path):
+    swap, pipeline = _mood_swap(tmp_path)
+    assert pipeline._mood_voice == swap._resolve_mood_voice  # 부팅 시 1회 주입
+
+
+def test_resolve_mood_voice_missing_reference_wav_falls_back(tmp_path):
+    """gptsovits 무드 톤의 레퍼런스 wav가 없으면 None — 말시켜야 터지는 대신 기본 톤 유지."""
+    personas = tmp_path / "personas"
+    personas.mkdir(exist_ok=True)
+    for f in ("g.ckpt", "s.pth", "base.wav"):
+        (tmp_path / f).write_bytes(b"")  # bright.wav는 일부러 안 만든다
+    block = (
+        "voice:\n  name: aris\n  gptsovits:\n"
+        "    gpt_ckpt: g.ckpt\n    sovits_ckpt: s.pth\n    ref_lang: ja\n    gen_lang: ja\n"
+        "    tones:\n"
+        "      - {name: 기본, voice_id: base.wav, ref_text: r}\n"
+        "      - {name: 신남, voice_id: bright.wav, ref_text: r, mood: bright}\n"
+    )
+    _write_card(personas / "aris.yaml", "아리스", voice_block=block)
+    card = CharacterCard.load(personas / "aris.yaml", root=tmp_path)
+    conductor = _StubConductor(card)
+    tone = card.voice.default_tone("gptsovits")
+    pipeline = TurnPipeline(
+        brain=None, mouth=_HotSwapMouth(), conductor=conductor,
+        voice=card.voice.profile(tone),
+    )
+    swap = SwapRuntime(
+        conductor=conductor, pipeline=pipeline, personas_dir=personas, root=tmp_path,
+        vendor="gptsovits", persona_id="aris",
+        loaded_ckpts=card.voice.vendor("gptsovits").ckpts,
+    )
+    assert swap._resolve_mood_voice("bright") is None  # wav 부재 → 폴백
+
+
 # --- GET /status: DaemonState.snapshot 그대로 ---
 
 

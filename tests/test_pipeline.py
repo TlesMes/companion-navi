@@ -82,6 +82,50 @@ async def test_run_turn_without_echo_still_synthesizes():
     assert mouth.spoken == ["하나."]
 
 
+# --- 무드 선행 태그 → 이번 턴 목소리 ---
+
+
+BRIGHT_VOICE = VoiceProfile(name="navi", vendor_voice_id="bright.wav", ref_text="신남")
+
+
+async def test_mood_tag_selects_turn_voice_and_never_synthesizes_or_stores_tag():
+    """[mood:bright] → resolver가 고른 목소리로 합성, 태그는 TTS·echo·기억에 안 샌다."""
+    pipe, _brain, mouth, _conductor = _build(["[mood:", "bright] ", "자랑해 봐."])
+    pipe.set_mood_resolver(lambda m: BRIGHT_VOICE if m == "bright" else None)
+    echoed: list[str] = []
+    result = await pipe.run_turn("x", user_id=1, session_id="s", echo=echoed.append)
+    assert mouth.spoken == ["자랑해 봐."]  # 태그 제거된 본문만 합성
+    assert mouth.last_voice is BRIGHT_VOICE  # 무드가 고른 목소리
+    assert "[mood" not in "".join(echoed)  # 화면 echo에도 안 샘
+    assert result.full_text == "자랑해 봐."  # 기억 저장 전문에서 태그 제거
+
+
+async def test_neutral_mood_keeps_base_voice():
+    pipe, _brain, mouth, _conductor = _build(["[mood:neutral] 안녕."])
+    pipe.set_mood_resolver(lambda m: BRIGHT_VOICE if m == "bright" else None)
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    assert mouth.spoken == ["안녕."]
+    assert mouth.last_voice is VOICE  # neutral → base 유지
+
+
+async def test_resolver_none_falls_back_to_base_voice():
+    """resolver가 None을 주면(레퍼런스 부재 등) base로 폴백 — 크래시·무음 없음."""
+    pipe, _brain, mouth, _conductor = _build(["[mood:bright] 오."])
+    pipe.set_mood_resolver(lambda m: None)
+    await pipe.run_turn("x", user_id=1, session_id="s")
+    assert mouth.spoken == ["오."]
+    assert mouth.last_voice is VOICE
+
+
+async def test_no_resolver_ignores_mood_but_still_strips_tag():
+    """resolver 미주입(하위호환): 무드 무시하고 base로, 태그는 여전히 제거된다."""
+    pipe, _brain, mouth, _conductor = _build(["[mood:bright] 오."])
+    result = await pipe.run_turn("x", user_id=1, session_id="s")
+    assert mouth.spoken == ["오."]
+    assert mouth.last_voice is VOICE
+    assert result.full_text == "오."
+
+
 # --- on_stage: STAGE 계측(Stage 15) — brain 첫 토큰(TTFT)·tts 진입/종료 ---
 
 
