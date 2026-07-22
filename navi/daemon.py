@@ -505,17 +505,19 @@ async def _run(config, args) -> None:
     # 카드에 섹션이 있으면 가중치·초기 톤을 카드에서, 없으면 config mouth 폴백(하위호환).
     vendor_voice = card.voice.vendor(config.mouth.vendor) if card.voice else None
 
-    pipeline: TurnPipeline | None = None
+    # 초기 목소리(톤) — 텍스트 모드에선 안 쓰이지만 파이프라인 계약상 필요.
+    initial_voice = config.mouth.voice
+    default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
+    if default_tone is not None:
+        initial_voice = card.voice.profile(default_tone)
+
+    mouth = None
     if args.voice:
         from navi.mouth import create_mouth
 
         # 벤더 경계는 persona.mouth_options가 지킨다 — 가중치 kwarg는 그걸 받는
         # 벤더에만 간다(예전엔 무조건 주입해 SupertonicMouth(gpt_ckpt=…)로 죽었다).
         options = mouth_options(config.mouth.vendor, config.mouth.options, vendor_voice)
-        initial_voice = config.mouth.voice
-        default_tone = card.voice.default_tone(config.mouth.vendor) if card.voice else None
-        if default_tone is not None:
-            initial_voice = card.voice.profile(default_tone)
         # 레퍼런스 wav 부재는 웜업을 통과하고 **첫 발화**에서 터진다(최악의 타이밍) —
         # 부팅 시 미리 말해준다. 부팅을 막지는 않는다: 톤을 바꾸면 살아나고, 카드 하나가
         # 데몬을 벽돌로 만드는 게 E1에서 고친 실패 유형이다. ckpt는 warmup이 막는다.
@@ -528,19 +530,23 @@ async def _run(config, args) -> None:
         mouth = create_mouth(config.mouth.vendor, **options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
-        pipeline = TurnPipeline(
-            brain=brain,
-            mouth=mouth,
-            conductor=conductor,
-            voice=initial_voice,
-            # 파이프라인은 버스를 모른다 — STAGE 발행은 여기서 연결(Stage 15)
-            on_stage=lambda stage, phase, detail: bus.publish(
-                Event(EventKind.STAGE, time.monotonic(), (stage, phase, detail))
-            ),
-        )
 
-    # 페르소나·톤 교체 파사드(Stage 15-②) — 텍스트 모드(pipeline=None)에서도
-    # 카드 교체는 되므로 항상 만든다. 컨트롤 플레인과 run_turn 프롬프트가 쓴다.
+    # 텍스트·음성이 같은 파이프라인을 탄다 — mouth=None이면 합성만 건너뛰고 요청 조립·무드
+    # 처리·기억 정리는 공유한다(텍스트 모드에서 무드 태그가 기억에 오염되던 문제 해소).
+    # STAGE 계측도 공유 — 텍스트 모드는 brain 노드만 점등한다.
+    pipeline = TurnPipeline(
+        brain=brain,
+        mouth=mouth,
+        conductor=conductor,
+        voice=initial_voice,
+        # 파이프라인은 버스를 모른다 — STAGE 발행은 여기서 연결(Stage 15)
+        on_stage=lambda stage, phase, detail: bus.publish(
+            Event(EventKind.STAGE, time.monotonic(), (stage, phase, detail))
+        ),
+    )
+
+    # 페르소나·톤 교체 파사드(Stage 15-②) — 컨트롤 플레인과 run_turn 프롬프트가 쓴다.
+    # 텍스트 모드는 mouth 없는 파이프라인이라 카드 교체만 하고 목소리는 안 건드린다.
     from navi.control.runtime import SwapRuntime
 
     swap = SwapRuntime(
@@ -569,17 +575,9 @@ async def _run(config, args) -> None:
             print(token, end="", flush=True)
 
         try:
-            if pipeline is not None:
-                result = await pipeline.run_turn(
-                    text, user_id=user_id, session_id=session_id, echo=_echo
-                )
-            else:
-                request = conductor.build_request(
-                    text, user_id=user_id, session_id=session_id
-                )
-                async for token in brain.generate_stream(request):
-                    _echo(token)
-                result = brain.last_result
+            result = await pipeline.run_turn(
+                text, user_id=user_id, session_id=session_id, echo=_echo
+            )
             print()
         except Exception:
             print()
@@ -605,17 +603,9 @@ async def _run(config, args) -> None:
             print(token, end="", flush=True)
 
         try:
-            if pipeline is not None:
-                result = await pipeline.run_turn(
-                    topic, user_id=user_id, session_id=session_id, echo=_echo
-                )
-            else:
-                request = conductor.build_request(
-                    topic, user_id=user_id, session_id=session_id
-                )
-                async for token in brain.generate_stream(request):
-                    _echo(token)
-                result = brain.last_result
+            result = await pipeline.run_turn(
+                topic, user_id=user_id, session_id=session_id, echo=_echo
+            )
             print()
         except Exception:
             print()
@@ -766,8 +756,7 @@ async def _run(config, args) -> None:
                 await asyncio.wait_for(control_task, timeout=3)
             except (TimeoutError, asyncio.CancelledError):
                 control_task.cancel()
-        if pipeline is not None:
-            pipeline.interrupt()
+        pipeline.interrupt()
         if wakeword is not None:
             wakeword.close()
         store.close()

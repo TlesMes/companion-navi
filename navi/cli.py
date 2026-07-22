@@ -117,19 +117,20 @@ async def chat(
         store.close()
         return
 
-    # 음성 모드: Brain 토큰을 Mouth로 흘려 나비가 음성으로 답한다(텍스트는 화면에 동시 echo).
-    # 텍스트 모드(기본)는 기존 print 경로 그대로 — 음성 의존성 없이 가볍게.
-    pipeline: TurnPipeline | None = None
+    # 음성 모드는 mouth를 붙여 나비가 음성으로 답하고(텍스트는 화면에 동시 echo), 텍스트 모드는
+    # mouth=None으로 같은 파이프라인을 탄다(합성만 건너뜀). 무거운 TTS 로드는 음성 모드에서만
+    # — 텍스트 모드는 여전히 가볍다. 한 run_turn을 공유해 무드 태그 정리가 양쪽에 걸린다.
+    mouth = None
     if use_voice:
         mouth = create_mouth(config.mouth.vendor, **config.mouth.options)
         print(f"[TTS 엔진 로딩 중… {config.mouth.vendor}]", flush=True)
         await asyncio.to_thread(mouth.warmup)
-        pipeline = TurnPipeline(
-            brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
-        )
         log.info(
             "음성 모드 — mouth=%s, voice=%s", config.mouth.vendor, config.mouth.voice.name
         )
+    pipeline = TurnPipeline(
+        brain=brain, mouth=mouth, conductor=conductor, voice=config.mouth.voice
+    )
 
     voice_note = f" 목소리: {config.mouth.vendor}." if use_voice else ""
     print(
@@ -152,17 +153,9 @@ async def chat(
             print(token, end="", flush=True)
 
         try:
-            if pipeline is not None:
-                result = await pipeline.run_turn(
-                    text, user_id=user_id, session_id=session_id, echo=_echo
-                )
-            else:
-                request = conductor.build_request(
-                    text, user_id=user_id, session_id=session_id
-                )
-                async for token in brain.generate_stream(request):
-                    _echo(token)
-                result = brain.last_result
+            result = await pipeline.run_turn(
+                text, user_id=user_id, session_id=session_id, echo=_echo
+            )
             print()
         except Exception:
             print()
