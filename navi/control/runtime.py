@@ -230,6 +230,7 @@ class SwapRuntime:
             {
                 "name": t.name,
                 "icon": t.icon,
+                "voice_id": t.voice_id,  # 자동 점등 매칭 키(mood 이벤트의 voice_id와 join)
                 "current": t.voice_id == current_id,
                 "available": t.name not in missing.tones,
             }

@@ -444,6 +444,7 @@ const S = {
   trigger: "",             // 현재 턴 트리거 텍스트 (TURN_STARTED)
   brainDone: false,        // brain·tts는 스트리밍으로 겹친다 — 표시 순서 제어용
   voices: [], personaId: null, character: "나비",
+  activeTone: null,        // 최근 턴에 실제로 쓰인 톤의 voice_id (mood 자동 점등) — null이면 기본
 };
 const logBuf = [];  // {wall, kind, payload} — 최신이 앞
 const MODE_LABEL = { active: "ACTIVE", sleep: "SLEEP", dnd: "DND", snooze: "SNOOZE" };
@@ -530,7 +531,9 @@ function renderToneChips() {
   for (const v of S.voices.slice(0, 4)) {
     const b = document.createElement("button");
     const blocked = v.available === false;  // 레퍼런스 wav 부재 — 그 칩만(④-b)
-    b.className = "tone-chip" + (v.current ? " current" : "") + (blocked ? " blocked" : "");
+    // 자동 점등: 최근 턴 톤(activeTone)이 있으면 그걸, 없으면 서버 기본(current)을 밝힌다.
+    const lit = S.activeTone ? v.voice_id === S.activeTone : v.current;
+    b.className = "tone-chip" + (lit ? " current" : "") + (blocked ? " blocked" : "");
     b.title = blocked ? `${v.name} — 레퍼런스 wav가 없어요` : v.name;
     b.innerHTML = icon(v.icon || "wave", 16);
     b.onclick = () => blocked ? toast(b.title) : postVoice(v.name);
@@ -669,7 +672,8 @@ function renderTonePanel() {
   for (const v of S.voices) {
     const row = document.createElement("button");
     const blocked = v.available === false;
-    row.className = "tone-row" + (v.current ? " current" : "") + (blocked ? " blocked" : "");
+    const lit = S.activeTone ? v.voice_id === S.activeTone : v.current;
+    row.className = "tone-row" + (lit ? " current" : "") + (blocked ? " blocked" : "");
     const bars = [6, 12, 8, 13, 5].map((h) => `<span style="height:${h}px"></span>`).join("");
     const label = blocked ? `${v.name} · 레퍼런스 wav 없음` : v.name;
     row.title = label;
@@ -754,6 +758,13 @@ function applyEvent(ev) {
   }
 }
 function applyStage(stage, phase, detail) {
+  if (stage === "mood") {
+    // 두뇌가 고른 이번 턴 톤 — 노드가 아니라 톤 칩을 점등한다(gui.md Phase 3-5 자동 점등).
+    S.activeTone = (detail && detail.voice_id) || null;
+    renderToneChips();
+    if ($("persona-panel").classList.contains("open")) renderTonePanel();
+    return;
+  }
   clearTimeout(resetTimer);
   if (stage === "stt") {
     if (phase === "start") { setNode("ear", "done"); setNode("stt", "active"); setCaption("받아쓰는 중…"); }

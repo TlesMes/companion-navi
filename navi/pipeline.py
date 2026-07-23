@@ -95,6 +95,11 @@ class TurnPipeline:
                 log.info("무드 %s → 목소리 %s", mood, voice.name)
             tokens = self._tee(body, echo, brain_t0=tts_t0)
             if self._mouth is not None:
+                # 이번 턴 톤을 GUI에 알린다 — 자동 점등(gui.md Phase 3-5). voice_id로 칩을
+                # 특정한다(/voices의 voice_id와 join). STAGE 채널 재사용이라 로그에도 남는다.
+                self._on_stage(
+                    "mood", "picked", {"mood": mood, "voice_id": voice.vendor_voice_id}
+                )
                 # brain 생성과 tts 합성·재생은 스트리밍으로 겹친다 — tts 구간은 전체를 덮는다.
                 self._on_stage("tts", "start", None)
                 await self._mouth.speak_stream(tokens, voice)

@@ -679,7 +679,11 @@ async def _run(config, args) -> None:
     # STT 언어 = 페르소나 발화 언어(카드 gen_lang). 없으면 ko 폴백(navi 등 supertonic
     # 한국어 카드). Whisper에 강제해 일본어 페르소나가 한국어로 오역되는 걸 막는다.
     # 부팅 시점 고정 — 런타임 페르소나 교체 시 언어까지 바꾸는 건 후속(전환은 같은 언어 내).
-    stt_lang = vendor_voice.gen_lang if (vendor_voice and vendor_voice.gen_lang) else "ko"
+    # --stt-lang은 이 판정을 덮는다: 페르소나 언어와 다른 언어로 말해 시험할 때(예: 일본어
+    # aris에 한국어로 입력해 mood 분기를 보는 경우). mood 태깅은 입력 언어와 무관하다.
+    stt_lang = args.stt_lang or (
+        vendor_voice.gen_lang if (vendor_voice and vendor_voice.gen_lang) else "ko"
+    )
 
     async def transcribe(utt) -> str:
         print("[받아쓰는 중…]")
@@ -782,6 +786,9 @@ def main() -> None:
     parser.add_argument("--vad-threshold", type=float, metavar="RMS", help="발화 RMS 임계")
     parser.add_argument("--stt-model", default="large-v3-turbo", metavar="SIZE",
                         help="faster-whisper 모델 크기")
+    parser.add_argument("--stt-lang", metavar="LANG",
+                        help="STT 언어를 카드 gen_lang 대신 강제(예: ko). 페르소나 언어와 다른 "
+                             "언어로 말해 시험할 때 — mood 태깅은 입력 언어와 무관하다")
     parser.add_argument("--active-timeout", type=float, metavar="SEC",
                         help="ACTIVE 유지 시간(무음 기준)")
     parser.add_argument("--tick-interval", type=float, default=10.0, metavar="SEC",
