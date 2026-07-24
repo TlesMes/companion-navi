@@ -149,20 +149,27 @@
 
 ## B. Phase 3 본류 — 순서 4 튜닝 → 순서 5
 
-- [ ] **B1. 조건 산식 재구상(변동확률)** — `should_initiate`를 고정 간격 bool에서 **tick 기반 hazard**
-      (시간 경과에 따라 발화 확률↑)로 교체. 조건이 bool 뒤에 격리돼 있어 게이트·대기·로깅은 그대로
-      재사용된다. 교체 시 정리할 것: jitter 파라미터 위치(내부 RNG로 옮기면 붕 뜸)·tick 빈도 정규화·
-      테스트 결정성(seed 주입). 대상: [navi/heartbeat/timing.py](../navi/heartbeat/timing.py).
-- [ ] **B2. interaction_log 축적 → 가중치 튜닝** — B1의 산식에 실데이터를 먹인다. Phase 3 완료 기준
-      ("선제 발화 응답률 > 무시율")은 로그 없이 닫을 수 없다. **B1 먼저, 그 위에서 튜닝**(진행 원칙 2).
-- [x] **B3. 감정 태그 → 레퍼런스 전환** — **헤드리스 구현 완료(`feat/mood-reference`).**
-      두뇌가 첫 토큰으로 `[mood:key]`를 뱉고 데몬(`peel_mood`)이 흡수해 그 무드의 톤(레퍼런스)으로
-      이번 턴만 합성, 본문만 TTS. 태그는 합성·기억·화면에 안 샘(`strip_mood_tag`로 full_text 정리).
-      음색(가중치) 고정, 레퍼런스만 교체(D3). 1차 키 neutral(필수)·bright·calm — 미지 키·미매칭·
-      wav 부재는 전부 base로 폴백. resolver는 SwapRuntime 소유(페르소나 교체 자동 반영). 설계 →
-      [design/mood_reference.md](./design/mood_reference.md). **남은 것: 실기 청취(A-트랙)** — aris
-      카드에 bright·calm 레퍼런스 wav(gitignore 로컬) 추가 후 무드별 레퍼런스 전환 청취.
-- [ ] **B4. D13(관심사 피드)** — `pick_topic`의 `topic_feed`가 현재 빈 리스트 더미. Phase 3 완료 기준 포함.
+- [x] **B1. 조건 산식 재구상(변동확률)** — **완료(2026.07.18, `refactor/timing-hazard`, 커밋
+      `7f4ac59`).** `should_initiate`를 고정 간격 bool에서 tick 기반 hazard(시간 경과에 따라
+      발화 확률↑)로 교체. 대상: [navi/heartbeat/timing.py](../navi/heartbeat/timing.py).
+- [ ] **B2. interaction_log 축적 → 가중치 튜닝** — 로깅 인프라(`log_interaction`·
+      `count_interactions`, [navi/memory/store.py](../navi/memory/store.py))는 있음. B1의 hazard
+      산식에 **실데이터를 먹이는 튜닝 자체**가 남음. Phase 3 완료 기준("선제 발화 응답률 > 무시율")은
+      로그 없이 닫을 수 없다 — 실사용 기간 축적이 전제라 지금 착수해도 즉시 끝나지 않는다.
+- [x] **B3. 감정 태그 → 레퍼런스 전환** — **완료(`feat/mood-reference` #35 + `feat/mood-autolight`
+      #39, 실기 검증까지 마침).** 두뇌가 첫 토큰으로 `[mood:key]`를 뱉고 데몬(`peel_mood`)이 흡수해
+      그 무드의 톤(레퍼런스)으로 이번 턴만 합성, 본문만 TTS. 태그는 합성·기억·화면에 안 샘
+      (`strip_mood_tag`로 full_text 정리). 음색(가중치) 고정, 레퍼런스만 교체(D3). 1차 키
+      neutral(필수)·bright·calm — 미지 키·미매칭·wav 부재는 전부 base로 폴백. resolver는
+      SwapRuntime 소유(페르소나 교체 자동 반영). **GUI 톤 칩 자동 점등**(gui.md Phase 3-5 항목)도
+      착수해 매 턴 두뇌가 고른 톤이 실시간으로 표시된다(`STAGE mood picked` 이벤트, `/voices`
+      `voice_id` 노출). **실기 검증 완료(2026.07.23)** — aris 음성 세션 이벤트 로그로 bright/calm
+      자동 분기 확증(`今日は本当に疲れた`→calm, 취업 의도 발화→bright). 페르소나 언어와 다른
+      언어로 시험할 때를 위한 `--stt-lang` 오버라이드도 함께 추가. 설계 →
+      [design/mood_reference.md](./design/mood_reference.md).
+- [ ] **B4. D13(관심사 피드)** — `pick_topic`의 `topic_feed`가 현재 빈 리스트 더미(`navi/heartbeat/
+      topic.py`, feed 모듈 자체가 아직 없음). Phase 3 완료 기준 포함. **A3(음성 선제 발화 E2E)의
+      유일한 선행** — 이게 없어 A3가 보류 중.
 - [ ] **B5. D11(스케줄 동기화)** — 캘린더 API vs 컴패니언 앱. GUI가 이미 있어 후자로 기울 수 있음.
 
 ## C. 동결 — 열쇠는 D8 하나
