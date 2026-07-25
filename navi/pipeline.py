@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Callable
 from navi.brain.base import BrainAdapter
 from navi.conductor import Conductor
 from navi.mouth.mood import peel_mood, strip_mood_tag
-from navi.models import BrainResult, VoiceProfile
+from navi.models import BrainResult, TurnKind, VoiceProfile
 from navi.mouth.base import MouthAdapter
 
 log = logging.getLogger(__name__)
@@ -73,15 +73,17 @@ class TurnPipeline:
         user_id: int,
         session_id: str,
         echo: Callable[[str], None] | None = None,
+        kind: TurnKind = TurnKind.REACTIVE,
     ) -> BrainResult | None:
         """trigger_text로 한 턴을 돈다 — 요청 조립 → Brain 토큰 → Mouth 음성.
 
         echo는 토큰을 받는 콜백(예: 화면 print). 재생이 끝날 때까지 await한다.
         반환은 Brain의 last_result(전문·usage) — 호출부가 기억 적재에 쓴다.
+        kind는 조립 방식을 가른다(REACTIVE=응답, PROACTIVE=선제) — Conductor로 넘긴다.
         """
         async with self._turn_lock:  # 가중치 교체 중이면 끝날 때까지 기다린다
             request = self._conductor.build_request(
-                trigger_text, user_id=user_id, session_id=session_id
+                trigger_text, user_id=user_id, session_id=session_id, kind=kind
             )
             self._on_stage("brain", "start", None)
             tts_t0 = time.perf_counter()

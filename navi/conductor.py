@@ -11,10 +11,18 @@ import logging
 
 from navi.config import Config
 from navi.memory import MemoryStore
-from navi.models import LlmRequest, Message
+from navi.models import LlmRequest, Message, TurnKind
 from navi.persona import CharacterCard
 
 log = logging.getLogger(__name__)
+
+# 선제 발화 프레이밍 — 서술형 소재가 "사용자가 한 말"로 오해되지 않게, 트리거를 감싼다
+# (turn_assembly.md §2). 태그가 아니라 자기설명형 자연어라 시스템 프롬프트가 규약을 몰라도
+# 성립한다. 문구는 튜닝 대상(값은 배선용, 실 재료 후 A/B).
+_PROACTIVE_FRAME = (
+    "(사용자는 지금 아무 말도 안 했어. 아래 소재로 네가 먼저 말을 꺼내줘 — "
+    "사용자가 알려준 게 아니야. 짧게, 되묻지 말고: {trigger})"
+)
 
 
 class Conductor:
@@ -36,14 +44,19 @@ class Conductor:
         return self._card
 
     def build_request(
-        self, trigger_text: str, user_id: int, session_id: str
+        self,
+        trigger_text: str,
+        user_id: int,
+        session_id: str,
+        *,
+        kind: TurnKind = TurnKind.REACTIVE,
     ) -> LlmRequest:
         # session_id는 Phase 1에선 미사용 — 단기기억을 세션 경계 없이 인출해야
         # "껐다 켜도 어제 대화를 기억"이 성립한다. 계약(4.6) 유지 차원에서 받아둔다.
         intimacy = self._memory.get_intimacy(user_id)
         turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
         messages = [Message(role=t.role, text=t.text) for t in turns]
-        messages.append(Message(role="user", text=trigger_text))
+        messages.extend(self._frame(kind, trigger_text))
         request = LlmRequest(
             system=self._card.system_prompt(intimacy),
             messages=messages,
@@ -56,3 +69,15 @@ class Conductor:
         log.debug("system 전문:\n%s", request.system)
         log.debug("messages: %s", messages)
         return request
+
+    @staticmethod
+    def _frame(kind: TurnKind, trigger_text: str) -> list[Message]:
+        """트리거를 kind에 맞는 tail 메시지로 조립한다 (turn_assembly.md §3.1).
+
+        REACTIVE는 진짜 사용자 발화라 그대로, PROACTIVE는 나비에게 주어진 소재라
+        프레이밍으로 감싼다. 시스템 프롬프트(카드 코어)는 두 경우 모두 무변경 — 차이는
+        여기 tail에만 둬 캐시 prefix를 안 쪼갠다.
+        """
+        if kind is TurnKind.PROACTIVE:
+            return [Message(role="user", text=_PROACTIVE_FRAME.format(trigger=trigger_text))]
+        return [Message(role="user", text=trigger_text)]

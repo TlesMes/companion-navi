@@ -48,7 +48,7 @@ from navi.heartbeat import (
     should_initiate,
     time_of_day,
 )
-from navi.models import AudioChunk
+from navi.models import AudioChunk, TurnKind
 
 if TYPE_CHECKING:
     from navi.config import ProactiveConfig
@@ -604,7 +604,8 @@ async def _run(config, args) -> None:
 
         try:
             result = await pipeline.run_turn(
-                topic, user_id=user_id, session_id=session_id, echo=_echo
+                topic, user_id=user_id, session_id=session_id, echo=_echo,
+                kind=TurnKind.PROACTIVE,
             )
             print()
         except Exception:
