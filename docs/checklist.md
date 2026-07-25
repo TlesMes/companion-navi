@@ -169,7 +169,8 @@
       [design/mood_reference.md](./design/mood_reference.md).
 - [ ] **B4. D13(관심사 피드)** — `pick_topic`의 `topic_feed`가 현재 빈 리스트 더미(`navi/heartbeat/
       topic.py`, feed 모듈 자체가 아직 없음). Phase 3 완료 기준 포함. **A3(음성 선제 발화 E2E)의
-      유일한 선행** — 이게 없어 A3가 보류 중.
+      유일한 선행** — 이게 없어 A3가 보류 중. **설계 완료(2026.07.24) → [design/feed.md](./design/feed.md)**
+      (RSS만·①명시+②메모리콜백·필터MVP제외·tick piggyback, PR 3분할). 다음=PR1(feed 모듈) 구현.
 - [ ] **B5. D11(스케줄 동기화)** — 캘린더 API vs 컴패니언 앱. GUI가 이미 있어 후자로 기울 수 있음.
 
 ## C. 동결 — 열쇠는 D8 하나
