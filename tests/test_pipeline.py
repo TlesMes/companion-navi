@@ -8,7 +8,7 @@ import time
 from collections.abc import AsyncIterator
 
 from navi.brain.base import BrainAdapter
-from navi.models import BrainResult, LlmRequest, Message, Usage, VoiceProfile
+from navi.models import BrainResult, LlmRequest, Message, TurnKind, Usage, VoiceProfile
 from navi.mouth.fake import FakeMouth
 from navi.pipeline import TurnPipeline
 
@@ -20,11 +20,18 @@ class _StubConductor:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, int, str]] = []
+        self.kinds: list[TurnKind] = []
 
     def build_request(
-        self, trigger_text: str, *, user_id: int, session_id: str
+        self,
+        trigger_text: str,
+        *,
+        user_id: int,
+        session_id: str,
+        kind: TurnKind = TurnKind.REACTIVE,
     ) -> LlmRequest:
         self.calls.append((trigger_text, user_id, session_id))
+        self.kinds.append(kind)
         return LlmRequest(
             system="", messages=[Message(role="user", text=trigger_text)], model="stub"
         )
@@ -80,6 +87,14 @@ async def test_run_turn_without_echo_still_synthesizes():
     pipe, _brain, mouth, _conductor = _build(["하나."])
     await pipe.run_turn("x", user_id=1, session_id="s")
     assert mouth.spoken == ["하나."]
+
+
+async def test_run_turn_forwards_kind_to_conductor():
+    """turn kind가 Conductor 조립까지 전달된다 — 기본은 REACTIVE, 선제는 PROACTIVE."""
+    pipe, _brain, _mouth, conductor = _build(["응."])
+    await pipe.run_turn("x", user_id=1, session_id="s")  # 기본값
+    await pipe.run_turn("y", user_id=1, session_id="s", kind=TurnKind.PROACTIVE)
+    assert conductor.kinds == [TurnKind.REACTIVE, TurnKind.PROACTIVE]
 
 
 # --- 무드 선행 태그 → 이번 턴 목소리 ---

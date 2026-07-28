@@ -15,7 +15,7 @@ from navi.config import (
     WakeWordConfig,
 )
 from navi.memory import MemoryStore
-from navi.models import VoiceProfile
+from navi.models import TurnKind, VoiceProfile
 from navi.persona import CharacterCard
 
 CARD_PATH = Path(__file__).parents[1] / "personas" / "navi.yaml"
@@ -88,6 +88,49 @@ def test_build_request_assembles_persona_memory_trigger(tmp_path):
     assert [m.text for m in request.messages] == ["어제 한 얘기", "응 들었어", "오늘 트리거"]
     assert request.messages[-1].role == "user"  # 트리거는 항상 마지막 user 메시지
     assert request.model == "echo"
+
+
+def test_reactive_kind_is_bare_trigger(tmp_path):
+    """REACTIVE(및 기본값)는 트리거를 그대로 마지막 user 메시지로 싣는다 — 기존 거동."""
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    default = conductor.build_request("트리거", user_id=uid, session_id="s")
+    explicit = conductor.build_request(
+        "트리거", user_id=uid, session_id="s", kind=TurnKind.REACTIVE
+    )
+    assert default.messages[-1] == explicit.messages[-1]
+    assert default.messages[-1].role == "user"
+    assert default.messages[-1].text == "트리거"  # 감싸지 않음
+
+
+def test_proactive_kind_wraps_trigger(tmp_path):
+    """PROACTIVE는 소재를 프레이밍으로 감싼다 — 트리거는 포함하되 그 자체는 아님."""
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    request = conductor.build_request(
+        "○○팀이 3대1로 이겼다", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    )
+    last = request.messages[-1]
+    assert last.role == "user"
+    assert "○○팀이 3대1로 이겼다" in last.text  # 소재는 그대로 실림
+    assert last.text != "○○팀이 3대1로 이겼다"  # 하지만 프레이밍으로 감싸짐
+    assert "먼저" in last.text  # "네가 먼저 말을 꺼내줘" 지시
+
+
+def test_kind_does_not_change_system(tmp_path):
+    """이 PR의 핵심 불변식 — 두 kind의 system(카드 코어)이 바이트 단위로 동일(캐시 prefix 불변)."""
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    reactive = conductor.build_request(
+        "x", user_id=uid, session_id="s", kind=TurnKind.REACTIVE
+    )
+    proactive = conductor.build_request(
+        "x", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    )
+    assert reactive.system == proactive.system
 
 
 def test_set_card_swaps_persona_from_next_request(tmp_path):

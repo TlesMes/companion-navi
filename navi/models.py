@@ -7,6 +7,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
+
+
+class TurnKind(Enum):
+    """턴의 성격 — 트리거를 어떻게 조립할지 가른다 (turn_assembly.md).
+
+    카드 코어(system)는 두 kind에서 동일하고, 차이는 messages tail의 프레이밍에만 있다.
+    """
+
+    REACTIVE = "reactive"    # 사용자 발화에 답한다 (trigger = 진짜 발화)
+    PROACTIVE = "proactive"  # 나비가 먼저 건다 (trigger = 나비에게 주어진 소재)
 
 
 @dataclass(frozen=True)
