@@ -114,3 +114,99 @@ def test_mode_state_roundtrip_and_upsert(tmp_path):
 
     reopened = MemoryStore(db)  # 데몬 재시작 시뮬레이션
     assert reopened.get_mode_state(uid) == ("dnd", None)
+
+
+# ─── 관심사 피드 후보 (D13) ──────────────────────────────────
+
+_T0 = "2026-07-30T00:00:00+00:00"
+_T1 = "2026-07-30T01:00:00+00:00"
+_T2 = "2026-07-30T02:00:00+00:00"
+
+
+def _insert(store, *, dedup_key, summary="소식", fetched_at=_T1, expires_at=None,
+            source="rss", topic_key="축구"):
+    return store.insert_candidate(
+        source=source,
+        topic_key=topic_key,
+        summary=summary,
+        dedup_key=dedup_key,
+        fetched_at=fetched_at,
+        expires_at=expires_at,
+    )
+
+
+def test_topic_candidate_roundtrips_and_returns_latest_first(tmp_path):
+    """D13 — 적재한 후보가 필드 그대로, 최신순으로 나온다."""
+    store = MemoryStore(tmp_path / "t.db")
+    _insert(store, dedup_key="a", summary="어제 경기 3대1", fetched_at=_T1)
+    _insert(store, dedup_key="b", summary="오늘 비 온다", fetched_at=_T2, topic_key="날씨")
+
+    cands = store.fresh_candidates(10, _T2)
+    assert [c.summary for c in cands] == ["오늘 비 온다", "어제 경기 3대1"]
+    assert cands[0].source == "rss"
+    assert cands[0].topic_key == "날씨"
+    assert cands[0].used_at is None
+    assert cands[0].expires_at is None  # TTL 없는 후보는 만료 자체가 없다
+
+
+def test_fresh_candidates_excludes_expired_and_used(tmp_path):
+    """만료·사용 후보는 안 나온다. expires_at NULL은 영원히 유효(콜백용, feed.md PR2)."""
+    store = MemoryStore(tmp_path / "t.db")
+    _insert(store, dedup_key="expired", summary="지난 소식", expires_at=_T1)
+    used = _insert(store, dedup_key="used", summary="이미 쓴 소식")
+    _insert(store, dedup_key="alive", summary="살아있는 소식", expires_at=None)
+    store.mark_candidate_used(used, _T1)
+
+    assert [c.summary for c in store.fresh_candidates(10, _T2)] == ["살아있는 소식"]
+
+
+def test_insert_candidate_ignores_duplicate_dedup_key(tmp_path):
+    """같은 원문 재적재 방지 — 덮어쓰기(upsert)가 아니라 무시(DO NOTHING)다."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    first = _insert(store, dedup_key="same", summary="처음 요약")
+    again = _insert(store, dedup_key="same", summary="나중 요약")
+
+    assert first is not None
+    assert again is None  # 충돌 → 적재 안 함
+    row = sqlite3.connect(db).execute(
+        "SELECT COUNT(*) , MIN(summary) FROM topic_candidate"
+    ).fetchone()
+    assert row == (1, "처음 요약")  # 첫 행이 살아있다 — 덮어쓰지 않는다
+
+
+def test_candidate_exists_reports_dedup_key(tmp_path):
+    """요약 LLM을 부르기 전에 거르는 조회(feed.md 3.3)."""
+    store = MemoryStore(tmp_path / "t.db")
+    _insert(store, dedup_key="known")
+
+    assert store.candidate_exists("known") is True
+    assert store.candidate_exists("unknown") is False
+
+
+def test_mark_candidate_used_survives_restart(tmp_path):
+    """한 번 쓴 소재로 재기동 후 또 말 걸지 않는다."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    cid = _insert(store, dedup_key="a")
+    store.mark_candidate_used(cid, _T1)
+    store.close()
+
+    reopened = MemoryStore(db)  # 데몬 재시작 시뮬레이션
+    assert reopened.fresh_candidates(10, _T2) == []
+
+
+def test_last_collect_at_starts_none_and_keeps_single_row(tmp_path):
+    """수집 게이트 상태 — 재기동 직후 재수집을 막는 게 존재 이유라 영속이어야 한다."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    assert store.last_collect_at() is None  # 첫 기동 — 곧바로 수집해도 됨
+
+    store.set_last_collect_at(_T0)
+    store.set_last_collect_at(_T1)
+    store.close()
+
+    reopened = MemoryStore(db)
+    assert reopened.last_collect_at() == _T1
+    count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM feed_meta").fetchone()[0]
+    assert count == 1  # 누적이 아니라 1행 upsert
