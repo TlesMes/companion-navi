@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS topic_candidate (
     summary      TEXT NOT NULL,   -- 나비 입말 재료 — 트리거 문자열로 직행
     dedup_key    TEXT NOT NULL,   -- source:topic_key:원문해시 — 재적재·요약 LLM 낭비 방지
     fetched_at   TEXT NOT NULL,
-    expires_at   TEXT,            -- 뉴스 TTL(기본 48h), memory 콜백은 NULL(만료 없음)
+    expires_at   TEXT,            -- 뉴스 TTL(발행 시각 기준 96h), memory 콜백은 NULL
     used_at      TEXT             -- 선제 발화에 쓴 시각 — 같은 이슈 재발화 방지
 );
 

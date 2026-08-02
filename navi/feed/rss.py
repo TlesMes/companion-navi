@@ -8,9 +8,12 @@
 from __future__ import annotations
 
 import logging
+import re
 import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
+from html import unescape
+from html.parser import HTMLParser
 
 import feedparser
 
@@ -19,6 +22,41 @@ from navi.feed.base import RawItem
 log = logging.getLogger(__name__)
 
 _USER_AGENT = "companion-navi/0.1 (+personal RSS reader)"
+_WHITESPACE = re.compile(r"\s+")
+
+
+class _TextOnly(HTMLParser):
+    """태그를 버리고 텍스트만 모은다."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.chunks: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.chunks.append(data)
+
+
+def strip_html(value: str) -> str:
+    """RSS 본문에서 마크업을 걷어낸다 — 특정 사이트가 아니라 *포맷* 대응이다.
+
+    RSS 명세가 description에 escaped HTML을 허용해서 생기는 일이라 모든 피드에 균일하게
+    적용한다(이미 깨끗한 피드에선 아무 일도 안 일어난다). 이걸 안 하면 인라인 스타일과
+    CDN 이미지 URL이 요약 LLM 입력의 대부분을 차지한다 — 실측에서 한 국내 피드의 첫
+    항목이 2010자였고 그중 사람이 읽을 문장은 일부였다.
+
+    소스별 분기는 여기 두지 않는다. 특정 피드가 정말 고유 처리를 요구하면 답은 if가
+    아니라 FeedSource 구현체를 하나 더 만드는 것이다.
+    """
+    if "<" not in value:
+        return _WHITESPACE.sub(" ", value).strip()  # 이미 평문 — 공백만 정리
+    parser = _TextOnly()
+    try:
+        parser.feed(value)
+        parser.close()
+    except Exception:
+        log.warning("HTML 정리 실패, 원문을 그대로 쓴다", exc_info=True)
+        return _WHITESPACE.sub(" ", value).strip()
+    return _WHITESPACE.sub(" ", unescape("".join(parser.chunks))).strip()
 
 
 def _default_fetcher(url: str, timeout_s: float) -> bytes:
@@ -69,8 +107,8 @@ class RssSource:
 
 def _to_item(entry) -> RawItem:
     return RawItem(
-        title=(entry.get("title") or "").strip(),
-        summary=(entry.get("summary") or "").strip(),
+        title=strip_html(entry.get("title") or ""),
+        summary=strip_html(entry.get("summary") or ""),
         link=(entry.get("link") or "").strip(),
         published=_published(entry),
         guid=(entry.get("id") or "").strip(),

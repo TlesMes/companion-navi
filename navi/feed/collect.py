@@ -56,7 +56,7 @@ class Feed:
         model: str,
         collect_interval_s: float = 43200.0,  # 12h → 하루 1~2회
         fresh_topics_k: int = 3,
-        rss_ttl_hours: float = 48.0,
+        rss_ttl_hours: float = 96.0,
         max_items_per_source: int = 5,
     ) -> None:
         self._store = store
@@ -131,7 +131,6 @@ class Feed:
                 break  # 첫 수집에서 큰 피드를 만나도 LLM 호출이 폭주하지 않게
 
         stored = 0
-        expires_at = (now + self._rss_ttl).isoformat()
         for item, key in pending:  # 순차 — 어댑터당 동시 1요청 계약
             try:
                 summary = await summarize_item(self._summarizer, self._model, item)
@@ -148,11 +147,23 @@ class Feed:
                 summary=summary,
                 dedup_key=key,
                 fetched_at=now.isoformat(),
-                expires_at=expires_at,
+                expires_at=self._expires_at(item, now),
             )
             if inserted is not None:
                 stored += 1
         return stored
+
+    def _expires_at(self, item: RawItem, now: datetime) -> str:
+        """TTL 기준은 발행 시각과 수집 시각 중 **이른 쪽**.
+
+        수집 시각만 쓰면 이미 이틀 된 기사가 거기서 또 TTL만큼 살아, 나비가 "어제 소식"인
+        양 나흘 전 기사를 꺼낸다(실측 2026.08.02: 한 해외 매체의 피드 맨 앞 항목이 41시간
+        경과). 반대로 발행 시각만 쓰면 발행이 뜸한 매체가 통째로 무용지물이 되므로 TTL을
+        넉넉히(기본 96h) 잡아 상쇄한다. min을 쓰는 건 발행 시각이 미래인 피드(시계 어긋남·
+        예약 발행)에 대한 방어이기도 하다.
+        """
+        base = min(item.published, now) if item.published else now
+        return (base + self._rss_ttl).isoformat()
 
     # ─── 인출 (PR3에서 데몬이 쓴다) ──────────────────────────
 

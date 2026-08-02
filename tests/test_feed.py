@@ -15,6 +15,7 @@ from navi.brain.echo import EchoBrain
 from navi.feed.base import RawItem
 from navi.feed.collect import Feed
 from navi.feed.rss import RssSource
+from navi.feed.summarize import clean_summary
 from navi.memory import MemoryStore
 
 # 소스는 바이트를 받는다(HTTP 응답 그대로) — 한국어라 str로 쓰고 인코딩한다.
@@ -81,6 +82,33 @@ def test_rss_source_swallows_fetch_error():
     assert source.fetch() == []
 
 
+def test_rss_source_strips_markup_from_summary():
+    """RSS 명세가 description에 HTML을 허용해 생기는 일 — 모든 피드에 균일 적용.
+
+    실측(2026.08.02): 한 국내 피드의 첫 항목이 인라인 스타일·이미지 태그 포함 2010자였다.
+    안 걷어내면 요약 LLM 입력의 대부분이 마크업이 된다.
+    """
+    feed = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><item>
+  <title>신작 공개</title>
+  <description>&lt;div style="text-align: center;"&gt;&lt;img src="//cdn.test/a.webp"/&gt;
+  &lt;p&gt;다음 달   출시된다.&lt;/p&gt;&lt;/div&gt;</description>
+  <link>https://a.test/1</link>
+</item></channel></rss>
+""".encode()
+
+    item = _source(feed).fetch()[0]
+
+    assert item.summary == "다음 달 출시된다."  # 태그 제거 + 공백 정리
+
+
+def test_rss_source_leaves_plain_summary_untouched():
+    """이미 깨끗한 피드(해외 다수)에선 아무 일도 안 일어난다."""
+    item = _source(_FEED).fetch()[0]
+
+    assert item.summary == "후반 교체 투입된 선수가 두 골을 넣었다."
+
+
 def test_raw_item_identity_prefers_guid_over_link():
     """dedup 정확성의 근거 — 가장 안정적인 식별자를 고른다."""
     both = RawItem(title="제목", summary="", link="https://a.test/1", guid="g1")
@@ -131,8 +159,14 @@ class CountingBrain(EchoBrain):
             yield token
 
 
-def _item(title, guid):
-    return RawItem(title=title, summary="본문", link=f"https://a.test/{guid}", guid=guid)
+def _item(title, guid, published=None):
+    return RawItem(
+        title=title,
+        summary="본문",
+        link=f"https://a.test/{guid}",
+        guid=guid,
+        published=published,
+    )
 
 
 def _feed(tmp_path, sources, brain=None, **kwargs):
@@ -236,6 +270,48 @@ async def test_collect_caps_items_per_source(tmp_path):
 
     assert await feed.collect(_NOW) == 3
     assert brain.calls == 3
+
+
+def test_clean_summary_removes_markdown_that_would_be_spoken():
+    """재료는 그대로 발화 트리거가 된다 — 서식이 남으면 나비가 소리 내 읽는다.
+
+    실측 2026.08.02: haiku가 '# 요약'을 머리말로 붙였다.
+    """
+    assert clean_summary("# 요약\n\n오늘 할인 소식이 있다.") == "오늘 할인 소식이 있다."
+    assert clean_summary("```\n어제 경기가 있었다.\n```") == "어제 경기가 있었다."
+    assert clean_summary("- 첫 소식\n- 둘째 소식") == "첫 소식 둘째 소식"
+    assert clean_summary("**중요한** 발표가 있었다.") == "중요한 발표가 있었다."
+
+
+def test_clean_summary_leaves_plain_sentence_untouched():
+    """서식이 없으면 아무 일도 안 일어난다(대부분의 경우)."""
+    assert clean_summary("  어제 경기에서 3대1로 이겼다.  ") == "어제 경기에서 3대1로 이겼다."
+
+
+async def test_expires_at_counts_from_publication_not_collection(tmp_path):
+    """오래된 기사가 수집 시각부터 또 TTL만큼 살면 안 된다 — 이른 쪽 기준(ⓒ).
+
+    실측 2026.08.02: 발행이 뜸한 해외 매체는 피드 맨 앞이 이미 41시간 지난 기사였다.
+    """
+    old = _item("이틀 전 기사", "g1", published=_NOW - timedelta(hours=48))
+    store, feed = _feed(tmp_path, [FakeSource(items=[old])], rss_ttl_hours=96)
+
+    await feed.collect(_NOW)
+
+    cand = store.fresh_candidates(10, _NOW.isoformat())[0]
+    assert cand.expires_at == _NOW - timedelta(hours=48) + timedelta(hours=96)
+
+
+async def test_expires_at_falls_back_to_collection_time(tmp_path):
+    """발행 시각이 없거나 미래면(시계 어긋남·예약 발행) 수집 시각을 쓴다."""
+    undated = _item("발행일 없음", "g1")
+    future = _item("미래 발행", "g2", published=_NOW + timedelta(hours=5))
+    store, feed = _feed(tmp_path, [FakeSource(items=[undated, future])], rss_ttl_hours=96)
+
+    await feed.collect(_NOW)
+
+    expected = _NOW + timedelta(hours=96)
+    assert {c.expires_at for c in store.fresh_candidates(10, _NOW.isoformat())} == {expected}
 
 
 async def test_get_fresh_topics_and_mark_used_round_trip(tmp_path):
