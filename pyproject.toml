@@ -12,6 +12,7 @@ dependencies = [
     "fastapi",         # 컨트롤 플레인 (Stage 15 PR ①) — 데몬 내 HTTP/WS 서버
     "uvicorn",
     "pywebview",       # GUI 창 (Stage 15 PR ③) — 오디오 스택 불필요, 기본 venv 소속
+    "feedparser",      # RSS 파싱 (Feed, D13) — 관심사 피드 수집
 ]
 
 [project.optional-dependencies]

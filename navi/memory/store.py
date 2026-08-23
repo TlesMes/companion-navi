@@ -13,7 +13,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from navi.models import Turn, Usage
+from navi.models import TopicCandidate, Turn, Usage
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -158,6 +158,81 @@ class MemoryStore:
         ).fetchone()
         return row["n"]
 
+    # ─── 관심사 피드 후보 (D13) ──────────────────────────────
+
+    def insert_candidate(
+        self,
+        *,
+        source: str,
+        topic_key: str,
+        summary: str,
+        dedup_key: str,
+        fetched_at: str,
+        expires_at: str | None = None,
+    ) -> int | None:
+        """후보 1건 적재 — dedup_key가 이미 있으면 아무것도 안 하고 None.
+
+        INSERT OR IGNORE가 아니라 ON CONFLICT(dedup_key) DO NOTHING인 이유: OR IGNORE는
+        source CHECK 위반까지 조용히 삼켜서 오타난 source가 "dedup으로 걸렸나 보다"로
+        위장된다. 그건 크게 터져야 하는 버그다.
+        """
+        cur = self._conn.execute(
+            "INSERT INTO topic_candidate"
+            " (source, topic_key, summary, dedup_key, fetched_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(dedup_key) DO NOTHING",
+            (source, topic_key, summary, dedup_key, fetched_at, expires_at),
+        )
+        self._conn.commit()
+        return cur.lastrowid if cur.rowcount else None
+
+    def candidate_exists(self, dedup_key: str) -> bool:
+        """이미 적재된 원문인가 — 요약 LLM을 부르기 *전에* 거르는 용도(feed.md 3.3)."""
+        row = self._conn.execute(
+            "SELECT 1 FROM topic_candidate WHERE dedup_key = ? LIMIT 1", (dedup_key,)
+        ).fetchone()
+        return row is not None
+
+    def fresh_candidates(self, k: int, now_iso: str) -> list[TopicCandidate]:
+        """미사용·TTL 유효 후보를 최신순 k개.
+
+        now_iso를 인자로 받는 건 count_interactions와 같은 이유 — TTL 만료를 테스트하려면
+        시계 주입이 필수다. expires_at 비교는 문자열 비교라 호출부가 _now_iso()와 같은
+        포맷(UTC, +00:00 오프셋)을 넘겨야 성립한다.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM topic_candidate"
+            " WHERE used_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
+            " ORDER BY fetched_at DESC, candidate_id DESC LIMIT ?",
+            (now_iso, k),
+        ).fetchall()
+        return [_row_to_candidate(r) for r in rows]
+
+    def mark_candidate_used(
+        self, candidate_id: int, now_iso: str | None = None
+    ) -> None:
+        """선제 발화에 썼다고 표시 — 같은 이슈로 또 말 걸지 않게."""
+        self._conn.execute(
+            "UPDATE topic_candidate SET used_at = ? WHERE candidate_id = ?",
+            (now_iso or _now_iso(), candidate_id),
+        )
+        self._conn.commit()
+
+    def last_collect_at(self) -> str | None:
+        """마지막 수집 시각 — 없으면 None(첫 기동, 곧바로 수집해도 됨)."""
+        row = self._conn.execute(
+            "SELECT last_collect_at FROM feed_meta WHERE id = 1"
+        ).fetchone()
+        return row["last_collect_at"] if row else None
+
+    def set_last_collect_at(self, now_iso: str) -> None:
+        self._conn.execute(
+            "INSERT INTO feed_meta (id, last_collect_at) VALUES (1, ?)"
+            " ON CONFLICT(id) DO UPDATE SET last_collect_at = excluded.last_collect_at",
+            (now_iso,),
+        )
+        self._conn.commit()
+
     # ─── 원가 모니터링 ────────────────────────────────────────
 
     def log_usage(self, kind: str, usage: Usage, est_cost: float | None = None) -> None:
@@ -180,4 +255,20 @@ def _row_to_turn(row: sqlite3.Row) -> Turn:
         created_at=datetime.fromisoformat(row["created_at"]),
         session_id=row["session_id"],
         trigger_type=row["trigger_type"],
+    )
+
+
+def _opt_dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _row_to_candidate(row: sqlite3.Row) -> TopicCandidate:
+    return TopicCandidate(
+        candidate_id=row["candidate_id"],
+        source=row["source"],
+        topic_key=row["topic_key"],
+        summary=row["summary"],
+        fetched_at=datetime.fromisoformat(row["fetched_at"]),
+        expires_at=_opt_dt(row["expires_at"]),
+        used_at=_opt_dt(row["used_at"]),
     )

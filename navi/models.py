@@ -32,6 +32,23 @@ class Turn:
 
 
 @dataclass(frozen=True)
+class TopicCandidate:
+    """topic_candidate 한 행 — 나비가 먼저 말 걸 재료 하나 (D13/feed.md 3.1).
+
+    summary가 그대로 선제 발화의 트리거 문자열이 된다. dedup_key는 재적재를 막는
+    저장소 내부 사정이라 여기 안 싣는다.
+    """
+
+    candidate_id: int
+    source: str  # "rss"(외부 뉴스) | "memory"(대화 콜백)
+    topic_key: str
+    summary: str
+    fetched_at: datetime
+    expires_at: datetime | None = None  # None = 만료 없음
+    used_at: datetime | None = None  # None = 아직 선제 발화에 안 씀
+
+
+@dataclass(frozen=True)
 class Message:
     """LLM 요청 안의 대화 한 줄 (벤더 중립)."""
 

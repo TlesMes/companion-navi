@@ -38,6 +38,7 @@
   `_maybe_initiate`). 거기에 "지난 수집 후 N시간 지났나" 시각 게이트를 하나 더 얹어
   `collect()`를 부른다(daily_cap 판정과 같은 패턴). 블로킹 작업(HTTP fetch)은 `to_thread`로
   오디오 핫패스와 분리 — 음색 핫스왑이 쓰는 방식 그대로.
+  **단, `to_thread`에 넣는 건 `collect()` 전체가 아니라 fetch뿐이다** — 근거는 §3.3.
 - **안전 필터는 MVP에서 뺀다(D13), 씨앗만 남긴다.** 관심사가 이미 큐레이션돼(사용자가 고른
   피드·사용자가 한 말) 범용 뉴스 헤드라인을 긁을 때만 필요한 게이트다. `collect()`에
   `_is_safe(item)` 훅 자리만 두고 지금은 항상 True. **②가 사용자의 무거운 화제(이별·질병)를
@@ -79,12 +80,13 @@
       summary      TEXT NOT NULL,          -- 나비 입말 재료(트리거 문자열로 직행)
       dedup_key    TEXT NOT NULL,          -- source+topic_key+원문해시 → 재적재 방지
       fetched_at   TEXT NOT NULL,
-      expires_at   TEXT,                   -- 뉴스 2~3일 TTL, memory 콜백은 NULL(길게)
+      expires_at   TEXT,                   -- 뉴스 TTL(발행 기준 96h), memory 콜백은 NULL
       used_at      TEXT                    -- 선제 발화 사용 시각(중복방지)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_dedup ON topic_candidate (dedup_key);
   ```
-- 메서드: `insert_candidate(...)`(dedup 충돌 시 무시), `fresh_candidates(k, now)`(used_at IS NULL
+- 메서드: `insert_candidate(...)`(dedup 충돌 시 무시), `candidate_exists(dedup_key)`(§3.3이
+  요약 *전에* 거르는 데 필요 — 최초 목록에서 누락됐다), `fresh_candidates(k, now)`(used_at IS NULL
   AND (expires_at IS NULL OR expires_at > now), 최신순 k개), `mark_candidate_used(id, now)`,
   `last_collect_at()`/`set_last_collect_at(now)`(수집 게이트 상태 — mode_state처럼 작은 메타 행 or
   `feed_meta` 1행 테이블. 재기동 직후 재수집 방지).
@@ -92,16 +94,42 @@
 ### 3.2 소스 어댑터 — `navi/feed/rss.py` (신규) + `base.py`
 - `base.py`: `FeedSource` 프로토콜 — `fetch() -> list[RawItem]`(제목·요약·링크·게시시각).
   나중 소스 확장의 봉합선. `RawItem`은 벤더 중립 dataclass.
-- `rss.py`: `RssSource(feed_url, topic_key)` — `feedparser.parse`로 항목 추출. 블로킹 HTTP라
+- `rss.py`: `RssSource(feed_url, topic_key, *, timeout_s=10.0, fetcher=None)` — 블로킹 HTTP라
   호출부(`collect`)가 `to_thread`로 감싼다. 실패(네트워크·파싱)는 빈 리스트로 삼켜 배치가
   한 피드 때문에 안 죽게.
+  **`feedparser.parse(url)`에 URL을 직접 넘기지 않는다**(구현 시 정정, 2026.07.31) —
+  feedparser 자체 HTTP엔 타임아웃 손잡이가 없어 응답 없는 서버 하나가 `to_thread` 워커를
+  영구 점유한다. `urlopen(timeout=)`으로 바이트를 받아 `feedparser.parse(data)`에 넘기고,
+  그 김에 주입 가능한 `fetcher`가 테스트를 네트워크 없이 만든다.
+  깨진 XML은 **관대 정책** — feedparser는 예외 대신 `bozo` 플래그를 세우므로 warning만 남기고
+  파싱된 항목은 살린다(잘린 피드의 멀쩡한 앞 기사를 버릴 이유가 없다). 진짜 쓰레기는
+  `entries`가 비어 자연히 빈 리스트가 된다.
+  **`title`·`summary`의 HTML은 모든 피드에서 균일하게 걷어낸다**(`strip_html`, 추가 2026.08.02).
+  RSS 명세가 `description`에 escaped HTML을 허용해서 생기는 일이라 **사이트 대응이 아니라
+  포맷 대응**이다 — 이미 깨끗한 피드에선 no-op. 실측에서 한 국내 피드의 첫 항목이 인라인
+  스타일·CDN 이미지 URL 포함 2010자였고, 안 걷으면 요약 LLM 입력의 대부분이 마크업이 된다.
+  **소스별 분기는 `RssSource` 안에 두지 않는다** — 특정 피드가 정말 고유 처리를 요구하면
+  답은 `if`가 아니라 `FeedSource` 구현체를 하나 더 만드는 것이다. 피드 목록은 코드가 아니라
+  데이터(`config.yaml`/`config.local.yaml`)이므로 사용자가 관심사를 바꿔도 코드는 무변경.
 
 ### 3.3 오케스트레이터 — `navi/feed/collect.py` (신규)
 계약(arch §4.10) 3함수를 소유한다.
+
+> **`collect`는 `async def`이고 통째로 `to_thread`에 넣지 않는다** (구현 시 정정, 2026.07.31).
+> 두 가지가 성립하지 않는다: ①본문이 요약 LLM을 `await` 해야 하는데 워커 스레드에서
+> 돌리려면 두 번째 이벤트 루프가 필요하고 벤더 클라이언트는 생성 루프에 묶인다.
+> ②`MemoryStore`의 sqlite 커넥션은 `check_same_thread` 없이 열려 **만든 스레드에 묶여**
+> 있어 워커에서 쓰면 `ProgrammingError`다. → **`to_thread`는 `source.fetch()`에만**, DB 쓰기는
+> 루프 스레드에. 저장소 불변식을 넓히지 않는 쪽을 택했다 — 넓히면 이후 모든 호출부가
+> "아무 스레드에서나 써도 되나"를 다시 판단해야 한다.
+
 - `collect(now)`:
   1. `_is_safe` 훅(현재 항상 True — §5 씨앗) 통과한 ① 아이템만 남김.
   2. 각 아이템 원문 → `summarize`(저가 LLM) → `insert_candidate(source='rss', ...)`.
      이미 적재된 건(dedup_key) 요약 호출 **전에** 걸러 LLM 낭비 방지.
+     **소스당 `max_items_per_source`(기본 5)개 상한**(구현 시 추가) — 문서의 "몇 개"가
+     코드에선 "전부"가 돼서, 첫 수집에 50개짜리 피드를 만나면 LLM 50회를 그대로 태운다.
+     요약은 **순차 처리**(`asyncio.gather` 금지) — 어댑터 하나는 동시 요청 1건이 계약이다.
   3. ② `recall_recent_for_user` → 빈도 상위 주제 → `callback`(저가 LLM, 최근 턴을 콜백
      문장으로) → `insert_candidate(source='memory', ...)`.
   4. `set_last_collect_at(now)`.
@@ -112,6 +140,21 @@
 - **요약 summary는 중립 시점으로.** 2인칭("네가 응원하는 팀이…")으로 쓰면 두뇌가 화자를
   재해석한다(실측 — [turn_assembly.md](./turn_assembly.md) §4.1). 요약 프롬프트에 "사실만
   중립 시점으로, 청자를 지칭하지 말 것" 제약을 넣는다. 인칭·말투는 발화 시점에 두뇌가 입힌다.
+- **재료 언어는 한국어로 고정하고 프롬프트에 명시한다**(실측 후 확정 2026.08.02). 재료는
+  사용자에게도 페르소나에게도 안 보이는 **내부 표현**이고 오직 두뇌만 읽는다. 페르소나에
+  맞출 수도 없다 — 수집은 배치라 **어느 카드가 이 재료로 말할지 그 시점엔 모르고**, 사용자는
+  런타임에 페르소나를 갈아끼운다([runtime.py](../navi/control/runtime.py)). 즉 재료의 페르소나
+  독립성은 타협이 아니라 구조가 강제하는 것이다. 실측에선 명시 없이도 한국어가 나왔지만
+  (시스템 프롬프트가 한국어라 모델이 따라온 **부작용**) 규칙이 아니라 모델이 바뀌면 흔들린다.
+- **모델이 얹은 서식은 결정론 후처리로 걷어낸다.** 재료는 그대로 발화 트리거가 되므로
+  마크다운이 남으면 나비가 소리 내 읽는다(실측 2026.08.02: haiku가 `# 요약` 머리말을 붙였다 —
+  TTS로 "샵 요약"이 된다). 프롬프트 제약은 확률만 낮추므로 `clean_summary`를 둔다
+  (`peel_mood`가 무드 태그를 흡수하는 것과 같은 자리).
+- **TTL 기준은 발행 시각과 수집 시각 중 이른 쪽**(D13 보강 2026.08.02, 선택 ⓒ). 수집 시각만
+  쓰면 이미 이틀 된 기사가 거기서 또 TTL만큼 살아 나비가 "어제 소식"인 양 나흘 전 기사를
+  꺼낸다(실측: 발행이 뜸한 해외 매체는 피드 맨 앞이 41시간 경과). 발행 시각만 쓰면 그런 매체가
+  통째로 무용지물이라 TTL을 96h로 넉넉히 잡아 상쇄한다. `min`은 발행 시각이 미래인 피드
+  (시계 어긋남·예약 발행)에 대한 방어이기도 하다.
 
 ### 3.4 ② 대화 빈도 추출 — `collect.py` 내 함수
 - 규칙(결정론)으로 "요즘 자주 나온 주제"를 고르는 건 한국어 형태소 분석(konlpy 등) 부담이
@@ -126,8 +169,12 @@
   `topic_feed=[c.summary for c in cands]`. 반환 topic이 `cands[0].summary`면 `mark_used`.
   **후보 수명(fetch→선택→used)은 데몬이 소유** — 3층 `pick_topic`은 순수 힌트 생성기로 남긴다
   (DB 쓰기 없음, Conductor가 사실 인출하는 것과 같은 층위 분리).
-- tick 상단(또는 `_maybe_initiate` 밖)에 `await feed.maybe_collect(now)` — 시각 게이트
-  통과 시에만 `to_thread(collect)`. 발화 판정과 독립(수집은 발화 안 해도 돎).
+- tick 상단(또는 `_maybe_initiate` 밖)에 `feed.maybe_collect(now)` — 시각 게이트 통과 시에만
+  수집. 발화 판정과 독립(수집은 발화 안 해도 돎).
+  **인라인 `await` 금지 — `asyncio.create_task`로 띄운다**(구현 시 정정, 2026.07.31).
+  `collect`는 (N피드 HTTP + M아이템 LLM)이라 최악 수십 초고, `_dispatch`에서 인라인으로
+  기다리면 그동안 TICK·UTTERANCE 디스패치가 멎는다. 재진입은 `Feed`의 단일 실행 가드가
+  막으므로(PR1에서 구현) 배선은 한 줄이다.
 
 ### 3.6 설정 — `config.yaml` `feed:` 섹션 + `navi/config.py` `FeedConfig`
 ```yaml
@@ -178,11 +225,19 @@ feed:
 
 - **PR1 `feat(feed): topic_candidate 저장소 + RSS 소스 + collect 오케스트레이터`** — 3.1·3.2·3.3(①
   경로) + summarizer 재사용 + 유닛 §4①②③. **데몬 무관, 헤드리스로 독립 검증.**
+  **(완료 2026.07.31 — 349 tests green. `config.py`·`daemon.py` 무변경, 협력자는 전부 주입.
+  구현 중 드러난 정정 4건은 §3.2·§3.3·§3.5에 반영.)**
 - **PR2 `feat(feed): 대화 빈도 자동 추출(② source=memory)`** — 3.4 + 유닛 §4④. ①과 별개
   검증 단위라 분리(작으면 PR1에 합쳐도 무방).
 - **PR3 `feat(daemon): 관심사 피드 배선 — tick 수집 + pick_topic 후보 주입`** — 3.5·3.6 +
   통합 테스트 §4. **A3(실기) 여기서 해제.** **선행:** [turn_assembly.md](./turn_assembly.md)의
   선제/응답 분기(TurnKind) — 서술형 피드 요약이 오해 없이 선제 발화로 나가려면 이 분기가 먼저다.
+  **(완료 — PR #40 머지)**
+  **PR3 착수 시 선행 리팩터 1건**(PR1에서 드러남): `create_brain(config)`가 `config.brain.vendor`만
+  읽어([brain/__init__.py](../navi/brain/__init__.py)) `feed.summarizer.vendor`로 별도 벤더를 못
+  만든다. `create_brain(config, *, vendor: str | None = None)`로 넓히는 걸 권한다 — 키 부재
+  에러 메시지가 한 곳에 남는다. 요약기는 **반드시 자기 인스턴스**여야 한다(어댑터당 동시
+  1요청 계약 — 대화용 두뇌와 공유하면 선제 발화 중 수집이 돌 때 `last_result`가 경합).
 
 머지 조건: 각 PR 테스트 green + 본문에 §4 검증 방법·관련 결정(D13)·완료 기준. 실 RSS 피드
 URL·API 키는 로컬/`.env`라 PR은 헤드리스(echo·fake 소스)로 닫고, 실동은 A3 트랙(사용자).
