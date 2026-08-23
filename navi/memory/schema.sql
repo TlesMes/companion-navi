@@ -72,14 +72,16 @@ CREATE TABLE IF NOT EXISTS topic_candidate (
     topic_key    TEXT NOT NULL,   -- 관심사 분류(등록명 or 추출 주제)
     summary      TEXT NOT NULL,   -- 나비 입말 재료 — 트리거 문자열로 직행
     dedup_key    TEXT NOT NULL,   -- source:topic_key:원문해시 — 재적재·요약 LLM 낭비 방지
-    fetched_at   TEXT NOT NULL,
+    fetched_at   TEXT NOT NULL,   -- 우리가 가져온 시각(배치 안에서 전부 같다)
+    published_at TEXT,            -- 원문 발행 시각 — 인출 정렬의 기준. 없는 피드는 NULL
     expires_at   TEXT,            -- 뉴스 TTL(발행 시각 기준 96h), memory 콜백은 NULL
     used_at      TEXT             -- 선제 발화에 쓴 시각 — 같은 이슈 재발화 방지
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_dedup ON topic_candidate (dedup_key);
--- fresh_candidates의 조회 축 — 미사용 후보를 최신순으로
-CREATE INDEX IF NOT EXISTS idx_candidate_fresh ON topic_candidate (used_at, fetched_at);
+-- fresh_candidates의 조회 축 — 미사용 후보를 발행 최신순으로.
+-- fetched_at으로 정렬하면 한 배치가 전부 동률이라 삽입 순서(=피드 최신순)가 뒤집힌다.
+CREATE INDEX IF NOT EXISTS idx_candidate_fresh ON topic_candidate (used_at, published_at);
 
 -- 수집 게이트 상태 — 모드와 무관해서 mode_state에 얹지 않고 전용 1행 테이블로(feed.md 7).
 -- 재기동 직후 곧바로 재수집하는 걸 막는 게 존재 이유라 반드시 영속이어야 한다.

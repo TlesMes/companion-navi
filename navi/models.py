@@ -43,7 +43,8 @@ class TopicCandidate:
     source: str  # "rss"(외부 뉴스) | "memory"(대화 콜백)
     topic_key: str
     summary: str
-    fetched_at: datetime
+    fetched_at: datetime  # 우리가 가져온 시각 — 한 배치 안에선 전부 같다
+    published_at: datetime | None = None  # 원문 발행 시각 — 인출 정렬의 기준
     expires_at: datetime | None = None  # None = 만료 없음
     used_at: datetime | None = None  # None = 아직 선제 발화에 안 씀
 

@@ -34,6 +34,20 @@ def _is_safe(item: RawItem) -> bool:
     return True
 
 
+def _utc(moment: datetime) -> datetime:
+    """들어온 시각을 UTC aware로 맞춘다 — Feed의 모든 시각 진입점이 이걸 통과한다.
+
+    저장소가 타임스탬프를 **문자열로 비교**하고(store.fresh_candidates) 기준 포맷이
+    _now_iso()의 UTC aware라, naive가 섞이면 TTL 필터가 조용히 오작동한다. 게다가
+    aware와 naive를 빼거나 min()하면 TypeError다.
+
+    naive는 로컬 시각으로 간주한다 — 이 데몬에서 naive의 출처가 DaemonCore의
+    `wall_now = datetime.now`(daemon.py)이고 그게 로컬이기 때문이다. astimezone()의
+    기본 동작이 정확히 그 해석이고, count_initiations_today가 이미 같은 변환을 쓴다.
+    """
+    return moment.astimezone(UTC)
+
+
 def _dedup_key(source: str, topic_key: str, raw: str) -> str:
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     return f"{source}:{topic_key}:{digest}"
@@ -80,6 +94,7 @@ class Feed:
         """
         if self._collecting:
             return False
+        now = _utc(now)
         last = self._store.last_collect_at()
         if last is not None and not self._interval_passed(last, now):
             return False
@@ -105,6 +120,7 @@ class Feed:
         스레드에선 두 번째 이벤트 루프가 필요해 깨진다), MemoryStore의 sqlite 커넥션은
         만든 스레드에 묶여 있다. 진짜 블로킹인 HTTP fetch만 스레드로 뺀다.
         """
+        now = _utc(now)
         stored = 0
         for source in self._sources:
             stored += await self._collect_source(source, now)
@@ -141,19 +157,21 @@ class Feed:
                 # 빈 요약을 적재하면 나중에 빈 트리거로 선제 발화가 나간다.
                 log.warning("요약이 비어 이 항목을 버린다: %s", item.title)
                 continue
+            published = _utc(item.published) if item.published else None
             inserted = self._store.insert_candidate(
                 source="rss",
                 topic_key=source.topic_key,
                 summary=summary,
                 dedup_key=key,
                 fetched_at=now.isoformat(),
-                expires_at=self._expires_at(item, now),
+                published_at=published.isoformat() if published else None,
+                expires_at=self._expires_at(published, now),
             )
             if inserted is not None:
                 stored += 1
         return stored
 
-    def _expires_at(self, item: RawItem, now: datetime) -> str:
+    def _expires_at(self, published: datetime | None, now: datetime) -> str:
         """TTL 기준은 발행 시각과 수집 시각 중 **이른 쪽**.
 
         수집 시각만 쓰면 이미 이틀 된 기사가 거기서 또 TTL만큼 살아, 나비가 "어제 소식"인
@@ -162,7 +180,7 @@ class Feed:
         넉넉히(기본 96h) 잡아 상쇄한다. min을 쓰는 건 발행 시각이 미래인 피드(시계 어긋남·
         예약 발행)에 대한 방어이기도 하다.
         """
-        base = min(item.published, now) if item.published else now
+        base = min(published, now) if published else now
         return (base + self._rss_ttl).isoformat()
 
     # ─── 인출 (PR3에서 데몬이 쓴다) ──────────────────────────
@@ -174,7 +192,7 @@ class Feed:
 
         pick_topic에는 .summary만 뽑아 넘긴다 — 3층 계약(list[str])을 안 넓힌다.
         """
-        moment = now or datetime.now(UTC)
+        moment = _utc(now) if now else datetime.now(UTC)
         return self._store.fresh_candidates(k or self._fresh_topics_k, moment.isoformat())
 
     def mark_used(self, candidate_id: int, now: datetime | None = None) -> None:
@@ -183,5 +201,5 @@ class Feed:
         후보의 수명(fetch→선택→used)은 데몬이 소유한다. 3층 pick_topic은 DB를 안 건드리는
         순수 힌트 생성기로 남긴다.
         """
-        moment = now or datetime.now(UTC)
+        moment = _utc(now) if now else datetime.now(UTC)
         self._store.mark_candidate_used(candidate_id, moment.isoformat())

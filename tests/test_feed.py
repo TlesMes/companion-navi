@@ -314,6 +314,71 @@ async def test_expires_at_falls_back_to_collection_time(tmp_path):
     assert {c.expires_at for c in store.fresh_candidates(10, _NOW.isoformat())} == {expected}
 
 
+async def test_batch_candidates_come_out_newest_article_first(tmp_path):
+    """한 배치 안에서도 발행 최신순이어야 한다 — pick_topic이 [0]만 쓰기 때문.
+
+    회귀 방지: fetched_at으로 정렬하면 배치 전체가 동률이라 tiebreak가 삽입 순서를
+    뒤집어, RSS 최신순으로 넣은 것이 **가장 낡은 기사부터** 나왔다.
+    """
+    items = [  # RSS 관례 — 최신 기사가 앞
+        _item(f"기사 {h}시간전", f"g{h}", published=_NOW - timedelta(hours=h))
+        for h in (1, 5, 20)
+    ]
+    store, feed = _feed(tmp_path, [FakeSource(items=items)])
+    await feed.collect(_NOW)
+
+    cands = feed.get_fresh_topics(k=10, now=_NOW)
+    assert [c.published_at for c in cands] == [
+        _NOW - timedelta(hours=h) for h in (1, 5, 20)
+    ]
+    assert cands[0].summary.startswith("기사 1시간전")  # pick_topic이 집는 자리
+
+
+async def test_candidates_without_publication_fall_back_to_fetch_time(tmp_path):
+    """발행 시각 없는 소스(memory 콜백 등)는 fetched_at으로 정렬돼 앞에 선다."""
+    items = [_item("발행일 없음", "g0"), _item("어제 기사", "g1", published=_NOW - timedelta(hours=24))]
+    store, feed = _feed(tmp_path, [FakeSource(items=items)])
+    await feed.collect(_NOW)
+
+    cands = feed.get_fresh_topics(k=10, now=_NOW)
+    assert cands[0].published_at is None
+    assert cands[0].summary.startswith("발행일 없음")
+
+
+async def test_naive_now_is_treated_as_local_and_stored_as_utc(tmp_path):
+    """데몬의 wall_now(=datetime.now)는 naive 로컬이다 — 그대로 들어와도 깨지면 안 된다.
+
+    회귀 방지: naive가 그대로 흐르면 min()·뺄셈이 TypeError고, 저장소의 문자열 비교가
+    오프셋 없는 값과 '+00:00' 값을 섞어 TTL 필터가 조용히 오작동한다.
+    """
+    naive_now = datetime.now()  # noqa: DTZ005 — 데몬 wall_now 기본값 재현
+    published = datetime.now(UTC) - timedelta(hours=2)
+    store, feed = _feed(tmp_path, [FakeSource(items=[_item("기사", "g1", published=published)])])
+
+    assert await feed.collect(naive_now) == 1  # TypeError 없이 완주
+
+    cand = feed.get_fresh_topics(now=naive_now)[0]  # 조회도 naive로
+    assert cand.fetched_at.utcoffset() is not None  # aware로 저장됐다
+    assert cand.expires_at > datetime.now(UTC)  # 만료 판정이 정상 동작
+    assert store.last_collect_at().endswith("+00:00")
+
+
+async def test_naive_now_passes_the_interval_gate(tmp_path):
+    """maybe_collect도 같은 경계 — 저장된 aware에서 naive를 빼면 TypeError였다.
+
+    1회차를 aware로 돌려 last_collect_at을 aware로 심어 두고, 2회차를 데몬처럼 naive로
+    부른다(그래야 두 표현이 실제로 섞인다).
+    """
+    source = FakeSource()
+    store, feed = _feed(tmp_path, [source], collect_interval_s=3600)
+
+    assert await feed.maybe_collect(datetime.now(UTC)) is True
+    assert store.last_collect_at().endswith("+00:00")
+
+    assert await feed.maybe_collect(datetime.now()) is False  # noqa: DTZ005 — 게이트에 막힘
+    assert source.fetch_count == 1
+
+
 async def test_get_fresh_topics_and_mark_used_round_trip(tmp_path):
     """데몬 계약(feed.md 7) — 객체로 받아 candidate_id로 used 처리한다."""
     items = [_item("첫 기사", "g1"), _item("둘째 기사", "g2")]
