@@ -168,6 +168,7 @@ class MemoryStore:
         summary: str,
         dedup_key: str,
         fetched_at: str,
+        published_at: str | None = None,
         expires_at: str | None = None,
     ) -> int | None:
         """후보 1건 적재 — dedup_key가 이미 있으면 아무것도 안 하고 None.
@@ -178,10 +179,10 @@ class MemoryStore:
         """
         cur = self._conn.execute(
             "INSERT INTO topic_candidate"
-            " (source, topic_key, summary, dedup_key, fetched_at, expires_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)"
+            " (source, topic_key, summary, dedup_key, fetched_at, published_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(dedup_key) DO NOTHING",
-            (source, topic_key, summary, dedup_key, fetched_at, expires_at),
+            (source, topic_key, summary, dedup_key, fetched_at, published_at, expires_at),
         )
         self._conn.commit()
         return cur.lastrowid if cur.rowcount else None
@@ -194,7 +195,14 @@ class MemoryStore:
         return row is not None
 
     def fresh_candidates(self, k: int, now_iso: str) -> list[TopicCandidate]:
-        """미사용·TTL 유효 후보를 최신순 k개.
+        """미사용·TTL 유효 후보를 **발행 최신순** k개.
+
+        정렬 기준이 published_at인 이유: fetched_at은 한 배치 안에서 전부 같아 동률이 되고,
+        그러면 tiebreak가 삽입 순서를 결정한다. RSS는 최신 기사를 앞에 주므로 삽입 순서가
+        곧 최신순인데, candidate_id DESC로 깨면 그게 뒤집혀 **가장 낡은 기사가 [0]에 온다**
+        (pick_topic은 [0]만 쓴다). 발행 시각이 없는 소스(memory 콜백 등)는 fetched_at으로
+        폴백한다 — 방금 만든 콜백이 옛 기사보다 앞서는 건 의도된 순서다(feed.md 1: 뉴스보다
+        콜백이 값지다). 동률이면 삽입 순서(candidate_id ASC = 피드 최신순)를 따른다.
 
         now_iso를 인자로 받는 건 count_interactions와 같은 이유 — TTL 만료를 테스트하려면
         시계 주입이 필수다. expires_at 비교는 문자열 비교라 호출부가 _now_iso()와 같은
@@ -203,7 +211,7 @@ class MemoryStore:
         rows = self._conn.execute(
             "SELECT * FROM topic_candidate"
             " WHERE used_at IS NULL AND (expires_at IS NULL OR expires_at > ?)"
-            " ORDER BY fetched_at DESC, candidate_id DESC LIMIT ?",
+            " ORDER BY COALESCE(published_at, fetched_at) DESC, candidate_id ASC LIMIT ?",
             (now_iso, k),
         ).fetchall()
         return [_row_to_candidate(r) for r in rows]
@@ -269,6 +277,7 @@ def _row_to_candidate(row: sqlite3.Row) -> TopicCandidate:
         topic_key=row["topic_key"],
         summary=row["summary"],
         fetched_at=datetime.fromisoformat(row["fetched_at"]),
+        published_at=_opt_dt(row["published_at"]),
         expires_at=_opt_dt(row["expires_at"]),
         used_at=_opt_dt(row["used_at"]),
     )
