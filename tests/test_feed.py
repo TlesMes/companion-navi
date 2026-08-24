@@ -166,14 +166,14 @@ class FakeSource:
     def __init__(self, topic_key="축구", items=None, boom=False):
         self.topic_key = topic_key
         self._items = items if items is not None else [_item("우리 팀 3대1 승리", "g1")]
-        self._boom = boom
+        self.boom = boom  # 테스트 도중 회복시킬 수 있게 공개
         self.fetch_count = 0
         self.thread_ids: list[int] = []
 
     def fetch(self):
         self.fetch_count += 1
         self.thread_ids.append(threading.get_ident())
-        if self._boom:
+        if self.boom:
             raise RuntimeError("소스가 터졌다")
         return list(self._items)
 
@@ -428,6 +428,70 @@ async def test_naive_now_passes_the_interval_gate(tmp_path):
 
     assert await feed.maybe_collect(datetime.now()) is False  # noqa: DTZ005 — 게이트에 막힘
     assert source.fetch_count == 1
+
+
+async def test_quiet_feed_is_not_treated_as_failure(tmp_path):
+    """새 기사가 없어 stored==0인 건 정상이다 — 그걸 장애로 보면 조용한 피드를 매 tick 두들긴다."""
+    source = FakeSource()
+    store, feed = _feed(tmp_path, [source], collect_interval_s=3600)
+
+    await feed.collect(_NOW)  # 1회차 — 적재됨
+    assert await feed.collect(_NOW + timedelta(hours=2)) == 0  # 전부 dedup
+
+    # 정상으로 봤으니 수집 시각이 갱신되고, 정상 간격이 그대로 적용된다
+    assert store.last_collect_at() == (_NOW + timedelta(hours=2)).isoformat()
+    assert await feed.maybe_collect(_NOW + timedelta(hours=2, minutes=30)) is False
+
+
+async def test_all_sources_failing_schedules_a_short_retry(tmp_path):
+    """네트워크 장애로 전멸한 배치는 12시간을 기다리지 않는다."""
+    store, feed = _feed(
+        tmp_path, [FakeSource(boom=True)], collect_interval_s=43200, retry_backoff_s=1800
+    )
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() is None  # 실패를 성공으로 기록하지 않는다
+
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=10)) is False  # 백오프 중
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is True  # 백오프 후 재시도
+
+
+async def test_summarizer_outage_is_treated_as_failure(tmp_path):
+    """소스는 멀쩡한데 요약기가 전멸한 경우 — 실측(gemini 일일 쿼터 429)에서 나온 상황.
+
+    stored만 보면 "조용한 피드"와 구분이 안 돼 고칠 수 있는 장애를 12시간 방치하게 된다.
+    """
+    brain = CountingBrain(fail_from=1)  # 첫 호출부터 실패
+    store, feed = _feed(tmp_path, [FakeSource()], brain, retry_backoff_s=1800)
+
+    assert await feed.collect(_NOW) == 0
+    assert brain.calls == 1  # 소스는 응답했고 요약을 시도는 했다
+    assert store.last_collect_at() is None  # 장애로 판정
+
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is True
+
+
+async def test_recovery_clears_the_backoff(tmp_path):
+    """장애가 풀리면 정상 간격으로 돌아간다."""
+    source = FakeSource(boom=True)
+    store, feed = _feed(tmp_path, [source], collect_interval_s=3600, retry_backoff_s=1800)
+
+    await feed.collect(_NOW)  # 전멸
+    source.boom = False  # 회복
+
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is True
+    assert store.last_collect_at() is not None
+    # 백오프가 풀렸으니 이제 정상 간격(1h)이 적용된다
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=45)) is False
+
+
+async def test_no_sources_configured_is_not_a_failure(tmp_path):
+    """관심사 미등록은 할 일이 없는 것이지 장애가 아니다 — 30분마다 재시도하면 안 된다."""
+    store, feed = _feed(tmp_path, [], collect_interval_s=3600, retry_backoff_s=1800)
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() == _NOW.isoformat()
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is False
 
 
 async def test_get_fresh_topics_honours_explicit_zero(tmp_path):

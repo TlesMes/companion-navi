@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from navi.brain.base import BrainAdapter
@@ -53,6 +54,15 @@ def _dedup_key(source: str, topic_key: str, raw: str) -> str:
     return f"{source}:{topic_key}:{digest}"
 
 
+@dataclass(frozen=True)
+class _SourceResult:
+    """소스 하나의 배치 결과 — 건수만으로는 정상과 장애가 안 갈려서 셋을 따로 센다."""
+
+    fetched: bool  # 소스가 응답했는가 (빈 피드도 응답이다)
+    attempted: int  # dedup을 통과해 요약을 시도한 건수
+    stored: int  # 그중 실제로 적재된 건수
+
+
 class Feed:
     """수집 배치와 후보 인출을 소유한다. Config를 모른다 — 전부 주입받는다(PR3에서 배선).
 
@@ -69,6 +79,7 @@ class Feed:
         summarizer: BrainAdapter,
         model: str,
         collect_interval_s: float = 43200.0,  # 12h → 하루 1~2회
+        retry_backoff_s: float = 1800.0,  # 배치가 전멸했을 때만 쓰는 짧은 재시도 간격
         fresh_topics_k: int = 3,
         rss_ttl_hours: float = 96.0,
         max_items_per_source: int = 5,
@@ -78,10 +89,14 @@ class Feed:
         self._summarizer = summarizer
         self._model = model
         self._collect_interval_s = collect_interval_s
+        self._retry_backoff = timedelta(seconds=retry_backoff_s)
         self._fresh_topics_k = fresh_topics_k
         self._rss_ttl = timedelta(hours=rss_ttl_hours)
         self._max_items_per_source = max_items_per_source
         self._collecting = False
+        # 장애 배치 뒤 재시도 시각. 영속 안 한다 — 재기동은 대개 사람이 뭔가 고친 뒤라
+        # 한 번 더 시도해 보는 게 맞고, 백오프는 원래 일시적 상태다.
+        self._retry_after: datetime | None = None
 
     # ─── 수집 ────────────────────────────────────────────────
 
@@ -95,6 +110,8 @@ class Feed:
         if self._collecting:
             return False
         now = _utc(now)
+        if self._retry_after is not None and now < self._retry_after:
+            return False  # 직전 배치가 전멸 — 백오프가 끝날 때까지 쉰다
         last = self._store.last_collect_at()
         if last is not None and not self._interval_passed(last, now):
             return False
@@ -119,21 +136,50 @@ class Feed:
         collect 자체를 to_thread에 넣지 않는다: 본문이 요약 LLM을 await해야 하고(워커
         스레드에선 두 번째 이벤트 루프가 필요해 깨진다), MemoryStore의 sqlite 커넥션은
         만든 스레드에 묶여 있다. 진짜 블로킹인 HTTP fetch만 스레드로 뺀다.
+
+        끝에 수집 시각을 기록하는 건 **배치가 건강했을 때뿐**이다 — 아래 _is_healthy 참고.
         """
         now = _utc(now)
-        stored = 0
-        for source in self._sources:
-            stored += await self._collect_source(source, now)
-        self._store.set_last_collect_at(now.isoformat())
+        results = [await self._collect_source(source, now) for source in self._sources]
+        stored = sum(r.stored for r in results)
+        if self._is_healthy(results):
+            self._store.set_last_collect_at(now.isoformat())
+            self._retry_after = None
+        else:
+            self._retry_after = now + self._retry_backoff
+            log.warning(
+                "수집 배치 전멸 — %.0f분 뒤 재시도(정상 간격을 기다리지 않는다)",
+                self._retry_backoff.total_seconds() / 60,
+            )
         return stored
 
-    async def _collect_source(self, source: FeedSource, now: datetime) -> int:
+    def _is_healthy(self, results: list[_SourceResult]) -> bool:
+        """이 배치를 "돌았다"고 볼 수 있는가 — 적재 건수로는 못 가린다.
+
+        stored == 0은 실패가 아니다. 피드에 새 기사가 없으면 dedup으로 전부 걸러져
+        정상적으로 0이 된다. 그걸 실패로 보면 조용한 피드를 매 tick 두들긴다.
+
+        가려야 하는 건 두 가지 전멸이다:
+          - 소스가 하나도 응답 안 함 → 네트워크·피드 장애
+          - 요약을 시도했는데 한 건도 못 건짐 → 요약기 장애(쿼터 소진·키 만료)
+        두 번째가 특히 실재한다 — 실측(2026.08.02)에서 gemini 무료 티어 일일 20회를
+        소진해 429가 났다. 그때 소스는 멀쩡하고 새 기사도 있으니 "조용한 피드"와
+        구분이 안 되고, 안 가리면 고칠 수 있는 장애를 12시간 방치하게 된다.
+        """
+        if not self._sources:
+            return True  # 관심사 미등록 — 할 일이 없는 것이지 장애가 아니다
+        if not any(r.fetched for r in results):
+            return False
+        attempted = sum(r.attempted for r in results)
+        return attempted == 0 or sum(r.stored for r in results) > 0
+
+    async def _collect_source(self, source: FeedSource, now: datetime) -> _SourceResult:
         try:
             items = await asyncio.to_thread(source.fetch)
         except Exception:
             # 어댑터가 이미 삼키지만(계약) 이중 방어 — 한 소스가 배치를 죽이지 않는다.
             log.warning("소스 수집 실패, 건너뛴다: %s", source.topic_key, exc_info=True)
-            return 0
+            return _SourceResult(fetched=False, attempted=0, stored=0)
 
         pending: list[tuple[RawItem, str]] = []
         for item in items:
@@ -169,7 +215,7 @@ class Feed:
             )
             if inserted is not None:
                 stored += 1
-        return stored
+        return _SourceResult(fetched=True, attempted=len(pending), stored=stored)
 
     def _expires_at(self, published: datetime | None, now: datetime) -> str:
         """TTL 기준은 발행 시각과 수집 시각 중 **이른 쪽**.
