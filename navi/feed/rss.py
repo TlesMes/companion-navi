@@ -46,17 +46,22 @@ def strip_html(value: str) -> str:
 
     소스별 분기는 여기 두지 않는다. 특정 피드가 정말 고유 처리를 요구하면 답은 if가
     아니라 FeedSource 구현체를 하나 더 만드는 것이다.
+
+    태그가 없어도 파서를 태운다. 예전엔 '<'가 없으면 건너뛰는 빠른 경로가 있었는데, 그
+    경로가 엔티티를 안 풀어 같은 내용이 태그 유무에 따라 갈렸다('AT&amp;T' vs 'AT&T').
+    엔티티 해제는 파서의 convert_charrefs가 이미 하므로 바깥에서 unescape를 또 부르지
+    않는다 — 이중 해제는 표시용으로 이스케이프된 '&lt;b&gt;'를 실제 태그 문자열로
+    되살린다. 문자열이 짧고 배치당 몇 건이라 파서 비용은 문제가 안 된다.
     """
-    if "<" not in value:
-        return _WHITESPACE.sub(" ", value).strip()  # 이미 평문 — 공백만 정리
     parser = _TextOnly()
     try:
         parser.feed(value)
         parser.close()
     except Exception:
+        # 파서가 죽었으면 charref 변환도 안 됐다 — 이 경로에서만 직접 푼다.
         log.warning("HTML 정리 실패, 원문을 그대로 쓴다", exc_info=True)
-        return _WHITESPACE.sub(" ", value).strip()
-    return _WHITESPACE.sub(" ", unescape("".join(parser.chunks))).strip()
+        return _WHITESPACE.sub(" ", unescape(value)).strip()
+    return _WHITESPACE.sub(" ", "".join(parser.chunks)).strip()
 
 
 def _default_fetcher(url: str, timeout_s: float) -> bytes:

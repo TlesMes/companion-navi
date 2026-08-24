@@ -14,7 +14,7 @@ from urllib.error import URLError
 from navi.brain.echo import EchoBrain
 from navi.feed.base import RawItem
 from navi.feed.collect import Feed
-from navi.feed.rss import RssSource
+from navi.feed.rss import RssSource, strip_html
 from navi.feed.summarize import clean_summary
 from navi.memory import MemoryStore
 
@@ -107,6 +107,41 @@ def test_rss_source_leaves_plain_summary_untouched():
     item = _source(_FEED).fetch()[0]
 
     assert item.summary == "후반 교체 투입된 선수가 두 골을 넣었다."
+
+
+def test_entities_decode_the_same_with_or_without_tags():
+    """태그 유무가 엔티티 해제를 가르면 안 된다.
+
+    회귀 방지: '<'가 없으면 파서를 건너뛰는 빠른 경로가 unescape까지 건너뛰어,
+    같은 내용이 'AT&T'와 'AT&amp;T'로 갈렸다. 남으면 TTS가 'amp'를 읽는다.
+    """
+    assert strip_html("AT&amp;T가 발표했다") == "AT&T가 발표했다"
+    assert strip_html("<p>AT&amp;T가 발표했다</p>") == "AT&T가 발표했다"
+
+
+def test_entities_are_not_decoded_twice():
+    """표시용으로 이스케이프된 태그 표기가 실제 태그로 되살아나면 안 된다.
+
+    회귀 방지: 파서(convert_charrefs)가 이미 푼 결과에 unescape를 또 걸어
+    '&amp;lt;b&amp;gt;'가 '<b>'가 됐다.
+    """
+    assert strip_html("<p>&amp;lt;b&amp;gt; 표기</p>") == "&lt;b&gt; 표기"
+
+
+def test_rss_source_decodes_entities_end_to_end():
+    """어댑터를 통과한 값에도 원본 엔티티 표기가 남지 않는다."""
+    feed = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><item>
+  <title>AT&amp;amp;T 신작</title>
+  <description>가격은 5&amp;amp;10 달러</description>
+  <link>https://a.test/1</link>
+</item></channel></rss>
+""".encode()
+
+    item = _source(feed).fetch()[0]
+
+    assert item.title == "AT&T 신작"
+    assert item.summary == "가격은 5&10 달러"
 
 
 def test_raw_item_identity_prefers_guid_over_link():
@@ -288,6 +323,22 @@ def test_clean_summary_leaves_plain_sentence_untouched():
     assert clean_summary("  어제 경기에서 3대1로 이겼다.  ") == "어제 경기에서 3대1로 이겼다."
 
 
+def test_clean_summary_keeps_numbers_that_start_a_sentence():
+    """숫자+마침표로 시작하는 정상 문장을 목록기호로 오인하면 안 된다.
+
+    회귀 방지: 번호목록 패턴을 무조건 지워 '2026. 8월 출시 예정이다.'가
+    '8월 출시 예정이다.'가 됐다 — 연도가 소리 없이 사라진 채 발화 재료가 된다.
+    """
+    assert clean_summary("2026. 8월 출시 예정이다.") == "2026. 8월 출시 예정이다."
+    assert clean_summary("2026. 8. 5. 유료 DLC가 배포된다.") == "2026. 8. 5. 유료 DLC가 배포된다."
+    assert clean_summary("3. 1운동 기념 이벤트가 열린다.") == "3. 1운동 기념 이벤트가 열린다."
+
+
+def test_clean_summary_still_strips_real_numbered_lists():
+    """항목이 여럿이면 진짜 번호목록으로 보고 지운다."""
+    assert clean_summary("1. 첫 소식\n2. 둘째 소식") == "첫 소식 둘째 소식"
+
+
 async def test_expires_at_counts_from_publication_not_collection(tmp_path):
     """오래된 기사가 수집 시각부터 또 TTL만큼 살면 안 된다 — 이른 쪽 기준(ⓒ).
 
@@ -377,6 +428,19 @@ async def test_naive_now_passes_the_interval_gate(tmp_path):
 
     assert await feed.maybe_collect(datetime.now()) is False  # noqa: DTZ005 — 게이트에 막힘
     assert source.fetch_count == 1
+
+
+async def test_get_fresh_topics_honours_explicit_zero(tmp_path):
+    """k=0(하나도 필요 없음)이 기본값으로 뒤바뀌면 안 된다.
+
+    회귀 방지: `k or 기본값`이 0을 falsy로 봐서 후보 3개를 돌려줬다 — 호출부가
+    억제하려던 선제 발화가 그대로 나간다.
+    """
+    store, feed = _feed(tmp_path, [FakeSource()])
+    await feed.collect(_NOW)
+
+    assert feed.get_fresh_topics(k=0, now=_NOW) == []
+    assert len(feed.get_fresh_topics(now=_NOW)) == 1  # 미지정은 기본값 그대로
 
 
 async def test_get_fresh_topics_and_mark_used_round_trip(tmp_path):

@@ -38,7 +38,12 @@ SUMMARY_SYSTEM = (
 
 _FENCE = re.compile(r"^```[^\n]*\n(.*?)\n?```$", re.DOTALL)
 _HEADING = re.compile(r"^\s{0,3}#{1,6}\s+.*$", re.MULTILINE)
-_BULLET = re.compile(r"^\s{0,3}(?:[-*+]|\d+\.)\s+", re.MULTILINE)
+_BULLET = re.compile(r"^\s{0,3}[-*+]\s+", re.MULTILINE)
+# 번호목록은 별도 취급 — "2026. 8월 출시"·"3. 1운동" 같은 정상 문장이 같은 모양이라
+# 무조건 지우면 연도나 날짜가 소리 없이 잘려 나간다. 줄이 둘 이상 걸릴 때만 진짜 목록으로
+# 본다(요약은 한두 문장이라 번호목록이면 항목이 여럿이다).
+_NUMBERED = re.compile(r"^\s{0,3}\d+\.\s+", re.MULTILINE)
+_NUMBERED_MIN_LINES = 2
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
 _WHITESPACE = re.compile(r"\s+")
 
@@ -56,6 +61,8 @@ def clean_summary(text: str) -> str:
         text = fence.group(1)
     text = _HEADING.sub("", text)
     text = _BULLET.sub("", text)
+    if len(_NUMBERED.findall(text)) >= _NUMBERED_MIN_LINES:
+        text = _NUMBERED.sub("", text)
     text = _BOLD.sub(r"\1", text)
     return _WHITESPACE.sub(" ", text).strip()
 
