@@ -167,10 +167,18 @@
       자동 분기 확증(`今日は本当に疲れた`→calm, 취업 의도 발화→bright). 페르소나 언어와 다른
       언어로 시험할 때를 위한 `--stt-lang` 오버라이드도 함께 추가. 설계 →
       [design/mood_reference.md](./design/mood_reference.md).
-- [ ] **B4. D13(관심사 피드)** — `pick_topic`의 `topic_feed`가 현재 빈 리스트 더미(`navi/heartbeat/
-      topic.py`, feed 모듈 자체가 아직 없음). Phase 3 완료 기준 포함. **A3(음성 선제 발화 E2E)의
-      유일한 선행** — 이게 없어 A3가 보류 중. **설계 완료(2026.07.24) → [design/feed.md](./design/feed.md)**
-      (RSS만·①명시+②메모리콜백·필터MVP제외·tick piggyback, PR 3분할). 다음=PR1(feed 모듈) 구현.
+- [ ] **B4. D13(관심사 피드)** — **PR1·PR2 완료, PR3(데몬 배선)만 남음.** Phase 3 완료 기준 포함,
+      **A3(음성 선제 발화 E2E)의 유일한 선행.** 설계 → [design/feed.md](./design/feed.md).
+      - **PR1 머지(#41, 2026.07.30)** — `topic_candidate`·`feed_meta` 저장소 + `RssSource` +
+        `collect`. 실 피드 실측으로 결함 3건(HTML 범벅·마크다운 머리말·TTL 기준)을 같은 PR에서 수선.
+      - **리뷰 7건 → #42·#43·#44 머지(2026.08.24)** — ①정렬 반전 ②naive datetime ③정규식이 정상
+        문장 훼손 ④엔티티 미해제 ⑤수집 실패 판정 ⑥이중 unescape ⑦falsy 기본값. 근본 원인 분류와
+        검증 방식은 progress.md.
+      - **PR2(#45, 2026.08.25, 리뷰 대기)** — ② 대화 콜백(`source='memory'`). 재료를 **중립 진술**로
+        확정하며 feed.md §3.4를 정정(§3.3과 충돌). TTL·dedup 창은 생성자 인자라 PR3에서 config로.
+      - **다음 = PR3.** 착수 전 3건: ①**카드 "출처 작화" 결정**(feed.md §7, 사용자 판단)
+        ②`create_brain(config, *, vendor=None)` 리팩터 ③`TurnKind.PROACTIVE_CALLBACK`(feed.md §5).
+        **데몬↔Feed 통합 지점을 가장 먼저 실행할 것** — 리뷰 ②가 정확히 그 경계였고 아직 미검증.
 - [ ] **B5. D11(스케줄 동기화)** — 캘린더 API vs 컴패니언 앱. GUI가 이미 있어 후자로 기울 수 있음.
 
 ## C. 동결 — 열쇠는 D8 하나

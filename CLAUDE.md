@@ -9,7 +9,8 @@
 - "언제 말할까"는 결정론적 규칙, "무엇을 말할까"만 모델 — 수면/DND 게이트는 절대 LLM에 맡기지 않음
 - 사용자 오버라이드("더 잘래")는 항상 자동 판단을 이김
 - 전 구간 스트리밍, 첫 오디오 ~1초 목표
-- **한국어 퍼스트** — 음성 부품 선정은 한국어 품질이 1순위, 한국어만 지원해도 무방
+- **발화 언어는 페르소나(레퍼런스 음성)를 따른다** — "한국어 퍼스트"는 폐지. 단 **재료·내부 표현은
+  한국어 고정**(수집은 배치라 어느 카드가 말할지 모른다 — feed.md §3.3)
 - 결정 사항은 D번호로 추적, 결정 근거는 문서·커밋에 기록
 
 ## 문서 맵 (필요할 때 참조)
@@ -46,19 +47,29 @@ type(scope): 제목 (한국어, 50자 내)
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
-## 현재 상태 (2026.07.19)
+## 현재 상태 (2026.08.25)
 
-**E 묶음(데몬 기동 정상화) — E1·E2·E4·E3 머지 완료, E6·E7·E5만 남음.** 카드가 가리키는 목소리
-자산(ckpt·레퍼런스 wav)이 없거나 이 세션 엔진과 안 맞는 페르소나를 **데몬이 422로 막고** GUI가
-회색+사유 툴팁으로 미리 보여준다([navi/control/runtime.py](./navi/control/runtime.py) `availability()` —
-조회와 실행이 같은 판정, GUI 회색은 안내고 방어는 데몬 소유). 자산 검사는 전부 **상태 변경 이전**에
-둬서 "실패하면 아무것도 안 바뀜"이 성립한다([navi/persona/voice.py](./navi/persona/voice.py)
-`missing_assets()`가 단일 판정). **A5 실기 통과(2026.07.19) — 게이팅 로직 검증 완료.**
-남은 건 표시 결함뿐: 360px 창에서 사유 토스트가 잘려 해법이 안 읽히고 드롭다운이 넘친다(**E8**).
-상세 → progress.md "E 묶음".
+**D13 관심사 피드 — PR1·PR2 완료, PR3(데몬 배선)만 남았다.** 나비가 먼저 말 걸 **재료**를 모으는
+기능이 실동한다([navi/feed/](./navi/feed/)): RSS 수집 → 저가 LLM 요약 → `topic_candidate` 적재 →
+미사용·유효 후보 인출, 그리고 사용자가 예전에 한 말에서 뽑는 **대화 콜백**(`source='memory'`).
+396 tests green. **아직 데몬이 이걸 안 쓴다** — `pick_topic`의 `topic_feed`는 여전히 빈 더미고,
+그래서 **A3(음성 선제 발화 E2E)는 계속 보류**다. PR3이 그 마지막 배선이다.
+
+**PR3 착수 전 사용자 결정 1건:** 나비는 카드상 몸이 없어 집 밖에 못 나가는데 두뇌가 *"어제 뉴스에서
+봤는데"* 라고 **출처를 지어낸다**([design/feed.md](./docs/design/feed.md) §7). 재료가 진짜 뉴스가
+되는 PR3에서 매 선제 발화마다 터진다. ⓐ카드 background에 경위 서사 / ⓑ선제 프레이밍에 출처 한 줄 /
+ⓒ둘 다 — 세계관 문제라 카드 소유자 판단.
+
+**E 묶음(데몬 기동 정상화) — E5(검토 항목)만 남고 전부 완료.** 클론 → setup → 엔진 클릭 한 번으로
+데몬 기동까지 이어진다(E6, PR #29~#32). 카드 자산이 없는 페르소나는 데몬이 422로 막고 GUI가
+회색+사유로 미리 보여준다([navi/control/runtime.py](./navi/control/runtime.py) `availability()`).
+
+**완성까지 남은 길은 [design/plan.md](./docs/design/plan.md) §2.1**에 정리돼 있다. 요지: **D8(GPU)이
+단일 병목**이라 Phase 2 잔여와 Phase 5 절반이 거기 묶여 있고, **Phase 3 완료 기준은 코드로 못 닫는다**
+(`interaction_log` 축적이 전제). Phase 4(기억·인격)는 텍스트 계층이라 D8과 무관해 먼저 갈 수 있다.
 
 
-Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결**, **Phase 3(능동성) 진행 중 — 순서 4까지 구현 완료(Stage 13 데몬화 + Stage 14 모드 상태머신 + Stage 15 최소 GUI + Heartbeat 2·3층 배선) + **2층 hazard 교체·A 실기 검증 완료**. 다음 = 순서 5(감정 태그→레퍼런스 전환) + D13 관심사 피드(선제 발화 E2E의 선행).** 데몬: **표준 실행은 [scripts/run_navi.ps1](./scripts/run_navi.ps1)**(인자·venv는 그 스크립트 주석이 권위) — 이벤트 버스([navi/bus.py](./navi/bus.py)) + 데몬 코어([navi/daemon.py](./navi/daemon.py)), 종료는 `stop` 서브커맨드/Ctrl+C/POST /shutdown. 능동축: SLEEP/ACTIVE/DND/SNOOZE 상태머신([navi/heartbeat/mode.py](./navi/heartbeat/mode.py)) — 검문②=`can_speak_now`(취침창 23:00~07:00 config 기본값), 음성 명령은 검문① 확장([navi/gatekeeper.py](./navi/gatekeeper.py)), `mode_state` 영속화. **Heartbeat 2·3층(순서 4, PR #19):** 나비가 먼저 말 건다 — DaemonCore tick이 게이트 순서(ACTIVE→daily_cap→`should_initiate` [navi/heartbeat/timing.py](./navi/heartbeat/timing.py))를 통과하면 `pick_topic`([navi/heartbeat/topic.py](./navi/heartbeat/topic.py))→conductor→brain→mouth 발화 + `interaction_log` 기록(initiated/responded/ignored/overrode). **배선(scaffolding)이지 똑똑한 타이밍 아님** — 값은 config 대충값, 좋은 값은 로그 축적 뒤 튜닝(진행 원칙 2). **2층 산식은 tick 기반 hazard로 교체 완료**(2026.07.18, `refactor/timing-hazard`) — 구 "가중치+jitter"가 반복 샘플링으로 산포 붕괴(±20%→±4%, tick 빈도가 발화 성격을 바꿈)해 Weibull hazard로 교체, tick 빈도 중립·경과할수록 확률↑. 계약(bool)·게이트·로깅 무수정. Stage 15는 PR 3분할([docs/design/gui.md](./docs/design/gui.md)) — **PR ①·②·③ 완료**: ① 컨트롤 플레인(STAGE 계측 + HTTP/WS 서버 [navi/control/server.py](./navi/control/server.py), config `control:` 포트 8765), ② 페르소나·톤 런타임 교체([navi/control/runtime.py](./navi/control/runtime.py) SwapRuntime 파사드 + `/personas`·`/persona`·`/voices`·`/voice`) — **페르소나=카드+음색+톤 번들**(톤은 persona yaml `voice:` 섹션 소유 [navi/persona/voice.py](./navi/persona/voice.py)), **음색 가중치 핫스왑 구현**(2026.07.16 — ckpt 불일치 시 `set_weights`로 런타임 교체, 모델 로드는 to_thread + 턴 락으로 발화와 상호배제. 엔진 핫스왑은 여전히 안 함 — 같은 엔진 내 가중치 교체일 뿐. **실기 청취·전환 시간 검증 완료 2026.07.18 — 교체 0.96~1.65s**), ③ GUI 앱(`python -m navi.gui` — pywebview 창 + 단일 파일 프런트 [navi/gui/static/index.html](./navi/gui/static/index.html), 서빙은 컨트롤 플레인 `GET /`) + 다크/라이트 테마 토글(라이트=Claude 데스크톱 톤, localStorage 저장, PR #18). **A 실기 검증 완료(2026.07.18, 커밋 `a80b719`)** — gui.md PR③ 4항목 중 ①5노드 점등 ②MODE_CHANGED 라이브 ③GUI kill 무영향 통과, ④취침창 런타임 변경은 재기동 시 config 복귀(영속화는 데몬 소유 아님 — gui.md:121 결정의 실증, GUI 창 영구화는 후속). 음색 핫스왑 실측 0.96~1.65s → GUI 로딩 표시는 백로그 강등. **이 마이크는 `--vad-threshold 50` 필요**(기본 150은 발화가 STT로 안 넘어감). 남은 것: **선제 발화 E2E는 보류** — 3층 `pick_topic`이 `topic_feed`(D13) 없이 고정 힌트만 반환해 LLM 요청문이 플레이스홀더라 검증 실질이 없다(D13 구현 후 재개). 상세 → [docs/progress.md](./docs/progress.md) "A 실기 검증 세션".
+Phase 0·1 완료, **Phase 2(음성화) 배선 완결 — 속도만 D8(GPU) 대기로 동결**, **Phase 3(능동성) 진행 중 — 순서 4까지 구현 완료(Stage 13 데몬화 + Stage 14 모드 상태머신 + Stage 15 최소 GUI + Heartbeat 2·3층 배선) + **2층 hazard 교체·A 실기 검증 완료**. **순서 5(감정 태그→레퍼런스 전환, B3)도 실기까지 완료**(PR #35·#39). 다음 = D13 PR3(데몬 배선) → A3 실기.** 데몬: **표준 실행은 [scripts/run_navi.ps1](./scripts/run_navi.ps1)**(인자·venv는 그 스크립트 주석이 권위) — 이벤트 버스([navi/bus.py](./navi/bus.py)) + 데몬 코어([navi/daemon.py](./navi/daemon.py)), 종료는 `stop` 서브커맨드/Ctrl+C/POST /shutdown. 능동축: SLEEP/ACTIVE/DND/SNOOZE 상태머신([navi/heartbeat/mode.py](./navi/heartbeat/mode.py)) — 검문②=`can_speak_now`(취침창 23:00~07:00 config 기본값), 음성 명령은 검문① 확장([navi/gatekeeper.py](./navi/gatekeeper.py)), `mode_state` 영속화. **Heartbeat 2·3층(순서 4, PR #19):** 나비가 먼저 말 건다 — DaemonCore tick이 게이트 순서(ACTIVE→daily_cap→`should_initiate` [navi/heartbeat/timing.py](./navi/heartbeat/timing.py))를 통과하면 `pick_topic`([navi/heartbeat/topic.py](./navi/heartbeat/topic.py))→conductor→brain→mouth 발화 + `interaction_log` 기록(initiated/responded/ignored/overrode). **배선(scaffolding)이지 똑똑한 타이밍 아님** — 값은 config 대충값, 좋은 값은 로그 축적 뒤 튜닝(진행 원칙 2). **2층 산식은 tick 기반 hazard로 교체 완료**(2026.07.18, `refactor/timing-hazard`) — 구 "가중치+jitter"가 반복 샘플링으로 산포 붕괴(±20%→±4%, tick 빈도가 발화 성격을 바꿈)해 Weibull hazard로 교체, tick 빈도 중립·경과할수록 확률↑. 계약(bool)·게이트·로깅 무수정. Stage 15는 PR 3분할([docs/design/gui.md](./docs/design/gui.md)) — **PR ①·②·③ 완료**: ① 컨트롤 플레인(STAGE 계측 + HTTP/WS 서버 [navi/control/server.py](./navi/control/server.py), config `control:` 포트 8765), ② 페르소나·톤 런타임 교체([navi/control/runtime.py](./navi/control/runtime.py) SwapRuntime 파사드 + `/personas`·`/persona`·`/voices`·`/voice`) — **페르소나=카드+음색+톤 번들**(톤은 persona yaml `voice:` 섹션 소유 [navi/persona/voice.py](./navi/persona/voice.py)), **음색 가중치 핫스왑 구현**(2026.07.16 — ckpt 불일치 시 `set_weights`로 런타임 교체, 모델 로드는 to_thread + 턴 락으로 발화와 상호배제. 엔진 핫스왑은 여전히 안 함 — 같은 엔진 내 가중치 교체일 뿐. **실기 청취·전환 시간 검증 완료 2026.07.18 — 교체 0.96~1.65s**), ③ GUI 앱(`python -m navi.gui` — pywebview 창 + 단일 파일 프런트 [navi/gui/static/index.html](./navi/gui/static/index.html), 서빙은 컨트롤 플레인 `GET /`) + 다크/라이트 테마 토글(라이트=Claude 데스크톱 톤, localStorage 저장, PR #18). **A 실기 검증 완료(2026.07.18, 커밋 `a80b719`)** — gui.md PR③ 4항목 중 ①5노드 점등 ②MODE_CHANGED 라이브 ③GUI kill 무영향 통과, ④취침창 런타임 변경은 재기동 시 config 복귀(영속화는 데몬 소유 아님 — gui.md:121 결정의 실증, GUI 창 영구화는 후속). 음색 핫스왑 실측 0.96~1.65s → GUI 로딩 표시는 백로그 강등. **이 마이크는 `--vad-threshold 50` 필요**(기본 150은 발화가 STT로 안 넘어감). 남은 것: **선제 발화 E2E(A3)는 여전히 보류** — 3층 `pick_topic`의 `topic_feed`가 아직 빈 더미다. **재료를 만드는 쪽(D13 PR1·PR2)은 끝났고 데몬이 그걸 쓰는 배선(PR3)만 남았다.** 상세 → [docs/progress.md](./docs/progress.md) "A 실기 검증 세션".
 Phase 1 산출물: Conductor + Brain 어댑터(Gemini 기본·Anthropic·Echo) + 단기기억(SQLite) + 캐릭터 카드([personas/navi.yaml](./personas/navi.yaml)) — CLI 텍스트 대화(`python -m navi.cli`).
 D3(TTS 음색): **GPT-SoVITS fine-tune 확정.** 음색=가중치 안정, 톤=레퍼런스 제어. 어댑터: [navi/mouth/gptsovits.py](./navi/mouth/gptsovits.py).
 음성 배선: **타이핑/마이크 → 나비 음성 답변 실동.** TurnPipeline([navi/pipeline.py](./navi/pipeline.py)) `--voice` + Ear 마이크 입력([navi/ear/](./navi/ear/)) `--listen`(PR #8). STT는 faster-whisper(`--input` 파일 / `--listen` 마이크).
