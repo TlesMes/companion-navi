@@ -191,9 +191,13 @@ class Feed:
         """미사용·TTL 유효 후보. 객체로 돌려주는 건 호출부가 mark_used에 id가 필요해서다.
 
         pick_topic에는 .summary만 뽑아 넘긴다 — 3층 계약(list[str])을 안 넓힌다.
+
+        k는 None(미지정)과 0(하나도 필요 없음)을 구분한다 — `k or 기본값`으로 쓰면 0이
+        falsy라 기본값으로 뒤바뀌어, 호출부가 억제하려던 선제 발화가 나간다.
         """
         moment = _utc(now) if now else datetime.now(UTC)
-        return self._store.fresh_candidates(k or self._fresh_topics_k, moment.isoformat())
+        limit = k if k is not None else self._fresh_topics_k
+        return self._store.fresh_candidates(limit, moment.isoformat())
 
     def mark_used(self, candidate_id: int, now: datetime | None = None) -> None:
         """선제 발화에 썼다고 표시 — 같은 이슈로 또 말 걸지 않게.
