@@ -15,8 +15,15 @@ from navi.brain.echo import EchoBrain
 from navi.feed.base import RawItem
 from navi.feed.collect import Feed
 from navi.feed.rss import RssSource, strip_html
-from navi.feed.summarize import clean_summary
+from navi.feed.summarize import (
+    CALLBACK_SYSTEM,
+    build_callback_prompt,
+    clean_summary,
+    normalize_topic_label,
+    parse_callbacks,
+)
 from navi.memory import MemoryStore
+from navi.models import BrainResult, Turn, Usage
 
 # 소스는 바이트를 받는다(HTTP 응답 그대로) — 한국어라 str로 쓰고 인코딩한다.
 _FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -519,3 +526,331 @@ async def test_get_fresh_topics_and_mark_used_round_trip(tmp_path):
 
     remaining = feed.get_fresh_topics(now=_NOW)
     assert [c.candidate_id for c in remaining] == [cands[1].candidate_id]
+
+
+# ─── ② 대화 콜백 (D13 PR2) ──────────────────────────────────
+
+
+class ScriptedBrain(EchoBrain):
+    """콜백 추출 요청에만 정해진 문자열을 뱉고 나머지는 echo 그대로.
+
+    EchoBrain은 마지막 user 메시지를 되돌려줄 뿐이라 구조화 출력을 만들 수 없다.
+    request.system 동일성으로 갈라서 rss 요약을 기대하는 기존 경로와 섞어 쓸 수 있다.
+    """
+
+    def __init__(self, callback_reply="", *, boom=False):
+        super().__init__()
+        self._reply = callback_reply
+        self._boom = boom
+        self.requests = []
+
+    async def generate_stream(self, request):
+        self.requests.append(request)
+        if request.system is not CALLBACK_SYSTEM:
+            async for token in super().generate_stream(request):
+                yield token
+            return
+        if self._boom:
+            raise RuntimeError("추출기가 터졌다")
+        self.last_result = None
+        yield self._reply
+        self.last_result = BrainResult(full_text=self._reply, usage=Usage(0, 0))
+
+
+_REPLY = "[topic:이직] 사용자가 지난주에 이직을 고민한다고 말했고 아직 결론은 안 났다."
+
+
+def _turns(*texts, role="user", at=None):
+    moment = at or _NOW
+    return [Turn(role=role, text=t, created_at=moment, session_id="s1") for t in texts]
+
+
+def _user_turns(n=3):
+    return _turns(*[f"이직 얘기 {i}" for i in range(n)])
+
+
+# 파서 — DB·네트워크 없음
+
+def test_parse_callbacks_reads_tagged_lines():
+    text = "[topic:이직] 사용자가 이직을 고민한다.\n[topic:러닝] 사용자가 러닝을 시작했다."
+
+    assert parse_callbacks(text, 2) == [
+        ("이직", "사용자가 이직을 고민한다."),
+        ("러닝", "사용자가 러닝을 시작했다."),
+    ]
+
+
+def test_parse_callbacks_ignores_untagged_prose():
+    """부분 실패가 국소적이다 — JSON이면 같은 입력에서 전체 파싱이 터진다."""
+    text = "아래와 같이 정리했습니다:\n[topic:이직] 사용자가 이직을 고민한다.\n이상입니다."
+
+    assert parse_callbacks(text, 2) == [("이직", "사용자가 이직을 고민한다.")]
+
+
+def test_parse_callbacks_returns_empty_for_unparseable_output():
+    """파싱 실패는 예외가 아니라 폴백 — ② 스킵으로 이어진다."""
+    assert parse_callbacks("뽑을 만한 화제가 없습니다.", 2) == []
+    assert parse_callbacks("", 2) == []
+
+
+def test_parse_callbacks_caps_at_max():
+    text = "\n".join(f"[topic:주제{i}] 사용자가 {i}번 얘기를 했다." for i in range(5))
+
+    assert len(parse_callbacks(text, 2)) == 2
+
+
+def test_parse_callbacks_strips_markdown_per_line():
+    """줄 구조는 살고 서식만 벗겨진다 — drain에서 clean_summary를 뺀 결정의 회귀 잠금."""
+    text = "```\n[topic:이직] **사용자가** 이직을 고민한다.\n[topic:러닝] 사용자가 뛴다.\n```"
+
+    assert parse_callbacks(text, 2) == [
+        ("이직", "사용자가 이직을 고민한다."),
+        ("러닝", "사용자가 뛴다."),
+    ]
+
+
+def test_parse_callbacks_drops_pairs_with_empty_parts():
+    text = "[topic:  ] 라벨이 비었다.\n[topic:이직] 사용자가 이직을 고민한다."
+
+    assert parse_callbacks(text, 2) == [("이직", "사용자가 이직을 고민한다.")]
+
+
+def test_parse_callbacks_dedups_repeated_labels_within_one_reply():
+    text = "[topic:이직] 첫 문장이다.\n[topic:이직 고민] 같은 화제 두 번째다."
+
+    assert parse_callbacks(text, 2) == [("이직", "첫 문장이다.")]
+
+
+def test_normalize_topic_label_absorbs_common_drift():
+    """LLM이 같은 화제를 다르게 부르면 dedup이 뚫려 같은 얘기를 반복해서 되묻는다."""
+    assert normalize_topic_label(" 이직 고민 ") == normalize_topic_label("이직")
+    assert normalize_topic_label("이직 이야기") == "이직"
+    assert normalize_topic_label("고민") == "고민"  # 통째로 접미면 안 지운다(≥2자 가드)
+
+
+def test_callback_prompt_carries_only_user_turns_with_relative_dates():
+    """나비 자기 말에서 화제를 뽑아 되물으면 세계관이 깨진다."""
+    turns = [
+        Turn(role="user", text="이직 고민 중", created_at=_NOW, session_id="s1"),
+        Turn(role="assistant", text="나비의 대답", created_at=_NOW, session_id="s1"),
+        Turn(
+            role="user",
+            text="어제 면접 봤어",
+            created_at=_NOW - timedelta(days=1),
+            session_id="s1",
+        ),
+    ]
+
+    prompt = build_callback_prompt(turns, _NOW)
+
+    assert "나비의 대답" not in prompt
+    assert "(오늘) 이직 고민 중" in prompt
+    assert "(어제) 어제 면접 봤어" in prompt
+
+
+# 수집 — DB 있음
+
+def _callback_feed(tmp_path, reply=_REPLY, *, turns=None, sources=None, boom=False, **kwargs):
+    brain = ScriptedBrain(reply, boom=boom)
+    store, feed = _feed(
+        tmp_path,
+        sources if sources is not None else [],
+        brain,
+        recall_turns=lambda: turns if turns is not None else _user_turns(),
+        **kwargs,
+    )
+    return store, feed, brain
+
+
+async def test_collect_stores_callback_candidate_from_recent_turns(tmp_path):
+    """D13 ② — 사용자가 예전에 한 말이 중립 진술 재료가 된다."""
+    store, feed, _ = _callback_feed(tmp_path)
+
+    assert await feed.collect(_NOW) == 1
+
+    cand = store.fresh_candidates(10, _NOW.isoformat())[0]
+    assert cand.source == "memory"
+    assert cand.topic_key == "이직"  # 정규화된 라벨이 저장된다
+    assert cand.summary.startswith("사용자가 지난주에")
+    assert cand.published_at is None  # 발행 개념이 없다
+    assert cand.expires_at == _NOW + timedelta(hours=168)  # 기본 7일
+
+
+async def test_callback_ttl_is_configurable(tmp_path):
+    """수명은 값만 바꾸면 되는 손잡이다 — PR3에서 config로 뺀다."""
+    store, feed, _ = _callback_feed(tmp_path, callback_ttl_hours=24)
+    await feed.collect(_NOW)
+
+    cand = store.fresh_candidates(10, _NOW.isoformat())[0]
+    assert cand.expires_at == _NOW + timedelta(hours=24)
+
+
+async def test_callback_expires_after_its_ttl(tmp_path):
+    """만료가 없으면 3주 전에 끝난 얘기를 어느 날 꺼낸다(feed.md 5의 느린 버전)."""
+    store, feed, _ = _callback_feed(tmp_path, callback_ttl_hours=168)
+    await feed.collect(_NOW)
+
+    assert feed.get_fresh_topics(now=_NOW + timedelta(days=8)) == []
+
+
+async def test_callback_prompt_sees_only_user_turns(tmp_path):
+    turns = _user_turns() + _turns("나비가 한 말", role="assistant")
+    _, feed, brain = _callback_feed(tmp_path, turns=turns)
+
+    await feed.collect(_NOW)
+
+    prompt = brain.requests[0].messages[-1].text
+    assert "나비가 한 말" not in prompt
+    assert "이직 얘기 0" in prompt
+
+
+async def test_collect_skips_callback_when_turns_are_too_few(tmp_path):
+    """갓 설치한 데몬이 턴 하나로 LLM을 태우지 않는다 — 그리고 그건 장애가 아니다."""
+    store, feed, brain = _callback_feed(tmp_path, turns=_user_turns(1))
+
+    assert await feed.collect(_NOW) == 0
+    assert brain.requests == []  # LLM 미호출
+    assert store.last_collect_at() == _NOW.isoformat()  # 배치는 건강
+
+
+async def test_collect_skips_callback_when_extraction_is_empty(tmp_path):
+    """"꺼낼 화제가 없다"는 정당한 답이지 장애가 아니다(feed.md 3.4)."""
+    store, feed, _ = _callback_feed(tmp_path, reply="뽑을 만한 화제가 없습니다.")
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() == _NOW.isoformat()
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is False  # 백오프 아님
+
+
+async def test_callback_dedup_prevents_repeat_within_window(tmp_path):
+    """같은 화제를 12시간마다 다시 꺼내지 않는다 — 그리고 그 배치도 건강하다.
+
+    회귀 방지: attempted를 dedup 앞에서 세면 이 정상 상태가 장애로 오판돼
+    12시간 간격이 30분 백오프로 무너진다.
+    """
+    store, feed, _ = _callback_feed(tmp_path, callback_dedup_window_s=604800)
+
+    assert await feed.collect(_NOW) == 1
+    later = _NOW + timedelta(hours=12)
+    assert await feed.collect(later) == 0
+
+    assert store.last_collect_at() == later.isoformat()  # 건강 판정
+    assert len(store.fresh_candidates(10, later.isoformat())) == 1
+
+
+async def test_callback_recurs_after_dedup_window(tmp_path):
+    """영구 봉인 방지 — 창을 넘겨도 사용자가 그 얘길 계속하면 새 후보가 난다."""
+    store, feed, _ = _callback_feed(
+        tmp_path, callback_dedup_window_s=604800, callback_ttl_hours=24_000
+    )
+    await feed.collect(_NOW)
+
+    later = _NOW + timedelta(days=8)
+    assert await feed.collect(later) == 1
+    assert len(store.fresh_candidates(10, later.isoformat())) == 2
+
+
+async def test_callback_label_drift_dedups_to_the_same_key(tmp_path):
+    """LLM이 '이직'과 '이직 고민'을 번갈아 불러도 같은 화제로 본다."""
+    store, feed, brain = _callback_feed(tmp_path)
+    await feed.collect(_NOW)
+
+    brain._reply = "[topic:이직 고민] 사용자가 여전히 이직을 고민한다."
+    assert await feed.collect(_NOW + timedelta(hours=12)) == 0
+
+
+async def test_extraction_failure_is_treated_as_outage(tmp_path):
+    """소스 0 + 콜백만인 구성에서 추출기가 죽으면 장애로 잡혀야 한다.
+
+    회귀 방지: `if not self._sources: return True`가 이 경우를 통째로 삼켰다.
+    """
+    store, feed, _ = _callback_feed(tmp_path, boom=True, retry_backoff_s=1800)
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() is None  # 성공으로 기록하지 않는다
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is True
+
+
+async def test_callback_only_configuration_is_healthy_when_quiet(tmp_path):
+    """콜백만 켜고 대화가 없는 상태는 정상이다."""
+    store, feed, _ = _callback_feed(tmp_path, turns=[], collect_interval_s=3600)
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() == _NOW.isoformat()
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is False
+
+
+async def test_no_contributors_at_all_is_not_a_failure(tmp_path):
+    """소스도 콜백도 없으면 할 일이 없는 것이지 장애가 아니다."""
+    store, feed = _feed(tmp_path, [], collect_interval_s=3600, retry_backoff_s=1800)
+
+    assert await feed.collect(_NOW) == 0
+    assert store.last_collect_at() == _NOW.isoformat()
+    assert await feed.maybe_collect(_NOW + timedelta(minutes=31)) is False
+
+
+async def test_callback_is_extracted_before_rss_items(tmp_path):
+    """쿼터가 마르면 뉴스가 아니라 콜백이 살아남아야 한다(feed.md 1)."""
+    _, feed, brain = _callback_feed(tmp_path, sources=[FakeSource()])
+
+    await feed.collect(_NOW)
+
+    assert brain.requests[0].system is CALLBACK_SYSTEM
+
+
+async def test_callback_candidate_outranks_news_in_fresh_topics(tmp_path):
+    """콜백은 published_at이 없어 fetched_at 폴백으로 뉴스보다 앞선다(의도된 정렬)."""
+    fresh_news = _item("한 시간 전 기사", "g1", published=_NOW - timedelta(hours=1))
+    _, feed, _ = _callback_feed(tmp_path, sources=[FakeSource(items=[fresh_news])])
+    await feed.collect(_NOW)
+
+    assert feed.get_fresh_topics(now=_NOW)[0].source == "memory"
+
+
+async def test_is_safe_hook_can_block_callback_candidates(monkeypatch, tmp_path):
+    """훅이 실제로 콜백 경로에 심을 수 있는 씨앗인지 — RawItem 바인딩을 푼 이유."""
+    from navi.feed import collect as collect_mod
+
+    monkeypatch.setattr(
+        collect_mod, "_is_safe", lambda *, source, topic_key, text: source != "memory"
+    )
+    store, feed, _ = _callback_feed(tmp_path, sources=[FakeSource()])
+
+    await feed.collect(_NOW)
+
+    sources = {c.source for c in store.fresh_candidates(10, _NOW.isoformat())}
+    assert sources == {"rss"}  # 콜백만 막혔다
+
+
+async def test_callback_wiring_matches_the_daemon_shape(tmp_path):
+    """PR3이 실제로 쓸 형태 — store.recall_recent_for_user 클로저를 그대로 주입."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    for i in range(4):
+        store.append_turn("s1", uid, "user", f"이직 얘기 {i}")
+    feed = Feed(
+        store=store,
+        sources=[],
+        summarizer=ScriptedBrain(_REPLY),
+        model="test-model",
+        recall_turns=lambda: store.recall_recent_for_user(uid, 30),
+    )
+
+    assert await feed.collect(_NOW) == 1
+    assert store.fresh_candidates(10, _NOW.isoformat())[0].source == "memory"
+
+
+async def test_rss_summary_is_still_cleaned_after_drain_change(tmp_path):
+    """drain에서 clean_summary를 뺀 뒤에도 rss 요약은 서식이 벗겨져야 한다."""
+
+    class HeadingBrain(EchoBrain):
+        async def generate_stream(self, request):
+            self.last_result = None
+            reply = "# 요약\n\n어제 경기가 있었다."
+            yield reply
+            self.last_result = BrainResult(full_text=reply, usage=Usage(0, 0))
+
+    store, feed = _feed(tmp_path, [FakeSource()], HeadingBrain())
+    await feed.collect(_NOW)
+
+    assert store.fresh_candidates(10, _NOW.isoformat())[0].summary == "어제 경기가 있었다."

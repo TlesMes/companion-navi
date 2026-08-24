@@ -49,7 +49,7 @@
 ```
 [배치, tick이 12h 게이트 통과 시]  collect():
   ① RssSource(url).fetch() ──▶ 신선·미적재 아이템 몇 개 ──▶ summarize(LLM) ──┐
-  ② recall_recent_for_user ──▶ 빈도 상위 주제 ──▶ callback(LLM) ───────────┤
+  ② recall_turns(주입 클로저) ──▶ 사용자 턴만 ──▶ 추출(LLM 1회) ───────────┤
                                                                             ▼
                                               insert_candidate(source, topic_key,
                                                 summary, fetched_at, expires_at)
@@ -80,7 +80,7 @@
       summary      TEXT NOT NULL,          -- 나비 입말 재료(트리거 문자열로 직행)
       dedup_key    TEXT NOT NULL,          -- source+topic_key+원문해시 → 재적재 방지
       fetched_at   TEXT NOT NULL,
-      expires_at   TEXT,                   -- 뉴스 TTL(발행 기준 96h), memory 콜백은 NULL
+      expires_at   TEXT,                   -- 뉴스 96h(발행 기준) / 콜백 7일. 값은 설정 가능
       used_at      TEXT                    -- 선제 발화 사용 시각(중복방지)
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_candidate_dedup ON topic_candidate (dedup_key);
@@ -130,7 +130,7 @@
      **소스당 `max_items_per_source`(기본 5)개 상한**(구현 시 추가) — 문서의 "몇 개"가
      코드에선 "전부"가 돼서, 첫 수집에 50개짜리 피드를 만나면 LLM 50회를 그대로 태운다.
      요약은 **순차 처리**(`asyncio.gather` 금지) — 어댑터 하나는 동시 요청 1건이 계약이다.
-  3. ② `recall_recent_for_user` → 빈도 상위 주제 → `callback`(저가 LLM, 최근 턴을 콜백
+  3. ② 주입된 `recall_turns()` → 사용자 턴만 → `extract_callbacks`(저가 LLM 1회, 중립 진술
      문장으로) → `insert_candidate(source='memory', ...)`.
   4. `set_last_collect_at(now)`.
 - `get_fresh_topics(k) -> list[TopicCandidate]`, `mark_used(candidate_id)` — 저장소 위임.
@@ -156,11 +156,34 @@
   통째로 무용지물이라 TTL을 96h로 넉넉히 잡아 상쇄한다. `min`은 발행 시각이 미래인 피드
   (시계 어긋남·예약 발행)에 대한 방어이기도 하다.
 
-### 3.4 ② 대화 빈도 추출 — `collect.py` 내 함수
+### 3.4 ② 대화 콜백 추출 — `summarize.py` + `collect.py`
 - 규칙(결정론)으로 "요즘 자주 나온 주제"를 고르는 건 한국어 형태소 분석(konlpy 등) 부담이
-  커서, **최근 N턴을 저가 LLM에 넘겨 "자주 등장한 주제 1~2개 + 자연스러운 되물음 문장"을
-  받는다**(요약/추출 = "무엇을 말할까"라 LLM 허용). 1회 호출. 추출 결과가 비면 ② 스킵.
-- topic_key는 LLM이 준 주제 라벨, summary는 되물음 문장. dedup_key로 같은 주제 반복 적재 방지.
+  커서, **최근 N턴을 저가 LLM에 넘겨 주제 1~2개를 받는다**(요약/추출 = "무엇을 말할까"라
+  LLM 허용). 1회 호출. 추출 결과가 비면 ② 스킵.
+- **기준은 "빈도"가 아니라 "반복 + 미결"**(구현 시 정정 2026.08.25). 콜백을 값지게 만드는 건
+  몇 번 나왔느냐가 아니라 **열려 있느냐**다. 절 제목의 "빈도"는 §7이 이미 기각한 형태소 빈도
+  방식의 잔재다.
+- **summary는 되물음 문장이 아니라 중립 진술이다**(구현 시 정정 2026.08.25). 원문은 "자연스러운
+  되물음 문장"이었는데 **§3.3("중립 시점으로, 청자를 지칭하지 말 것. 인칭·말투는 발화 시점에
+  두뇌가 입힌다")과 정면 충돌**한다. §3.3이 [turn_assembly.md](./turn_assembly.md) §4.1 실측을
+  근거로 든 쪽이라 그걸 따랐다. 완성된 되물음은 **반말·종결어미가 재료에 박혀** 존댓말 카드로
+  갈아끼울 때 카드와 싸운다 — 수집은 배치라 어느 카드가 이 재료로 말할지 그 시점엔 모른다.
+  대신 프롬프트가 **미결 여부를 함께 적게** 해서 되물음의 *근거*를 남긴다. 문장 형태는 두뇌 몫.
+  ```
+  [topic:이직] 사용자는 1주 전부터 이직을 고민하고 있으며 … 결론이 나지 않음.   (실측 출력)
+  ```
+- **출력 형식은 `[topic:라벨] 문장` 줄 태그**(JSON 아님). 선례가
+  [mood.py](../navi/mouth/mood.py) `peel_mood`의 `[mood:key]`이고, 부분 실패가 국소적이라
+  모델이 앞에 산문을 붙여도 그 줄만 무시된다(JSON은 전체 파싱이 터진다). 파싱 실패는 예외가
+  아니라 폴백.
+- **입력은 사용자 턴만.** `recall_recent_for_user`는 assistant 턴도 돌려주는데, 나비가 자기 말에서
+  화제를 뽑아 되물으면 세계관이 깨진다. 줄마다 결정론 상대 날짜("어제"·"3일 전")를 붙여
+  summary에 시점이 들어가게 한다.
+- **dedup_key는 라벨 × 시간창**(구현 시 보강). 원문의 "dedup_key로 같은 주제 반복 적재 방지"를
+  문자 그대로 읽으면 **주제가 DB 수명 내내 영구 봉인**돼, 한 번 되묻고 나면 다시는 못 되묻는다.
+  창(기본 7일) 안에선 화제당 1건, 창을 넘겨도 사용자가 그 얘길 계속하면 새 후보가 난다 —
+  그만뒀다면 최근 N턴에 안 잡혀 자연히 사라지므로 **자기 제한적**이다. 라벨은 LLM이 주므로
+  드리프트("이직" vs "이직 고민")를 흡수하는 결정론 정규화를 거쳐 저장한다.
 
 ### 3.5 데몬 배선 — `navi/daemon.py`
 - `_run`에서 `Feed`를 짓고(저장소·summarizer·설정 주입), DaemonCore에 `feed` 주입
@@ -210,6 +233,16 @@ feed:
 - **안전 필터 본체** — `_is_safe` 훅 자리만 두고 규칙/키워드 blocklist는 넣지 않는다(D13
   MVP 제외). **②가 사용자의 무거운 화제(이별·질병·자책)를 선제로 되꺼내는 위험**이 실재하므로
   필요해지면 이 훅에 결정론 규칙을 채운다(LLM 판단은 안 씀 — 안전 게이트는 규칙 원칙).
+  PR2에서 시그니처를 `_is_safe(*, source, topic_key, text)`로 넓혔다 — `RawItem` 바인딩이면
+  정작 위험한 콜백 텍스트를 볼 수 없어 **심을 수 없는 씨앗**이었다. 콜백은 지금 추출 *출력*에
+  훅이 걸려 있는데, 무거운 대화가 애초에 추출기에 안 닿게 하는 **입력측 게이트**가 더 안전한
+  자리다 — 규칙을 채울 때 두 자리를 다 검토할 것.
+- **`TurnKind.PROACTIVE_CALLBACK` — PR3 선행 과제(PR2에서 등록).** 현
+  [`_PROACTIVE_FRAME`](../navi/conductor.py)은 *"사용자가 알려준 게 아니야"* 라고 말하는데
+  **콜백은 사용자가 문자 그대로 알려준 것**이라 사실이 어긋난다.
+  [turn_assembly.md](./turn_assembly.md) §5가 이 분기를 *"각 기능이 올 때"* 로 남겨 뒀고 지금이
+  그때지만, **데몬이 `candidate.source`를 보고 kind를 고르는 자리라 PR3 소유**다. 그전까지
+  콜백은 뉴스와 같은 프레임을 타므로 A3 실기에서 출처 어색함이 관측될 수 있다.
 - **뉴스 API·커뮤니티 크롤링** — D13에서 기각. 소스 추가가 필요하면 `FeedSource` 뒤로.
 - **②의 외부 뉴스 검색 보강**(추출 키워드 → 검색형 RSS) — MVP ②는 메모리 콜백만, 외부 fetch
   없음. 뉴스로 살 붙이는 건 후속.
@@ -228,6 +261,8 @@ feed:
   **(완료 2026.07.31 — 349 tests green. `config.py`·`daemon.py` 무변경, 협력자는 전부 주입.
   구현 중 드러난 정정 4건은 §3.2·§3.3·§3.5에 반영.)**
 - **PR2 `feat(feed): 대화 빈도 자동 추출(② source=memory)`** — 3.4 + 유닛 §4④. ①과 별개
+  **(완료 2026.08.25 — 396 tests green. 재료를 중립 진술로 확정하며 §3.4를 정정했고,
+  콜백 TTL·dedup 창을 생성자 인자로 뺐다. `Feed`는 여전히 Config를 모른다.)**
   검증 단위라 분리(작으면 PR1에 합쳐도 무방).
 - **PR3 `feat(daemon): 관심사 피드 배선 — tick 수집 + pick_topic 후보 주입`** — 3.5·3.6 +
   통합 테스트 §4. **A3(실기) 여기서 해제.** **선행:** [turn_assembly.md](./turn_assembly.md)의

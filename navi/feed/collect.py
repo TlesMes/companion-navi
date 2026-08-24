@@ -12,25 +12,36 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from navi.brain.base import BrainAdapter
 from navi.feed.base import FeedSource, RawItem
-from navi.feed.summarize import summarize_item
+from navi.feed.summarize import extract_callbacks, summarize_item
 from navi.memory import MemoryStore
-from navi.models import TopicCandidate
+from navi.models import TopicCandidate, Turn
 
 log = logging.getLogger(__name__)
 
+# 갓 설치한 데몬이 턴 하나로 LLM을 태우지 않게 하는 하한(사용자 턴 기준).
+_MIN_TURNS_FOR_EXTRACT = 3
 
-def _is_safe(item: RawItem) -> bool:
+
+def _is_safe(*, source: str, topic_key: str, text: str) -> bool:
     """안전 필터 훅 자리 — D13 MVP에선 항상 True(feed.md 5의 씨앗).
 
-    관심사가 이미 큐레이션돼(사용자가 고른 피드) 지금은 실해가 없다. 다만 PR2의 대화
-    콜백이 사용자의 무거운 화제(이별·질병)를 선제로 되꺼낼 위험은 실재하므로 자리를
-    남겨 둔다. 채울 땐 결정론 규칙만 — 안전 게이트는 LLM에 안 맡긴다(원칙 2).
+    관심사가 이미 큐레이션돼(사용자가 고른 피드) rss엔 지금 실해가 없다. 위험은 콜백
+    쪽이다 — 사용자의 무거운 화제(이별·질병·자책)를 선제로 되꺼낼 수 있다.
+
+    시그니처가 RawItem이 아닌 이유: 그러면 콜백 텍스트를 볼 수가 없어, 훅이 지목된
+    위험에 정작 심을 수 없는 씨앗이 된다. source를 받는 건 규칙이 채워질 때 둘에 다른
+    규칙이 필요해서다 — 뉴스의 "질병"은 정상 소재고 콜백의 "질병"은 사용자 본인 얘기다.
+    인자가 전부 str이라 순서 실수가 조용히 통과하지 않게 키워드 전용으로 둔다.
+
+    채울 땐 결정론 규칙만 — 안전 게이트는 LLM에 안 맡긴다(원칙 2). 콜백은 추출 *출력*에
+    걸고 있는데, 무거운 대화가 애초에 추출기에 안 닿게 하는 입력측 게이트가 더 안전한
+    자리다. 규칙을 채울 때 두 자리를 다 검토할 것.
     """
     return True
 
@@ -55,11 +66,16 @@ def _dedup_key(source: str, topic_key: str, raw: str) -> str:
 
 
 @dataclass(frozen=True)
-class _SourceResult:
-    """소스 하나의 배치 결과 — 건수만으로는 정상과 장애가 안 갈려서 셋을 따로 센다."""
+class _ContributorResult:
+    """기여자 하나의 배치 결과 — 건수만으로는 정상과 장애가 안 갈려서 셋을 따로 센다.
 
-    fetched: bool  # 소스가 응답했는가 (빈 피드도 응답이다)
-    attempted: int  # dedup을 통과해 요약을 시도한 건수
+    기여자는 RSS 소스이거나 대화 콜백이다. 콜백은 "소스"가 아니라(외부 fetch 없음)
+    이름을 중립화했지만, 세 필드의 뜻은 두 경로에서 그대로 성립해 _is_healthy를
+    무수정으로 재사용한다.
+    """
+
+    responded: bool  # 기여자가 응답했는가 (빈 피드·0턴도 응답이다)
+    attempted: int  # dedup을 통과해 **LLM 호출을 시도한** 횟수
     stored: int  # 그중 실제로 적재된 건수
 
 
@@ -78,11 +94,15 @@ class Feed:
         sources: Sequence[FeedSource],
         summarizer: BrainAdapter,
         model: str,
+        recall_turns: Callable[[], list[Turn]] | None = None,
         collect_interval_s: float = 43200.0,  # 12h → 하루 1~2회
         retry_backoff_s: float = 1800.0,  # 배치가 전멸했을 때만 쓰는 짧은 재시도 간격
         fresh_topics_k: int = 3,
         rss_ttl_hours: float = 96.0,
         max_items_per_source: int = 5,
+        max_callbacks: int = 2,
+        callback_ttl_hours: float = 168.0,  # 7일 — 값은 PR3에서 config로 뺀다
+        callback_dedup_window_s: float = 604800.0,  # 7일 — TTL과 별개 손잡이
     ) -> None:
         self._store = store
         self._sources = list(sources)
@@ -93,6 +113,10 @@ class Feed:
         self._fresh_topics_k = fresh_topics_k
         self._rss_ttl = timedelta(hours=rss_ttl_hours)
         self._max_items_per_source = max_items_per_source
+        self._recall_turns = recall_turns
+        self._max_callbacks = max_callbacks
+        self._callback_ttl = timedelta(hours=callback_ttl_hours)
+        self._callback_dedup_window_s = callback_dedup_window_s
         self._collecting = False
         # 장애 배치 뒤 재시도 시각. 영속 안 한다 — 재기동은 대개 사람이 뭔가 고친 뒤라
         # 한 번 더 시도해 보는 게 맞고, 백오프는 원래 일시적 상태다.
@@ -140,7 +164,13 @@ class Feed:
         끝에 수집 시각을 기록하는 건 **배치가 건강했을 때뿐**이다 — 아래 _is_healthy 참고.
         """
         now = _utc(now)
-        results = [await self._collect_source(source, now) for source in self._sources]
+        # 콜백을 먼저 돌린다 — gemini 무료 티어는 분당 5·하루 20이라(실측 2026.08.02)
+        # rss가 쿼터를 먼저 태우면 콜백 1콜이 429에 걸린다. feed.md 1이 "뉴스보다 콜백이
+        # 값지다"고 정한 이상, 쿼터가 마르면 살아남아야 하는 건 콜백이다.
+        results: list[_ContributorResult] = []
+        if self._recall_turns is not None:
+            results.append(await self._collect_callbacks(now))
+        results.extend([await self._collect_source(source, now) for source in self._sources])
         stored = sum(r.stored for r in results)
         if self._is_healthy(results):
             self._store.set_last_collect_at(now.isoformat())
@@ -153,7 +183,7 @@ class Feed:
             )
         return stored
 
-    def _is_healthy(self, results: list[_SourceResult]) -> bool:
+    def _is_healthy(self, results: list[_ContributorResult]) -> bool:
         """이 배치를 "돌았다"고 볼 수 있는가 — 적재 건수로는 못 가린다.
 
         stored == 0은 실패가 아니다. 피드에 새 기사가 없으면 dedup으로 전부 걸러져
@@ -166,24 +196,86 @@ class Feed:
         소진해 429가 났다. 그때 소스는 멀쩡하고 새 기사도 있으니 "조용한 피드"와
         구분이 안 되고, 안 가리면 고칠 수 있는 장애를 12시간 방치하게 된다.
         """
-        if not self._sources:
-            return True  # 관심사 미등록 — 할 일이 없는 것이지 장애가 아니다
-        if not any(r.fetched for r in results):
+        if not results:
+            return True  # 기여자 미등록 — 할 일이 없는 것이지 장애가 아니다
+        if not any(r.responded for r in results):
             return False
         attempted = sum(r.attempted for r in results)
         return attempted == 0 or sum(r.stored for r in results) > 0
 
-    async def _collect_source(self, source: FeedSource, now: datetime) -> _SourceResult:
+    async def _collect_callbacks(self, now: datetime) -> _ContributorResult:
+        """② 사용자가 예전에 한 말에서 재료를 만든다 (feed.md 3.4).
+
+        LLM 호출은 배치당 1회. 추출 결과가 비는 건 장애가 아니라 "꺼낼 화제가 없다"는
+        정당한 답이라 responded=True·attempted=0으로 보고한다(조용한 피드와 같은 취급).
+        """
+        assert self._recall_turns is not None
+        try:
+            # to_thread로 감싸지 않는다 — 이 클로저는 대개 MemoryStore를 닫아 잡고 있고
+            # sqlite 커넥션은 만든 스레드에 묶여 있다(워커에서 쓰면 ProgrammingError).
+            # rss의 fetch와 정반대 경우다: 저건 진짜 블로킹 HTTP고 DB를 안 건드리지만,
+            # 이건 작은 SELECT 하나라 루프 스레드에서 그냥 하는 게 맞다.
+            turns = self._recall_turns()
+        except Exception:
+            log.warning("최근 대화를 못 읽어 콜백을 건너뛴다", exc_info=True)
+            return _ContributorResult(responded=False, attempted=0, stored=0)
+
+        # 나비 자기 말에서 화제를 뽑아 되물으면 세계관이 깨진다 — 사용자 턴만 센다.
+        # 필터를 주입 클로저에 두면 배선처마다 복제되고 테스트가 안 되므로 여기가 주인.
+        user_turns = [t for t in turns if t.role == "user"]
+        if len(user_turns) < _MIN_TURNS_FOR_EXTRACT:
+            return _ContributorResult(responded=True, attempted=0, stored=0)  # LLM 미호출
+
+        try:
+            pairs = await extract_callbacks(
+                self._summarizer, self._model, turns, now, self._max_callbacks
+            )
+        except Exception:
+            log.warning("콜백 추출 실패", exc_info=True)
+            return _ContributorResult(responded=True, attempted=1, stored=0)  # 장애로 본다
+
+        bucket = int(now.timestamp() // self._callback_dedup_window_s)
+        expires_at = (now + self._callback_ttl).isoformat()
+        stored = 0
+        attempted = 0
+        for label, summary in pairs:
+            if not _is_safe(source="memory", topic_key=label, text=summary):
+                continue
+            key = _dedup_key("memory", label, f"win:{bucket}")
+            if self._store.candidate_exists(key):
+                continue  # 창 안에서 이미 꺼낸 화제 — 정상이지 장애가 아니다
+            attempted += 1  # dedup **후에** 센다 — 아래 주석 참고
+            inserted = self._store.insert_candidate(
+                source="memory",
+                topic_key=label,
+                summary=summary,
+                dedup_key=key,
+                fetched_at=now.isoformat(),
+                published_at=None,  # 발행 개념이 없다 → 정렬은 fetched_at 폴백(뉴스보다 앞)
+                expires_at=expires_at,
+            )
+            if inserted is not None:
+                stored += 1
+        # attempted를 dedup 뒤에 세는 이유: 같은 화제가 창 내내 걸리는 건 **정상**인데,
+        # 앞에서 세면 attempted>0·stored==0이 돼 _is_healthy가 장애로 오판하고 12h 간격이
+        # 30분 백오프로 무너진다. rss가 candidate_exists를 요약 전에 거는 것과 같은 이유다.
+        return _ContributorResult(responded=True, attempted=attempted, stored=stored)
+
+    async def _collect_source(self, source: FeedSource, now: datetime) -> _ContributorResult:
         try:
             items = await asyncio.to_thread(source.fetch)
         except Exception:
             # 어댑터가 이미 삼키지만(계약) 이중 방어 — 한 소스가 배치를 죽이지 않는다.
             log.warning("소스 수집 실패, 건너뛴다: %s", source.topic_key, exc_info=True)
-            return _SourceResult(fetched=False, attempted=0, stored=0)
+            return _ContributorResult(responded=False, attempted=0, stored=0)
 
         pending: list[tuple[RawItem, str]] = []
         for item in items:
-            if not _is_safe(item):
+            if not _is_safe(
+                source="rss",
+                topic_key=source.topic_key,
+                text=f"{item.title}\n{item.summary}",
+            ):
                 continue
             key = _dedup_key("rss", source.topic_key, item.identity)
             if self._store.candidate_exists(key):
@@ -215,7 +307,7 @@ class Feed:
             )
             if inserted is not None:
                 stored += 1
-        return _SourceResult(fetched=True, attempted=len(pending), stored=stored)
+        return _ContributorResult(responded=True, attempted=len(pending), stored=stored)
 
     def _expires_at(self, published: datetime | None, now: datetime) -> str:
         """TTL 기준은 발행 시각과 수집 시각 중 **이른 쪽**.

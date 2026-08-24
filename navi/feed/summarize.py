@@ -12,9 +12,11 @@ from __future__ import annotations
 import logging
 import re
 
+from datetime import datetime
+
 from navi.brain.base import BrainAdapter
 from navi.feed.base import RawItem
-from navi.models import LlmRequest, Message
+from navi.models import LlmRequest, Message, Turn
 
 log = logging.getLogger(__name__)
 
@@ -68,15 +70,18 @@ def clean_summary(text: str) -> str:
 
 
 async def drain(brain: BrainAdapter, request: LlmRequest) -> str:
-    """스트림을 끝까지 소진하고 확정 전문을 돌려준다.
+    """스트림을 끝까지 소진하고 **정제하지 않은** 확정 전문을 돌려준다.
 
     BrainAdapter 계약상 last_result는 소진 후에만 유효하다(brain/base.py). 요약은
     스트리밍이 필요 없지만 어댑터에 1회성 호출 경로가 없어 이 관용구를 쓴다.
+
+    정제(clean_summary)는 호출부 몫이다. 예전엔 여기서 몰래 걸었는데, 그러면 줄 단위
+    구조를 가진 응답(콜백 추출)이 파싱 전에 공백으로 뭉개진다. 이름값대로 전문만 준다.
     """
     async for _ in brain.generate_stream(request):
         pass
     result = brain.last_result
-    return clean_summary(result.full_text) if result else ""
+    return result.full_text if result else ""
 
 
 async def summarize_item(brain: BrainAdapter, model: str, item: RawItem) -> str:
@@ -86,4 +91,114 @@ async def summarize_item(brain: BrainAdapter, model: str, item: RawItem) -> str:
         messages=[Message(role="user", text=f"{item.title}\n{item.summary}".strip())],
         model=model,
     )
-    return await drain(brain, request)
+    return clean_summary(await drain(brain, request))
+
+
+# ─── ② 대화 콜백 추출 (feed.md 3.4) ──────────────────────────
+
+# 재료는 **중립 진술**이지 완성된 되물음이 아니다. feed.md 3.4는 원래 "되물음 문장"이라고
+# 썼는데 같은 문서 3.3("중립 시점으로, 청자를 지칭하지 말 것")과 충돌했고, 3.3이
+# turn_assembly.md 4.1 실측을 근거로 든 쪽이라 그걸 따랐다(2026.08.24 확정).
+# 완성된 되물음은 반말·종결어미가 재료에 박혀 존댓말 카드로 갈아끼울 때 카드와 싸운다 —
+# 수집은 배치라 어느 카드가 이 재료로 말할지 그 시점엔 모른다.
+# 대신 규칙 ⑤(미결 여부)가 되물음의 *근거*를 남긴다. 문장 형태는 두뇌가 만든다.
+CALLBACK_SYSTEM = (
+    "너는 사용자의 최근 대화에서 '나중에 다시 물어볼 만한 화제'를 뽑는 추출기다. "
+    "여러 번 나왔거나 결론이 나지 않은 화제를 최대 2개 고른다. 규칙: "
+    "①한 줄에 하나씩 `[topic:라벨] 문장` 형식으로만 쓴다. 그 밖의 말은 쓰지 않는다. "
+    "②라벨은 화제를 가리키는 짧은 명사 하나(10자 이내). "
+    "③문장은 사용자를 '사용자'라고 3인칭으로 부르고, 사용자가 무슨 말을 했는지 사실만 적는다. "
+    "④청자를 지칭하지 않는다('너', '네가' 금지). 질문·인사·말투를 쓰지 않는다. "
+    "⑤결론이 났는지 아직 안 났는지가 드러나면 함께 적는다. "
+    "⑥한국어로 쓴다. "
+    "⑦뽑을 만한 화제가 없으면 아무것도 쓰지 않는다."
+)
+
+_TOPIC_RE = re.compile(r"^\s*\[topic:\s*([^\]\n]{1,20})\s*\]\s*(\S.*)$", re.MULTILINE)
+_MAX_TURN_CHARS = 200  # 붙여넣기 한 덩어리가 프롬프트를 삼키는 걸 막는다
+
+# 라벨 드리프트 흡수용 접미 목록. LLM이 같은 화제를 "이직"과 "이직 고민"으로 번갈아 부르면
+# dedup이 뚫려 같은 얘기를 반복해서 되묻는다. 형태소 분석이 아니라 짧은 목록이라
+# feed.md 5의 비목표(임베딩·유사도 병합)를 넘지 않는다.
+_LABEL_SUFFIXES = ("고민", "이야기", "얘기", "문제", "관련", "근황", "계획")
+
+
+def normalize_topic_label(label: str) -> str:
+    """dedup 축이 될 라벨을 정규화한다 — 저장되는 topic_key도 이 값이다.
+
+    한계: "커리어"와 "이직"처럼 어휘가 아예 다른 드리프트는 막지 못한다. 그 대가는 12시간에
+    후보 1건 추가이고 max_callbacks 상한이 감싼다. 의미 기반 병합은 D6(임베딩) 이후.
+    """
+    normalized = _WHITESPACE.sub("", label).casefold()
+    for suffix in _LABEL_SUFFIXES:
+        if normalized.endswith(suffix) and len(normalized) - len(suffix) >= 2:
+            normalized = normalized[: -len(suffix)]
+            break  # 한 겹만 — "고민이야기" 같은 중첩까지 쫓지 않는다
+    return normalized
+
+
+def parse_callbacks(text: str, max_callbacks: int) -> list[tuple[str, str]]:
+    """`[topic:라벨] 문장` 줄들을 (정규화 라벨, 문장) 쌍으로. 못 읽는 줄은 버린다.
+
+    JSON이 아니라 줄 태그인 이유는 peel_mood(mood.py)의 선례이기도 하지만, 부분 실패가
+    국소적이기 때문이다 — 모델이 앞에 "아래와 같이 정리했습니다:"를 붙이면 그 줄만 매치가
+    안 돼 무시된다. JSON이면 같은 상황에서 전체 파싱이 터진다.
+
+    파싱 실패는 예외가 아니라 폴백이다(빈 리스트 → ② 스킵).
+    """
+    fence = _FENCE.match(text.strip())  # 통째로 코드펜스에 감싸 오는 경우
+    if fence:
+        text = fence.group(1)
+
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw_label, raw_summary in _TOPIC_RE.findall(text):
+        label = normalize_topic_label(raw_label)
+        summary = clean_summary(raw_summary)  # 줄마다 — 통짜로 걸면 줄 구조가 뭉개진다
+        if not label or not summary or label in seen:
+            continue
+        seen.add(label)
+        pairs.append((label, summary))
+        if len(pairs) >= max_callbacks:
+            break
+    return pairs
+
+
+def _relative_day(then: datetime, now: datetime) -> str:
+    """결정론 상대 날짜 — 이게 있어야 요약에 '지난주에' 같은 시점이 들어간다."""
+    days = (now.date() - then.date()).days
+    if days <= 0:
+        return "오늘"
+    if days == 1:
+        return "어제"
+    if days < 7:
+        return f"{days}일 전"
+    if days < 30:
+        return f"{days // 7}주 전"
+    return f"{days // 30}개월 전"
+
+
+def build_callback_prompt(turns: list[Turn], now: datetime) -> str:
+    """사용자 턴만 시간순으로, 줄마다 상대 날짜를 붙여 한 덩어리로."""
+    lines = [
+        f"({_relative_day(t.created_at, now)}) {t.text[:_MAX_TURN_CHARS]}"
+        for t in turns
+        if t.role == "user"
+    ]
+    return "\n".join(lines)
+
+
+async def extract_callbacks(
+    brain: BrainAdapter, model: str, turns: list[Turn], now: datetime, max_callbacks: int
+) -> list[tuple[str, str]]:
+    """최근 턴 → (라벨, 중립 진술) 쌍 몇 개. LLM 호출은 배치당 1회.
+
+    규칙 기반(형태소 빈도) 대신 LLM인 이유는 한국어 형태소 분석기 의존성 부담이고,
+    추출은 "무엇을 말할까"라 원칙상 LLM 허용 구간이다(feed.md 3.4).
+    """
+    request = LlmRequest(
+        system=CALLBACK_SYSTEM,
+        messages=[Message(role="user", text=build_callback_prompt(turns, now))],
+        model=model,
+    )
+    return parse_callbacks(await drain(brain, request), max_callbacks)
