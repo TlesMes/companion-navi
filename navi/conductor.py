@@ -19,10 +19,32 @@ log = logging.getLogger(__name__)
 # 선제 발화 프레이밍 — 서술형 소재가 "사용자가 한 말"로 오해되지 않게, 트리거를 감싼다
 # (turn_assembly.md §2). 태그가 아니라 자기설명형 자연어라 시스템 프롬프트가 규약을 몰라도
 # 성립한다. 문구는 튜닝 대상(값은 배선용, 실 재료 후 A/B).
+#
+# "출처를 지어내지 마"가 들어간 건 실측 때문이다(turn_assembly.md §4.1 ①) — 프레이밍이
+# 출처를 안 주니 모델이 빈칸을 "어제 뉴스에서 봤는데"로 메웠고, 나비는 카드상 집 밖에
+# 못 나가는 정령이라 세계관 위반이다. 카드 background가 "바깥 이야기가 흘러들어오되
+# 어디서 왔는지는 모른다"로 **능력**을 세우고, 이 줄이 **이번 건**을 통제한다. 층이 달라
+# 서로를 대체하지 못한다(2026.08.25 결정 ⓒ).
 _PROACTIVE_FRAME = (
     "(사용자는 지금 아무 말도 안 했어. 아래 소재로 네가 먼저 말을 꺼내줘 — "
-    "사용자가 알려준 게 아니야. 짧게, 되묻지 말고: {trigger})"
+    "사용자가 알려준 게 아니라 집 안에 흘러든 이야기로 알게 된 거야. "
+    "어디서 봤다거나 들었다고 출처를 지어내지 마. 짧게, 되묻지 말고: {trigger})"
 )
+
+# 대화 콜백은 소재의 출처가 **사용자 자신**이라 위 프레임을 그대로 쓸 수 없다.
+# 두 군데가 정반대다: ①"사용자가 알려준 게 아니야"는 여기선 거짓이고 ②뉴스는 되묻지
+# 말아야 하지만 콜백은 되묻는 것이 목적이다.
+_CALLBACK_FRAME = (
+    "(사용자는 지금 아무 말도 안 했어. 아래는 사용자가 전에 한 말에서 나온 거야 — "
+    "그 뒤가 어떻게 됐는지 궁금해서 네가 먼저 물어보는 거고, "
+    "새로 알게 된 소식이 아니야. 짧게 한두 문장으로: {trigger})"
+)
+
+# turn_assembly.md §3.3의 "enum + 전략맵". 조각이 더 늘면 Builder로 승격한다.
+_FRAMES = {
+    TurnKind.PROACTIVE: _PROACTIVE_FRAME,
+    TurnKind.PROACTIVE_CALLBACK: _CALLBACK_FRAME,
+}
 
 
 class Conductor:
@@ -74,10 +96,11 @@ class Conductor:
     def _frame(kind: TurnKind, trigger_text: str) -> list[Message]:
         """트리거를 kind에 맞는 tail 메시지로 조립한다 (turn_assembly.md §3.1).
 
-        REACTIVE는 진짜 사용자 발화라 그대로, PROACTIVE는 나비에게 주어진 소재라
-        프레이밍으로 감싼다. 시스템 프롬프트(카드 코어)는 두 경우 모두 무변경 — 차이는
-        여기 tail에만 둬 캐시 prefix를 안 쪼갠다.
+        REACTIVE는 진짜 사용자 발화라 그대로, 선제 kind는 나비에게 주어진 소재라
+        프레이밍으로 감싼다. 시스템 프롬프트(카드 코어)는 **모든 kind에서 무변경** —
+        차이는 여기 tail에만 둬 캐시 prefix를 안 쪼갠다.
         """
-        if kind is TurnKind.PROACTIVE:
-            return [Message(role="user", text=_PROACTIVE_FRAME.format(trigger=trigger_text))]
-        return [Message(role="user", text=trigger_text)]
+        frame = _FRAMES.get(kind)
+        if frame is None:  # REACTIVE — 진짜 사용자 발화라 감싸지 않는다
+            return [Message(role="user", text=trigger_text)]
+        return [Message(role="user", text=frame.format(trigger=trigger_text))]

@@ -119,18 +119,59 @@ def test_proactive_kind_wraps_trigger(tmp_path):
     assert "먼저" in last.text  # "네가 먼저 말을 꺼내줘" 지시
 
 
-def test_kind_does_not_change_system(tmp_path):
-    """이 PR의 핵심 불변식 — 두 kind의 system(카드 코어)이 바이트 단위로 동일(캐시 prefix 불변)."""
+def test_proactive_frame_forbids_inventing_a_source(tmp_path):
+    """실측(turn_assembly §4.1 ①)에서 두뇌가 "어제 뉴스에서 봤는데"로 빈칸을 메웠다.
+
+    나비는 카드상 집 밖에 못 나가는 정령이라 세계관 위반이다. 프레임이 출처를 주고
+    지어내기를 금지한다 — 카드의 "흘러들어오되 어디서 왔는진 모른다"와 짝이다.
+    """
     config = make_config(tmp_path)
     conductor, _store, uid = make_conductor(config)
 
-    reactive = conductor.build_request(
-        "x", user_id=uid, session_id="s", kind=TurnKind.REACTIVE
+    request = conductor.build_request(
+        "○○팀이 이겼다", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
     )
-    proactive = conductor.build_request(
-        "x", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
-    )
-    assert reactive.system == proactive.system
+    text = request.messages[-1].text
+    assert "흘러든" in text  # 어떻게 알게 됐는지를 준다
+    assert "지어내지" in text  # 출처 작화 금지
+
+
+def test_callback_kind_frames_material_as_the_users_own_words(tmp_path):
+    """콜백은 뉴스 프레임을 그대로 쓸 수 없다 — 두 군데가 정반대다.
+
+    ①"사용자가 알려준 게 아니야"는 콜백에선 거짓이고 ②뉴스는 되묻지 말아야 하지만
+    콜백은 되묻는 것이 목적이다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    news = conductor.build_request(
+        "소재", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    ).messages[-1].text
+    callback = conductor.build_request(
+        "사용자가 이직을 고민한다고 말했다",
+        user_id=uid,
+        session_id="s",
+        kind=TurnKind.PROACTIVE_CALLBACK,
+    ).messages[-1].text
+
+    assert callback != news
+    assert "사용자가 이직을 고민한다고 말했다" in callback  # 소재는 그대로 실린다
+    assert "전에 한 말" in callback  # 출처가 사용자 자신임을 밝힌다
+    assert "되묻지 말고" not in callback  # 콜백은 되묻는 게 목적
+    assert "되묻지 말고" in news  # 뉴스는 반대
+
+
+def test_kind_does_not_change_system(tmp_path):
+    """핵심 불변식 — 모든 kind의 system(카드 코어)이 바이트 단위로 동일(캐시 prefix 불변)."""
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    systems = {
+        conductor.build_request("x", user_id=uid, session_id="s", kind=kind).system
+        for kind in TurnKind
+    }
+    assert len(systems) == 1
 
 
 def test_set_card_swaps_persona_from_next_request(tmp_path):
