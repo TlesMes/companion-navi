@@ -17,7 +17,12 @@ class TurnKind(Enum):
     """
 
     REACTIVE = "reactive"    # 사용자 발화에 답한다 (trigger = 진짜 발화)
-    PROACTIVE = "proactive"  # 나비가 먼저 건다 (trigger = 나비에게 주어진 소재)
+    PROACTIVE = "proactive"  # 나비가 먼저 건다 (trigger = 밖에서 흘러든 소식)
+    # 나비가 먼저 걸되 소재가 **사용자 자신이 한 말**이다 (feed.md source='memory').
+    # PROACTIVE와 갈라야 하는 이유: 저쪽 프레이밍은 "사용자가 알려준 게 아니야"라고
+    # 말하는데 콜백은 사용자가 문자 그대로 알려준 것이라 사실이 어긋난다. 되묻기 여부도
+    # 정반대다 — 뉴스는 되묻지 말아야 하고 콜백은 되묻는 게 목적이다.
+    PROACTIVE_CALLBACK = "proactive_callback"
 
 
 @dataclass(frozen=True)

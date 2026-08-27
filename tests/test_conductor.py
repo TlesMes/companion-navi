@@ -119,18 +119,76 @@ def test_proactive_kind_wraps_trigger(tmp_path):
     assert "먼저" in last.text  # "네가 먼저 말을 꺼내줘" 지시
 
 
-def test_kind_does_not_change_system(tmp_path):
-    """이 PR의 핵심 불변식 — 두 kind의 system(카드 코어)이 바이트 단위로 동일(캐시 prefix 불변)."""
+def test_proactive_frame_forbids_inventing_a_source(tmp_path):
+    """실측(turn_assembly §4.1 ①)에서 두뇌가 "어제 뉴스에서 봤는데"로 빈칸을 메웠다.
+
+    프레임은 **금지만** 말한다. "어떻게 알게 됐는가"는 카드 소유다(아래 테스트 참고).
+    """
     config = make_config(tmp_path)
     conductor, _store, uid = make_conductor(config)
 
-    reactive = conductor.build_request(
-        "x", user_id=uid, session_id="s", kind=TurnKind.REACTIVE
+    request = conductor.build_request(
+        "○○팀이 이겼다", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
     )
-    proactive = conductor.build_request(
-        "x", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
-    )
-    assert reactive.system == proactive.system
+    text = request.messages[-1].text
+    assert "지어내지" in text  # 없는 출처를 만들지 말 것
+    assert "굳이 말하지" in text  # 자발적으로 밝히지도 말 것(어색하고 발화만 길어진다)
+
+
+def test_proactive_frame_carries_no_persona_worldview(tmp_path):
+    """프레임은 모든 카드가 공유하는 코드라 특정 세계관을 넣으면 안 된다.
+
+    회귀 방지: 한때 "집 안에 흘러든 이야기로 알게 된 거야"라고 나비의 설정을 박아,
+    집과 무관한 카드(example_jp 등)가 남의 세계관을 뒤집어썼다. 경로는 카드 소유다 —
+    카드가 안 주면 출처 없이 사실만 말하게 되고 그건 정상 폴백이다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    text = conductor.build_request(
+        "소재", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    ).messages[-1].text
+
+    for worldview in ("집 안", "흘러든", "스피커", "정령"):
+        assert worldview not in text
+
+
+def test_callback_kind_frames_material_as_the_users_own_words(tmp_path):
+    """콜백은 뉴스 프레임을 그대로 쓸 수 없다 — 두 군데가 정반대다.
+
+    ①"사용자가 알려준 게 아니야"는 콜백에선 거짓이고 ②뉴스는 되묻지 말아야 하지만
+    콜백은 되묻는 것이 목적이다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    news = conductor.build_request(
+        "소재", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    ).messages[-1].text
+    callback = conductor.build_request(
+        "사용자가 이직을 고민한다고 말했다",
+        user_id=uid,
+        session_id="s",
+        kind=TurnKind.PROACTIVE_CALLBACK,
+    ).messages[-1].text
+
+    assert callback != news
+    assert "사용자가 이직을 고민한다고 말했다" in callback  # 소재는 그대로 실린다
+    assert "전에 한 말" in callback  # 출처가 사용자 자신임을 밝힌다
+    assert "되묻지 말고" not in callback  # 콜백은 되묻는 게 목적
+    assert "되묻지 말고" in news  # 뉴스는 반대
+
+
+def test_kind_does_not_change_system(tmp_path):
+    """핵심 불변식 — 모든 kind의 system(카드 코어)이 바이트 단위로 동일(캐시 prefix 불변)."""
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    systems = {
+        conductor.build_request("x", user_id=uid, session_id="s", kind=kind).system
+        for kind in TurnKind
+    }
+    assert len(systems) == 1
 
 
 def test_set_card_swaps_persona_from_next_request(tmp_path):
