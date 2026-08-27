@@ -34,7 +34,21 @@ class BrainConfig:
     @property
     def model(self) -> str:
         """현재 vendor에 맞는 모델 — 교체 시 vendor 한 줄만 바꾸면 되게."""
-        return self.models[self.vendor]
+        return self.model_for(self.vendor)
+
+    def model_for(self, vendor: str) -> str:
+        """임의 vendor의 모델 id — 대화용이 아닌 두뇌(피드 요약기 등)가 쓴다.
+
+        models 맵을 호출부가 직접 인덱싱하면 오타 시 KeyError 한 줄만 남는다.
+        여기서 잡아 무엇이 빠졌는지 알려준다.
+        """
+        try:
+            return self.models[vendor]
+        except KeyError:
+            raise ValueError(
+                f"brain.models에 {vendor!r} 항목이 없습니다 — config.yaml의 brain.models에 "
+                f"추가하세요 (현재: {', '.join(sorted(self.models))})"
+            ) from None
 
 
 @dataclass(frozen=True)
