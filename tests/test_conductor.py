@@ -255,6 +255,42 @@ def test_create_brain_echo_and_missing_key_error(tmp_path):
         assert "GEMINI_API_KEY" in str(e)
 
 
+def test_create_brain_vendor_argument_overrides_config(tmp_path):
+    """대화가 아닌 용도(피드 요약기)가 다른 벤더를 고를 수 있어야 한다 — D13/feed.md 3.3.
+
+    키 부재 에러가 팩토리 한 곳에 남아 있는 게 요점이라, 호출부가 어댑터 클래스를
+    직접 생성하게 두지 않는다.
+    """
+    config = make_config(tmp_path, "gemini")  # 대화용은 gemini(키 없음)
+
+    assert isinstance(create_brain(config, vendor="echo"), EchoBrain)  # 요약기만 echo
+    try:
+        create_brain(config, vendor="gemini")
+        raise AssertionError("키 없이 생성되면 안 된다")
+    except RuntimeError as e:
+        assert "GEMINI_API_KEY" in str(e)  # 에러 메시지는 그대로 팩토리 소유
+
+
+def test_create_brain_rejects_unknown_vendor(tmp_path):
+    try:
+        create_brain(make_config(tmp_path, "echo"), vendor="mystery")
+        raise AssertionError("알 수 없는 벤더가 통과하면 안 된다")
+    except ValueError as e:
+        assert "mystery" in str(e)
+
+
+def test_model_for_reports_missing_entry(tmp_path):
+    """요약기 벤더를 models 맵에 안 넣으면 KeyError 한 줄 대신 뭘 빠뜨렸는지 알려준다."""
+    config = make_config(tmp_path, "echo")
+
+    assert config.brain.model_for("echo") == config.brain.model
+    try:
+        config.brain.model_for("mystery")
+        raise AssertionError("없는 항목이 통과하면 안 된다")
+    except ValueError as e:
+        assert "brain.models" in str(e)
+
+
 async def test_e2e_with_echo_brain(tmp_path):
     """입력→조립→스트림→기억 적재까지 전체 경로 (키·네트워크 없이)."""
     config = make_config(tmp_path)

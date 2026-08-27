@@ -16,7 +16,7 @@ import pytest
 from navi.bus import Event, EventBus, EventKind
 from navi.daemon import DaemonCore, acquire_pidfile, cmd_stop, release_pidfile
 from navi.ear import FakeWakeWord, ListenSession
-from navi.models import AudioChunk
+from navi.models import AudioChunk, TurnKind
 
 SR = 16000
 FRAME_SAMPLES = 512
@@ -331,8 +331,8 @@ def _always_rng() -> random.Random:
 def _proactive_core(clock, bus, *, inits, events, cap=8, window=300.0, **kw):
     machine = ModeMachine(WINDOW, 30, now=clock)
 
-    async def run_initiation(topic: str) -> None:
-        inits.append(topic)
+    async def run_initiation(topic: str, kind=TurnKind.PROACTIVE) -> None:
+        inits.append((topic, kind))
 
     core = DaemonCore(
         bus=bus,
@@ -373,8 +373,10 @@ async def test_proactive_initiates_when_active_and_logs():
 
     bus.publish(Event(EventKind.TICK, time.monotonic()))
     await _wait(lambda: len(inits) == 1)
-    assert isinstance(inits[0], str) and inits[0]  # topic_hint 문자열
-    assert events[0] == ("initiated", "active", inits[0])
+    topic, kind = inits[0]
+    assert isinstance(topic, str) and topic  # topic_hint 문자열
+    assert kind is TurnKind.PROACTIVE  # 피드 미주입이면 뉴스 kind가 기본
+    assert events[0] == ("initiated", "active", topic)
     assert core.state.turns_count == 1
     await _drain(bus, task)
 
@@ -505,4 +507,106 @@ async def test_pending_resolves_as_overrode_on_gate_command():
     await _wait(lambda: core.state.proactive_mode == "snooze")
     assert ("user_overrode", "active", None) in events
     assert turns == []  # 결정론 게이트 — LLM 미경유
+    await _drain(bus, task)
+
+
+# ── D13: 관심사 피드 배선 (PR3) ──
+
+from navi.brain.echo import EchoBrain  # noqa: E402
+from navi.feed import Feed  # noqa: E402
+from navi.memory import MemoryStore  # noqa: E402
+
+
+def _feed_with(tmp_path, *, source: str, summary: str):
+    """후보 하나가 이미 적재된 진짜 Feed — 수집이 아니라 **인출 경로**를 본다."""
+    store = MemoryStore(tmp_path / "d.db")
+    store.insert_candidate(
+        source=source,
+        topic_key="주제",
+        summary=summary,
+        dedup_key=f"{source}:주제:x",
+        fetched_at="2026-07-12T00:00:00+00:00",
+        expires_at="2099-01-01T00:00:00+00:00",
+    )
+    return store, Feed(store=store, sources=[], summarizer=EchoBrain(), model="m")
+
+
+@pytest.mark.asyncio
+async def test_feed_candidate_becomes_the_trigger_and_is_marked_used(tmp_path):
+    """피드 후보가 고정 힌트를 이기고 트리거가 되며, 쓴 뒤엔 다시 안 나온다.
+
+    ★ 데몬의 naive 시계(wall_now=datetime.now)가 Feed로 흘러드는 **첫 실행 경로**다 —
+    리뷰 ②에서 고친 _utc 경계가 유닛이 아니라 실제 배선에서 도는지 여기서 확인한다.
+    """
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))  # naive — 데몬 기본값과 같은 형태
+    inits: list = []
+    events: list = []
+    store, feed = _feed_with(tmp_path, source="rss", summary="○○팀이 3대1로 이겼다")
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events, feed=feed)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: len(inits) == 1)
+
+    topic, kind = inits[0]
+    assert topic == "○○팀이 3대1로 이겼다"  # 고정 힌트가 아니라 후보가 채택됐다
+    assert kind is TurnKind.PROACTIVE
+    assert store.fresh_candidates(10, "2026-07-12T10:00:00+00:00") == []  # used 처리됨
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_memory_candidate_selects_callback_kind(tmp_path):
+    """콜백 후보는 kind가 갈린다 — 뉴스와 프레이밍이 정반대라 여기서 안 가르면 안 된다."""
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    _store, feed = _feed_with(
+        tmp_path, source="memory", summary="사용자가 이직을 고민한다고 말했다"
+    )
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events, feed=feed)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: len(inits) == 1)
+
+    assert inits[0][1] is TurnKind.PROACTIVE_CALLBACK
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_collect_does_not_block_the_dispatcher(tmp_path):
+    """수집은 백그라운드로 — 인라인 await면 그동안 TICK·UTTERANCE가 통째로 멎는다.
+
+    collect는 최악 (N피드 HTTP + M아이템 LLM)이라 수십 초짜리다.
+    """
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    store, feed = _feed_with(tmp_path, source="rss", summary="소재")
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_collect(now):
+        started.set()
+        await release.wait()  # 놔줄 때까지 안 끝난다
+        return True
+
+    feed.maybe_collect = slow_collect  # type: ignore[method-assign]
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events, feed=feed)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(started.is_set)
+    # 수집이 멈춰 있는 동안에도 같은 tick의 발화 판정이 끝났다 = 디스패치가 안 막혔다
+    await _wait(lambda: len(inits) == 1)
+
+    release.set()
     await _drain(bus, task)

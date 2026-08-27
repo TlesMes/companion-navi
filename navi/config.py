@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,21 @@ class BrainConfig:
     @property
     def model(self) -> str:
         """현재 vendor에 맞는 모델 — 교체 시 vendor 한 줄만 바꾸면 되게."""
-        return self.models[self.vendor]
+        return self.model_for(self.vendor)
+
+    def model_for(self, vendor: str) -> str:
+        """임의 vendor의 모델 id — 대화용이 아닌 두뇌(피드 요약기 등)가 쓴다.
+
+        models 맵을 호출부가 직접 인덱싱하면 오타 시 KeyError 한 줄만 남는다.
+        여기서 잡아 무엇이 빠졌는지 알려준다.
+        """
+        try:
+            return self.models[vendor]
+        except KeyError:
+            raise ValueError(
+                f"brain.models에 {vendor!r} 항목이 없습니다 — config.yaml의 brain.models에 "
+                f"추가하세요 (현재: {', '.join(sorted(self.models))})"
+            ) from None
 
 
 @dataclass(frozen=True)
@@ -137,6 +151,40 @@ class ControlConfig:
 
 
 @dataclass(frozen=True)
+class InterestConfig:
+    """관심사 하나 = RSS 피드 하나 (D13/feed.md 3.6)."""
+
+    topic_key: str
+    feed_url: str
+
+
+@dataclass(frozen=True)
+class FeedConfig:
+    """관심사 피드(D13) — 나비가 먼저 말 걸 재료 수집. 섹션이 없어도 기본값으로 뜬다.
+
+    interests가 비고 auto_extract가 꺼져 있으면 기여자가 없어 수집이 no-op이다 —
+    장애가 아니라 "할 일 없음"으로 취급된다(collect.py _is_healthy).
+
+    값은 전부 튜닝 대상이다. 개인 피드 URL은 config.local.yaml이 리스트째 덮는다
+    (리스트는 병합이 아니라 교체 — config.py의 _deep_merge 주석).
+    """
+
+    enabled: bool
+    collect_interval_s: float
+    retry_backoff_s: float
+    fresh_topics_k: int
+    rss_ttl_hours: float
+    max_items_per_source: int
+    summarizer_vendor: str  # 대화용 두뇌와 별개 — 요약은 저가 티어로 (feed.md 3.3)
+    interests: tuple[InterestConfig, ...]
+    auto_extract: bool  # ② 대화 콜백 on/off
+    recent_turns_for_extract: int
+    max_callbacks: int
+    callback_ttl_hours: float
+    callback_dedup_window_s: float
+
+
+@dataclass(frozen=True)
 class Config:
     # 리포 루트 — persona 카드 voice 섹션 등 런타임에 상대경로를 풀 때의 기준.
     # gptsovits 웜업이 os.chdir를 하므로 "그때 가서 CWD 기준"은 성립하지 않는다.
@@ -160,6 +208,10 @@ class Config:
     # 마이크 게인·방 소음을 타는 머신 전용값이라 config.local.yaml이 제자리다(E6-3).
     # 기본값을 둔 건 필드 추가로 기존 생성부가 안 깨지게 하려는 것.
     energy_vad_threshold: float = 0.0
+    # 관심사 피드(D13). 기본값을 둔 건 energy_vad_threshold와 같은 이유 —
+    # 필드 추가로 기존 Config 생성부(테스트·스크립트)가 안 깨지게 한다.
+    # 기본은 "섹션 없는 config.yaml"과 동일하다(_load_feed({})).
+    feed: FeedConfig = field(default_factory=lambda: _load_feed({}))
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +340,29 @@ def _load_control(raw: dict[str, Any]) -> ControlConfig:
     )
 
 
+def _load_feed(raw: dict[str, Any]) -> FeedConfig:
+    f = raw.get("feed", {})
+    interests = tuple(
+        InterestConfig(topic_key=str(i["topic_key"]), feed_url=str(i["feed_url"]))
+        for i in (f.get("interests") or ())
+    )
+    return FeedConfig(
+        enabled=bool(f.get("enabled", True)),
+        collect_interval_s=float(f.get("collect_interval_s", 43200)),
+        retry_backoff_s=float(f.get("retry_backoff_s", 1800)),
+        fresh_topics_k=int(f.get("fresh_topics_k", 3)),
+        rss_ttl_hours=float(f.get("rss_ttl_hours", 96)),
+        max_items_per_source=int(f.get("max_items_per_source", 5)),
+        summarizer_vendor=str(f.get("summarizer", {}).get("vendor", "echo")),
+        interests=interests,
+        auto_extract=bool(f.get("auto_extract", True)),
+        recent_turns_for_extract=int(f.get("recent_turns_for_extract", 30)),
+        max_callbacks=int(f.get("max_callbacks", 2)),
+        callback_ttl_hours=float(f.get("callback_ttl_hours", 168)),
+        callback_dedup_window_s=float(f.get("callback_dedup_window_s", 604800)),
+    )
+
+
 def _load_mode(raw: dict[str, Any]) -> ModeConfig:
     m = raw.get("mode", {})
     window = m.get("sleep_window", {})
@@ -350,6 +425,7 @@ def load_config(
         mode=_load_mode(raw),
         proactive=_load_proactive(raw),
         control=_load_control(raw),
+        feed=_load_feed(raw),
         db_path=root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
         persona_card_path=card_path,
