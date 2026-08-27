@@ -122,8 +122,7 @@ def test_proactive_kind_wraps_trigger(tmp_path):
 def test_proactive_frame_forbids_inventing_a_source(tmp_path):
     """실측(turn_assembly §4.1 ①)에서 두뇌가 "어제 뉴스에서 봤는데"로 빈칸을 메웠다.
 
-    나비는 카드상 집 밖에 못 나가는 정령이라 세계관 위반이다. 프레임이 출처를 주고
-    지어내기를 금지한다 — 카드의 "흘러들어오되 어디서 왔는진 모른다"와 짝이다.
+    프레임은 **금지만** 말한다. "어떻게 알게 됐는가"는 카드 소유다(아래 테스트 참고).
     """
     config = make_config(tmp_path)
     conductor, _store, uid = make_conductor(config)
@@ -131,9 +130,25 @@ def test_proactive_frame_forbids_inventing_a_source(tmp_path):
     request = conductor.build_request(
         "○○팀이 이겼다", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
     )
-    text = request.messages[-1].text
-    assert "흘러든" in text  # 어떻게 알게 됐는지를 준다
-    assert "지어내지" in text  # 출처 작화 금지
+    assert "지어내지" in request.messages[-1].text
+
+
+def test_proactive_frame_carries_no_persona_worldview(tmp_path):
+    """프레임은 모든 카드가 공유하는 코드라 특정 세계관을 넣으면 안 된다.
+
+    회귀 방지: 한때 "집 안에 흘러든 이야기로 알게 된 거야"라고 나비의 설정을 박아,
+    집과 무관한 카드(example_jp 등)가 남의 세계관을 뒤집어썼다. 경로는 카드 소유다 —
+    카드가 안 주면 출처 없이 사실만 말하게 되고 그건 정상 폴백이다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    text = conductor.build_request(
+        "소재", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    ).messages[-1].text
+
+    for worldview in ("집 안", "흘러든", "스피커", "정령"):
+        assert worldview not in text
 
 
 def test_callback_kind_frames_material_as_the_users_own_words(tmp_path):
