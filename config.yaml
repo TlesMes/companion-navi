@@ -89,6 +89,30 @@ proactive:
     evening: 1.1
     night: 0.5
 
+feed:
+  # 관심사 피드(D13) — 나비가 먼저 말 걸 "재료"를 배치로 모은다. 설계 → docs/design/feed.md.
+  # ⚠ 값은 전부 튜닝 대상이다(진행 원칙 2). 좋은 주기·개수는 interaction_log가 쌓인 뒤.
+  enabled: true
+  collect_interval_s: 43200   # 12h → 하루 1~2회. 정상 배치 간격
+  retry_backoff_s: 1800       # 30분. 배치가 **전멸**했을 때만 쓰는 짧은 재시도
+  fresh_topics_k: 3           # pick_topic에 넘길 후보 수
+  max_items_per_source: 5     # 소스당 요약 상한 — 첫 수집에 큰 피드를 만나도 LLM이 폭주 안 하게
+  rss_ttl_hours: 96           # 뉴스 후보 수명. 기준은 발행/수집 중 **이른 쪽**(낡은 기사 방지)
+  summarizer:
+    # 대화용 두뇌와 별개다 — 요약은 저가 티어면 충분하다(feed.md 3.3).
+    # echo면 요약 없이 원문이 그대로 재료가 된다(헤드리스 검증용).
+    vendor: echo
+  interests:
+    # 관심사 = RSS 피드. **개인 피드는 config.local.yaml에 적는다** — 리스트는 병합이 아니라
+    # 교체라 거기 쓰면 이 목록을 통째로 대신한다. 살아있는 피드 목록은 progress.md 운영 메모.
+    []
+  # ② 대화 콜백 — 사용자가 예전에 한 말에서 재료를 뽑는다. RSS 불요.
+  auto_extract: true
+  recent_turns_for_extract: 30
+  max_callbacks: 2              # 배치당 최대 콜백 후보 수
+  callback_ttl_hours: 168       # 7일. 없으면 3주 전 끝난 얘기를 어느 날 꺼낸다
+  callback_dedup_window_s: 604800  # 7일. 같은 화제 재적재 금지 창(TTL과 별개 손잡이)
+
 control:
   # 컨트롤 플레인(Stage 15) — 데몬 안 HTTP/WS 서버, GUI(별도 프로세스)의 관찰·제어 통로.
   # 바인딩은 127.0.0.1 고정(설정 불가) — localhost 밖 노출 없음.

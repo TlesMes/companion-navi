@@ -52,8 +52,15 @@ from navi.models import AudioChunk, TurnKind
 
 if TYPE_CHECKING:
     from navi.config import ProactiveConfig
+    from navi.feed import Feed
 
 log = logging.getLogger("navi.daemon")
+
+# 피드 후보의 출처 → 선제 발화 kind. 모르는 출처는 뉴스 취급(안전한 기본).
+_KIND_BY_SOURCE = {
+    "rss": TurnKind.PROACTIVE,
+    "memory": TurnKind.PROACTIVE_CALLBACK,
+}
 
 # 절대경로로 고정 — 임포트 시점(cwd=프로젝트, chdir 이전)에 resolve한다. gptsovits
 # warmup이 os.chdir(repo)를 하므로(gptsovits.py) 상대경로면 tick의 STOP_FILE.exists·
@@ -135,12 +142,13 @@ class DaemonCore:
         mode_machine: ModeMachine | None = None,
         persist_mode: Callable[[str, str | None], None] | None = None,
         # ── 능동성 2·3층 (Phase 3 순서 4) — 전부 주입, 미주입이면 선제 발화 비활성 ──
-        run_initiation: Callable[[str], Awaitable[None]] | None = None,
+        run_initiation: Callable[[str, TurnKind], Awaitable[None]] | None = None,
         proactive: ProactiveConfig | None = None,
         wall_now: Callable[[], datetime] = datetime.now,
         log_interaction: Callable[[str, str | None, str | None], None] | None = None,
         count_initiations_today: Callable[[], int] | None = None,
         memory_snapshot: Callable[[], list] | None = None,
+        feed: Feed | None = None,  # D13 관심사 피드 — 미주입이면 고정 힌트만 쓴다
         response_window_s: float = 300.0,
         rng: random.Random | None = None,  # 2층 hazard 주사위 — 테스트에서 seed 고정
     ) -> None:
@@ -161,6 +169,8 @@ class DaemonCore:
         self._log_interaction = log_interaction
         self._count_initiations_today = count_initiations_today
         self._memory_snapshot = memory_snapshot
+        self._feed = feed
+        self._collect_task: asyncio.Task | None = None
         self._response_window_s = response_window_s
         self._rng = rng or random.Random()
         # 마지막 상호작용 시각(벽시계) — 타이밍 2층의 기준. 기동 시각으로 시작해
@@ -224,6 +234,7 @@ class DaemonCore:
             elif event.kind == EventKind.TICK:
                 if self._machine is not None:
                     self._apply_mode(self._machine.tick())  # 시간 전이(창 진입·만료)
+                self._maybe_collect()  # D13 수집 — 시각 게이트 통과 시 백그라운드로
                 await self._maybe_initiate()  # 능동성 2·3층 — 게이트 통과 시에만
                 log.debug("tick — %s", self.state.snapshot(now=self._now))
 
@@ -276,6 +287,31 @@ class DaemonCore:
 
     # ── 능동성 2·3층 (arch 4.11 tick 배선) ──
 
+    def _maybe_collect(self) -> None:
+        """D13 수집 배치를 **백그라운드로** 띄운다. 인라인 await 금지.
+
+        collect는 (N피드 HTTP + M아이템 LLM)이라 최악 수십 초다. 여기서 기다리면 그동안
+        TICK·UTTERANCE 디스패치가 통째로 멎어 "말을 걸어도 대답이 없는" 데몬이 된다.
+        재진입은 Feed의 단일 실행 가드가 막으므로(collect.py maybe_collect) 이전 배치가
+        아직 돌고 있으면 그쪽이 즉시 False로 빠진다.
+
+        수집은 발화 판정과 독립이다 — 취침 중이어도 재료는 모아 둔다.
+        """
+        if self._feed is None:
+            return
+        if self._collect_task is not None and not self._collect_task.done():
+            return  # 아직 돌고 있다 — task를 겹쳐 만들지 않는다
+        self._collect_task = asyncio.create_task(self._run_collect(self._wall_now()))
+
+    async def _run_collect(self, now: datetime) -> None:
+        """수집 배치 하나. 예외가 task 밖으로 새면 조용히 죽으므로 여기서 삼킨다."""
+        assert self._feed is not None
+        try:
+            if await self._feed.maybe_collect(now):
+                log.info("피드 수집 배치 완료")
+        except Exception:
+            log.exception("피드 수집 실패 — 다음 tick에 다시 시도한다")
+
     async def _maybe_initiate(self) -> None:
         """TICK마다 "지금 먼저 말 걸까"를 판정하고, 그렇다면 주제→발화까지 굴린다.
 
@@ -306,18 +342,31 @@ class DaemonCore:
         ):
             return
         snapshot = self._memory_snapshot() if self._memory_snapshot is not None else None
-        topic = pick_topic(snapshot, None, time_of_day(now), [])
+        # 3층은 순수 힌트 생성기다 — 후보 인출·used 처리는 데몬이 소유한다(feed.md 3.5).
+        candidates = self._feed.get_fresh_topics(now=now) if self._feed is not None else []
+        topic = pick_topic(snapshot, None, time_of_day(now), [c.summary for c in candidates])
         if topic is None:
             return  # 3층이 걸 게 없다고 판단
+        # 채택된 게 피드 후보면 kind를 그 출처에 맞춘다. 뉴스와 콜백은 프레이밍이
+        # 정반대라(되묻지 말 것 vs 되묻는 게 목적) 여기서 갈라야 한다.
+        chosen = candidates[0] if candidates and topic == candidates[0].summary else None
+        kind = (
+            _KIND_BY_SOURCE.get(chosen.source, TurnKind.PROACTIVE)
+            if chosen is not None
+            else TurnKind.PROACTIVE
+        )
         mode_val = self._machine.current_mode().value
-        log.info("능동 발화 — %s", topic)
+        log.info("능동 발화 [%s] — %s", kind.value, topic)
         if self._log_interaction is not None:
             self._log_interaction("initiated", mode_val, topic)
         self._last_interaction_at = now
         self._pending_initiation = now
+        if chosen is not None and self._feed is not None:
+            # 발화 **직전에** 표시한다 — 실패해도 같은 후보를 무한 재시도하지 않게.
+            self._feed.mark_used(chosen.candidate_id, now)
         self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), topic))
         try:
-            await self._run_initiation(topic)
+            await self._run_initiation(topic, kind)
             self.state.turns_count += 1
         finally:
             self._bus.publish(Event(EventKind.TURN_ENDED, self._now(), topic))
@@ -457,6 +506,49 @@ def cmd_stop(path: Path = PID_FILE, stop_path: Path = STOP_FILE) -> int:
 # ── 조립부: cli.chat()의 배선을 미러링 (공통화 리팩터링은 다음 PR) ──
 
 
+def _build_feed(config, store, user_id: int):
+    """관심사 피드 조립 — 끄면 None이고, 그러면 pick_topic이 고정 힌트로 폴백한다.
+
+    요약기는 **대화용 두뇌와 다른 인스턴스**여야 한다: 어댑터 하나는 동시 요청 1건이
+    계약이라(brain/base.py) 선제 발화 도중 수집이 돌면 last_result가 경합한다.
+    벤더가 같아도 마찬가지라 create_brain을 따로 부른다.
+
+    recall_turns 클로저가 user_id·턴 수·on/off를 흡수한다 — Feed는 Config를 모른다
+    (memory_snapshot과 같은 형태라 배선 관례가 하나로 유지된다).
+    """
+    from navi.brain import create_brain
+    from navi.feed import Feed, RssSource
+
+    cfg = config.feed
+    if not cfg.enabled:
+        log.info("관심사 피드 비활성 — 선제 발화는 시간대 고정 힌트만 쓴다")
+        return None
+    sources = [RssSource(i.feed_url, i.topic_key) for i in cfg.interests]
+    recall = None
+    if cfg.auto_extract:
+        def recall() -> list:  # noqa: F811 — 조건부 정의(끄면 None)
+            return store.recall_recent_for_user(user_id, cfg.recent_turns_for_extract)
+    log.info(
+        "관심사 피드 — RSS %d개, 대화 콜백 %s, 요약기 %s",
+        len(sources), "on" if cfg.auto_extract else "off", cfg.summarizer_vendor,
+    )
+    return Feed(
+        store=store,
+        sources=sources,
+        summarizer=create_brain(config, vendor=cfg.summarizer_vendor),
+        model=config.brain.model_for(cfg.summarizer_vendor),
+        recall_turns=recall,
+        collect_interval_s=cfg.collect_interval_s,
+        retry_backoff_s=cfg.retry_backoff_s,
+        fresh_topics_k=cfg.fresh_topics_k,
+        rss_ttl_hours=cfg.rss_ttl_hours,
+        max_items_per_source=cfg.max_items_per_source,
+        max_callbacks=cfg.max_callbacks,
+        callback_ttl_hours=cfg.callback_ttl_hours,
+        callback_dedup_window_s=cfg.callback_dedup_window_s,
+    )
+
+
 async def _run(config, args) -> None:
     from navi.brain import create_brain
     from navi.conductor import Conductor
@@ -471,6 +563,7 @@ async def _run(config, args) -> None:
     # os.chdir를 하므로 지연 해석은 깨진다(persona/voice.py).
     card = CharacterCard.load(config.persona_card_path, root=config.root)
     brain = create_brain(config)
+    feed = _build_feed(config, store, user_id)
     conductor = Conductor(card=card, memory=store, config=config)
     user_id = store.ensure_user(display_name="친구")
     session_id = uuid.uuid4().hex
@@ -591,11 +684,14 @@ async def _run(config, args) -> None:
         store.log_usage("llm", result.usage)
         log.info("응답 완료 — %d자, 총 %.0fms", len(result.full_text), (time.perf_counter() - started) * 1000)
 
-    async def run_initiation(topic: str) -> None:
+    async def run_initiation(topic: str, kind: TurnKind = TurnKind.PROACTIVE) -> None:
         """능동 발화 — 나비가 먼저 건다. run_turn과 달리 사용자 발화가 없다:
 
         topic 힌트는 트리거(LLM 프롬프트)일 뿐 사용자 말이 아니므로 기억엔 나비의
         답변만 trigger_type=proactive로 남긴다(user 턴을 지어내지 않는다).
+
+        kind는 재료의 출처가 정한다 — 뉴스(PROACTIVE)와 대화 콜백(PROACTIVE_CALLBACK)은
+        프레이밍이 정반대다(conductor.py). 호출부가 candidate.source로 고른다.
         """
         print(f"\n{swap.character}> ", end="", flush=True)
 
@@ -605,7 +701,7 @@ async def _run(config, args) -> None:
         try:
             result = await pipeline.run_turn(
                 topic, user_id=user_id, session_id=session_id, echo=_echo,
-                kind=TurnKind.PROACTIVE,
+                kind=kind,
             )
             print()
         except Exception:
@@ -709,6 +805,7 @@ async def _run(config, args) -> None:
         log_interaction=lambda ev, mode, note: store.log_interaction(ev, mode, note),
         count_initiations_today=count_initiations_today,
         memory_snapshot=lambda: store.recall_recent_for_user(user_id, config.recent_turns),
+        feed=feed,
     )
 
     # 컨트롤 플레인(Stage 15) — 같은 이벤트 루프의 태스크로 기동. 예외는 삼킨다:
