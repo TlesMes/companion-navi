@@ -130,7 +130,9 @@ def test_proactive_frame_forbids_inventing_a_source(tmp_path):
     request = conductor.build_request(
         "○○팀이 이겼다", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
     )
-    assert "지어내지" in request.messages[-1].text
+    text = request.messages[-1].text
+    assert "지어내지" in text  # 없는 출처를 만들지 말 것
+    assert "굳이 말하지" in text  # 자발적으로 밝히지도 말 것(어색하고 발화만 길어진다)
 
 
 def test_proactive_frame_carries_no_persona_worldview(tmp_path):
