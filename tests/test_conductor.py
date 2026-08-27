@@ -203,6 +203,7 @@ def test_set_card_swaps_persona_from_next_request(tmp_path):
     other = tmp_path / "other.yaml"
     other.write_text(
         "character: 다른애\n"
+        "language: ko\n"
         "profiles:\n"
         "  - {name: 기본, min_intimacy: 0, background: 배경, traits: 성격,\n"
         "     example_dialogues: [{user: u, assistant: a}]}\n",

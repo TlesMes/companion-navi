@@ -773,14 +773,14 @@ async def _run(config, args) -> None:
     else:
         print("[귀 없이 상주 — tick만 돕니다. stop 커맨드나 Ctrl+C로 종료]", flush=True)
 
-    # STT 언어 = 페르소나 발화 언어(카드 gen_lang). 없으면 ko 폴백(navi 등 supertonic
-    # 한국어 카드). Whisper에 강제해 일본어 페르소나가 한국어로 오역되는 걸 막는다.
+    # STT 언어 = 페르소나 발화 언어(카드 language). Whisper에 강제해 일본어 페르소나가
+    # 한국어로 오역되는 걸 막는다. 전엔 voice.<vendor>.gen_lang을 읽고 없으면 ko로
+    # 폴백했는데, 그 필드가 gptsovits 벤더에만 있어 supertonic 카드는 **항상 폴백**이었다
+    # (한국어라 우연히 맞았을 뿐). 이제 카드가 반드시 선언하므로 폴백이 없다(E5).
     # 부팅 시점 고정 — 런타임 페르소나 교체 시 언어까지 바꾸는 건 후속(전환은 같은 언어 내).
     # --stt-lang은 이 판정을 덮는다: 페르소나 언어와 다른 언어로 말해 시험할 때(예: 일본어
     # aris에 한국어로 입력해 mood 분기를 보는 경우). mood 태깅은 입력 언어와 무관하다.
-    stt_lang = args.stt_lang or (
-        vendor_voice.gen_lang if (vendor_voice and vendor_voice.gen_lang) else "ko"
-    )
+    stt_lang = args.stt_lang or card.language
 
     async def transcribe(utt) -> str:
         print("[받아쓰는 중…]")

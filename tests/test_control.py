@@ -106,6 +106,7 @@ class _StubConductor:
 def _write_card(path, character: str, *, voice_block: str = "") -> None:
     path.write_text(
         f"character: {character}\n"
+        "language: ko\n"
         f"{voice_block}"
         "profiles:\n"
         "  - {name: 기본, min_intimacy: 0, background: b, traits: t,\n"

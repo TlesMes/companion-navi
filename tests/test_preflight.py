@@ -37,7 +37,7 @@ _PROFILE = {
 
 
 def _card(character: str, voice: dict | None) -> dict:
-    card = {"character": character, "profiles": [_PROFILE]}
+    card = {"character": character, "language": "ko", "profiles": [_PROFILE]}
     if voice is not None:
         card["voice"] = voice
     return card

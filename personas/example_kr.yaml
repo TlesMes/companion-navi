@@ -14,6 +14,10 @@
 
 character: 소민
 
+# 이 캐릭터가 쓰는 말 — 발화·STT·TTS의 단일 출처(E5).
+# voice 섹션이 ref_lang/gen_lang을 안 적으면 이 값을 상속한다.
+language: ko
+
 profiles:
   - name: 기본
     min_intimacy: 0

@@ -27,10 +27,27 @@ class PersonaProfile:
     example_dialogues: tuple[tuple[str, str], ...]  # (user, assistant) 쌍
 
 
+# 발화 언어로 쓸 수 있는 값 — GPT-SoVITS가 지원하는 집합과 같다(mouth/gptsovits.py).
+# 여기서 막지 않으면 supertonic 카드의 오타가 아무 데서도 안 걸리고 STT로 흘러간다
+# (gptsovits 카드는 어댑터가 막지만 그건 카드 로드보다 한참 뒤다).
+SUPPORTED_LANGUAGES = frozenset({"ko", "ja", "zh", "en"})
+
+
 @dataclass(frozen=True)
 class CharacterCard:
     character: str
     profiles: tuple[PersonaProfile, ...]  # min_intimacy 오름차순
+    # 이 캐릭터가 쓰는 말 — **필수**. 발화·STT·TTS가 보는 단일 출처(E5, 2026.08.28).
+    #
+    # 전엔 voice.<vendor>.gen_lang에 있었는데 그건 gptsovits 벤더 스펙에만 있는 필드라
+    # supertonic 카드(navi)와 voice 섹션 없는 카드(example_kr)는 **자기 언어를 선언할
+    # 방법이 아예 없었다** — daemon이 "없으면 ko" 폴백으로 때우고 있었고 한국어 카드라
+    # 우연히 맞았을 뿐이다. D13 재료가 한국어 고정이 되면서 선제 발화가 페르소나 언어를
+    # 이탈하는 실해가 나와(example_jp 3회 중 2회) 출처를 여기로 올렸다.
+    #
+    # 기본값을 안 둔 건 의도다. 기본이 있으면 "미선언" 상태가 남고, 그게 폴백 분기와
+    # "빈 값 = 현재 언어 유지"(gptsovits set_weights) 계약 사이의 모호함을 되살린다.
+    language: str
     # 목소리 번들(voice.py) — 음색·톤은 페르소나 소유(2026.07.10 결정).
     # 옵셔널: 섹션 없는 카드는 config mouth.voice 폴백(하위호환).
     voice: PersonaVoice | None = None
@@ -57,11 +74,28 @@ class CharacterCard:
         )
         if not profiles:
             raise ValueError(f"캐릭터 카드에 프로필이 없습니다: {path}")
+        language = str(raw.get("language", "")).strip()
+        if not language:
+            raise ValueError(
+                f"캐릭터 카드에 language가 없습니다: {path} — 카드 최상위에 "
+                f"`language: ko` 처럼 이 캐릭터가 쓰는 말을 적으세요 "
+                f"(가능한 값: {', '.join(sorted(SUPPORTED_LANGUAGES))})"
+            )
+        if language not in SUPPORTED_LANGUAGES:
+            raise ValueError(
+                f"지원하지 않는 language: {language!r} ({path}) — "
+                f"가능한 값: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+            )
         voice = (
-            PersonaVoice.parse(raw["voice"], root=root) if raw.get("voice") else None
+            PersonaVoice.parse(raw["voice"], root=root, language=language)
+            if raw.get("voice")
+            else None
         )
         return cls(
-            character=raw["character"], profiles=tuple(profiles), voice=voice
+            character=raw["character"],
+            profiles=tuple(profiles),
+            language=language,
+            voice=voice,
         )
 
     def profile_for(self, intimacy: float) -> PersonaProfile:
