@@ -885,7 +885,7 @@ def main() -> None:
     parser.add_argument("--stt-model", default="large-v3-turbo", metavar="SIZE",
                         help="faster-whisper 모델 크기")
     parser.add_argument("--stt-lang", metavar="LANG",
-                        help="STT 언어를 카드 gen_lang 대신 강제(예: ko). 페르소나 언어와 다른 "
+                        help="STT 언어를 카드 language 대신 강제(예: ko). 페르소나 언어와 다른 "
                              "언어로 말해 시험할 때 — mood 태깅은 입력 언어와 무관하다")
     parser.add_argument("--active-timeout", type=float, metavar="SEC",
                         help="ACTIVE 유지 시간(무음 기준)")

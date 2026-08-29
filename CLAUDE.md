@@ -49,11 +49,17 @@ type(scope): 제목 (한국어, 50자 내)
 
 ## 현재 상태 (2026.08.25)
 
-**D13 관심사 피드 — PR1·PR2 완료, PR3(데몬 배선)만 남았다.** 나비가 먼저 말 걸 **재료**를 모으는
-기능이 실동한다([navi/feed/](./navi/feed/)): RSS 수집 → 저가 LLM 요약 → `topic_candidate` 적재 →
-미사용·유효 후보 인출, 그리고 사용자가 예전에 한 말에서 뽑는 **대화 콜백**(`source='memory'`).
-396 tests green. **아직 데몬이 이걸 안 쓴다** — `pick_topic`의 `topic_feed`는 여전히 빈 더미고,
-그래서 **A3(음성 선제 발화 E2E)는 계속 보류**다. PR3이 그 마지막 배선이다.
+**D13 완료 — A3 실기(청취)만 남았다.** 나비가 먼저 말 걸 **재료**를 모아 실제로 쓴다
+([navi/feed/](./navi/feed/) + [daemon.py](./navi/daemon.py)): RSS 수집 → 저가 LLM 요약 →
+`topic_candidate` 적재 → tick이 후보를 뽑아 `candidate.source`로 kind를 고르고 발화.
+대화 콜백(`source='memory'`)도 함께. 409 tests green.
+
+**A3에 마이크는 필요 없다** — 선제 발화엔 STT가 안 낀다(마이크는 *반응* 측정=B2 영역).
+헤드리스로 **전 구간이 흘렀다**(실 RSS → gemini 요약 → 두뇌 → 발화, 사람이 손댄 텍스트 0) +
+합성까지 확인(한국어 supertonic RTF 0.33~0.41 / 일본어 gptsovits 1.78~2.01, 언어 판정 일관).
+**남은 건 스피커로 들어보는 것 하나** — 준비물은 `config.local.yaml`에 `feed.summarizer.vendor`를
+실 LLM으로(기본 `echo`면 요약이 안 된다) + 관심사 RSS + `proactive.min_gap_s: 0`(기본값이면 48분
+기다린다). 상세 → [progress.md](./docs/progress.md) 최상단.
 
 **PR3 선행은 #46에서 완료(2026.08.25).** 출처 작화(*"어제 뉴스에서 봤는데"*)는 **ⓒ 두 층**으로
 닫았다 — 카드 `background`가 **경로**를(*"바깥 이야기가 흘러들어오되 어디서 왔는진 모른다"*),

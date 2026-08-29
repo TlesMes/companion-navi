@@ -140,14 +140,15 @@ control:
 
 ```yaml
 # personas/*.yaml — PR ② 번들 모델: 음색·톤은 페르소나 소유 (옵셔널, 없으면 config mouth.voice 폴백)
+language: ko          # 발화 언어 — 카드 최상위 **필수**, 발화·STT·TTS의 단일 출처(E5)
 voice:
   name: navi          # VoiceProfile.name (논리적 정체성)
   speed: 1.0
   gptsovits:          # 벤더명 하위 섹션 — config _load_mouth 관례와 동일
     gpt_ckpt: secrets/voice_ref/....ckpt    # 루트 기준 상대경로 — 교체 시 런타임 핫스왑
     sovits_ckpt: secrets/voice_ref/....pth
-    ref_lang: ko      # 가중치와 함께 교체 (빈 값 = 현재 유지)
-    gen_lang: ko
+    # ref_lang/gen_lang은 **생략이 기본** — 미지정 시 위 language를 상속한다(E5).
+    # 교차언어가 정말 필요한 예외 카드만 여기 적어 덮는다(원칙 이탈이 눈에 보이는 자리).
     tones:            # 첫 항목이 기본 톤
       - { name: 기본, icon: mood-smile, voice_id: secrets/voice_ref/base.wav, ref_text: "..." }
       - { name: 신남, icon: mood-happy, voice_id: secrets/voice_ref/happy.wav, ref_text: "..." }
