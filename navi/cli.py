@@ -79,7 +79,7 @@ async def _transcribe_utterance(stt, utt, lang: str = "ko") -> str:
 
     lang = 사용자가 말하는 언어 = 페르소나 언어. Whisper에 강제하므로 어긋나면
     오역된다(일본어 발화가 lang='ko'면 한국어로 번역돼 나옴 — 2026.07.15 실측).
-    데몬이 카드 gen_lang을 넘긴다.
+    데몬이 카드 language를 넘긴다(E5 — 발화·STT·TTS의 단일 출처).
     """
     session = await stt.open_stream(lang)
     for chunk in utt.chunks:

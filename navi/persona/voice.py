@@ -94,7 +94,17 @@ class PersonaVoice:
     vendors: dict[str, VendorVoice] = field(default_factory=dict)
 
     @classmethod
-    def parse(cls, raw: dict[str, Any], *, root: Path | None = None) -> PersonaVoice:
+    def parse(
+        cls, raw: dict[str, Any], *, root: Path | None = None, language: str = ""
+    ) -> PersonaVoice:
+        """카드의 voice 섹션 → 벤더별 목소리.
+
+        language는 카드 최상위 발화 언어(E5) — 벤더 섹션이 ref_lang/gen_lang을 안 적으면
+        **이걸 상속한다.** 프로젝트 원칙이 "발화 언어는 레퍼런스 음성을 따른다"라 둘은
+        같은 값이어야 하고(전 카드가 그렇다), 두 번 적게 하면 한쪽만 고치는 사고가 난다.
+        교차언어가 정말 필요한 예외 카드만 벤더 섹션에 명시해 덮어쓴다 — 그때는 원칙에서
+        벗어난다는 게 눈에 보인다.
+        """
         vendors: dict[str, VendorVoice] = {}
         for key, section in raw.items():
             if key in _RESERVED or not isinstance(section, dict):
@@ -115,8 +125,8 @@ class PersonaVoice:
             vendors[key] = VendorVoice(
                 gpt_ckpt=_abs(root, section.get("gpt_ckpt", "")),
                 sovits_ckpt=_abs(root, section.get("sovits_ckpt", "")),
-                ref_lang=section.get("ref_lang", ""),
-                gen_lang=section.get("gen_lang", ""),
+                ref_lang=section.get("ref_lang") or language,
+                gen_lang=section.get("gen_lang") or language,
                 tones=tones,
             )
         return cls(

@@ -31,7 +31,9 @@ def test_profile_selected_by_intimacy_threshold():
             example_dialogues=(("u", "a"),),
         )
 
-    card = CharacterCard(character="나비", profiles=(make("서먹", 0), make("편함", 50)))
+    card = CharacterCard(
+        character="나비", language="ko", profiles=(make("서먹", 0), make("편함", 50))
+    )
     assert card.profile_for(0).name == "서먹"
     assert card.profile_for(49.9).name == "서먹"
     assert card.profile_for(50).name == "편함"
@@ -92,6 +94,7 @@ def test_card_without_voice_section_is_none(tmp_path):
     p = tmp_path / "old.yaml"
     p.write_text(
         "character: 옛카드\n"
+        "language: ko\n"
         "profiles:\n"
         "  - {name: 기본, min_intimacy: 0, background: b, traits: t,\n"
         "     example_dialogues: [{user: u, assistant: a}]}\n",
@@ -283,3 +286,79 @@ def test_missing_assets_skips_preset_vendors(tmp_path):
 
 def test_missing_assets_without_bundle_is_empty():
     assert not missing_assets("gptsovits", None)
+
+
+# ── E5: 발화 언어를 카드 속성으로 (2026.08.28) ──
+
+
+def _write(path, extra: str = "") -> None:
+    path.write_text(
+        "character: 시험카드\n"
+        f"{extra}"
+        "profiles:\n"
+        "  - {name: 기본, min_intimacy: 0, background: b, traits: t,\n"
+        "     example_dialogues: [{user: u, assistant: a}]}\n",
+        encoding="utf-8",
+    )
+
+
+def test_card_without_language_is_rejected(tmp_path):
+    """미선언 상태를 없애는 게 E5의 요점 — 남겨두면 폴백 분기가 되살아난다."""
+    p = tmp_path / "no_lang.yaml"
+    _write(p)
+
+    try:
+        CharacterCard.load(p)
+        raise AssertionError("language 없는 카드가 통과하면 안 된다")
+    except ValueError as e:
+        assert "language" in str(e)
+        assert "ko" in str(e)  # 무엇을 적어야 하는지 알려준다
+
+
+def test_card_rejects_unsupported_language(tmp_path):
+    """오타가 STT까지 흘러가면 아무도 안 막는다 — 로드 시점에 건진다."""
+    p = tmp_path / "bad_lang.yaml"
+    _write(p, "language: kr\n")  # ko의 흔한 오타
+
+    try:
+        CharacterCard.load(p)
+        raise AssertionError("지원하지 않는 언어가 통과하면 안 된다")
+    except ValueError as e:
+        assert "kr" in str(e)
+
+
+def test_vendor_langs_inherit_card_language(tmp_path):
+    """카드가 언어를 선언하면 벤더 섹션은 안 적어도 된다 — 두 번 적으면 갈라진다."""
+    p = tmp_path / "inherit.yaml"
+    _write(
+        p,
+        "language: ja\n"
+        "voice:\n"
+        "  name: v\n"
+        "  gptsovits:\n"
+        "    tones: [{name: 기본, voice_id: a.wav, ref_text: t}]\n",
+    )
+
+    voice = CharacterCard.load(p).voice
+    assert voice is not None
+    vendor = voice.vendors["gptsovits"]
+    assert vendor.ref_lang == "ja"
+    assert vendor.gen_lang == "ja"
+
+
+def test_vendor_langs_can_override_card_language(tmp_path):
+    """교차언어가 정말 필요하면 벤더 섹션이 덮는다 — 원칙 이탈이 눈에 보이는 자리."""
+    p = tmp_path / "override.yaml"
+    _write(
+        p,
+        "language: ko\n"
+        "voice:\n"
+        "  name: v\n"
+        "  gptsovits:\n"
+        "    ref_lang: ja\n"
+        "    tones: [{name: 기본, voice_id: a.wav, ref_text: t}]\n",
+    )
+
+    vendor = CharacterCard.load(p).voice.vendors["gptsovits"]
+    assert vendor.ref_lang == "ja"  # 명시가 이긴다
+    assert vendor.gen_lang == "ko"  # 안 적은 쪽은 상속

@@ -12,6 +12,10 @@
 
 character: レイ
 
+# 이 캐릭터가 쓰는 말 — 발화·STT·TTS의 단일 출처(E5).
+# voice 섹션이 ref_lang/gen_lang을 안 적으면 이 값을 상속한다.
+language: ja
+
 # 목소리 번들 — gptsovits base(zero-shot). fine-tune 가중치 없이 base + 레퍼런스로.
 # base 가중치(s1/s2)는 대용량이라 git 아님 — pretrained_models로 다운로드(gptsovits.py setup).
 voice:

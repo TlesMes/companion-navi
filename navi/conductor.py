@@ -21,8 +21,14 @@ log = logging.getLogger(__name__)
 # 簡潔に答える")가 선제 3회 중 2회 한국어로 답했다. 카드 서사가 긴 aris는 버텼는데,
 # **카드 강도에 따라 갈리는 게 문제**다 — 일본어 페르소나가 한국어를 뱉으면 TTS의
 # ref_lang이 안 맞아 G2P가 깨진다.
-# 카드 세계관이 아니라 **보편 지시**라 카드 종속은 안 생긴다.
-_LANGUAGE_RULE = "소재는 한국어로 적혀 있지만 말은 네가 늘 쓰는 언어로 해."
+#
+# 처음엔 "말은 네가 늘 쓰는 언어로 해"라는 보편 문구였는데, 그건 **모델이 카드에서
+# 언어를 추론**해야 하고 실패하던 게 정확히 그 추론이었다. 카드가 language를 선언하게
+# 하고(E5) 그 값을 여기 박는다 — 추론이 사라진다. 카드 값이라 종속도 안 생긴다.
+_LANGUAGE_RULE = "소재는 한국어로 적혀 있지만 답은 {language}로 해."
+
+# 프롬프트에 쓸 언어 이름 — 코드(ko)를 그대로 넣으면 모델이 덜 확실하게 받는다.
+_LANGUAGE_NAMES = {"ko": "한국어", "ja": "일본어", "zh": "중국어", "en": "영어"}
 
 # 선제 발화 프레이밍 — 서술형 소재가 "사용자가 한 말"로 오해되지 않게, 트리거를 감싼다
 # (turn_assembly.md §2). 태그가 아니라 자기설명형 자연어라 시스템 프롬프트가 규약을 몰라도
@@ -98,7 +104,7 @@ class Conductor:
         intimacy = self._memory.get_intimacy(user_id)
         turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
         messages = [Message(role=t.role, text=t.text) for t in turns]
-        messages.extend(self._frame(kind, trigger_text))
+        messages.extend(self._frame(kind, trigger_text, self._card.language))
         request = LlmRequest(
             system=self._card.system_prompt(intimacy),
             messages=messages,
@@ -113,14 +119,22 @@ class Conductor:
         return request
 
     @staticmethod
-    def _frame(kind: TurnKind, trigger_text: str) -> list[Message]:
+    def _frame(kind: TurnKind, trigger_text: str, language: str = "ko") -> list[Message]:
         """트리거를 kind에 맞는 tail 메시지로 조립한다 (turn_assembly.md §3.1).
 
         REACTIVE는 진짜 사용자 발화라 그대로, 선제 kind는 나비에게 주어진 소재라
         프레이밍으로 감싼다. 시스템 프롬프트(카드 코어)는 **모든 kind에서 무변경** —
         차이는 여기 tail에만 둬 캐시 prefix를 안 쪼갠다.
+
+        language는 카드가 선언한 발화 언어(E5) — 선제 프레이밍에만 박힌다. REACTIVE는
+        사용자 발화가 이미 그 언어라 지시가 불필요하고, 넣으면 매 턴 토큰만 는다.
         """
         frame = _FRAMES.get(kind)
         if frame is None:  # REACTIVE — 진짜 사용자 발화라 감싸지 않는다
             return [Message(role="user", text=trigger_text)]
-        return [Message(role="user", text=frame.format(trigger=trigger_text))]
+        # 카드 검증을 통과한 언어만 오지만(SUPPORTED_LANGUAGES), 이름이 없으면 코드를
+        # 그대로 쓴다 — 프레이밍 한 줄 때문에 턴이 죽는 게 더 나쁘다.
+        name = _LANGUAGE_NAMES.get(language, language)
+        return [
+            Message(role="user", text=frame.format(trigger=trigger_text, language=name))
+        ]
