@@ -135,6 +135,39 @@ def test_proactive_frame_forbids_inventing_a_source(tmp_path):
     assert "굳이 말하지" in text  # 자발적으로 밝히지도 말 것(어색하고 발화만 길어진다)
 
 
+def test_language_rule_only_appears_when_card_differs_from_material(tmp_path):
+    """재료는 항상 한국어라, 한국어 카드에 이 지시를 넣으면 자기를 부정하는 문장이 된다.
+
+    회귀 방지: "소재는 한국어로 적혀 있지만 답은 한국어로 해" — 헛도는 대조 접속이
+    매 선제 발화마다 들어갔다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    def frame_for(language: str) -> str:
+        return Conductor._frame(TurnKind.PROACTIVE, "소재", language)[0].text
+
+    assert "한국어로 적혀 있지만" not in frame_for("ko")  # 같으면 안 넣는다
+    assert "답은 일본어로" in frame_for("ja")  # 다르면 명시한다
+
+
+def test_proactive_frame_tells_the_brain_to_select_not_to_shorten(tmp_path):
+    """길이를 강제하면 사실이 잘린다 — 분업은 "요약기=보존, 두뇌=선택"이다.
+
+    실측 2026.08.28: 길이 강제 없이 "하나만 골라"로 바꾸니 gemini가 59자로 가장
+    짧으면서 제목·주인공·내용을 다 담았다.
+    """
+    config = make_config(tmp_path)
+    conductor, _store, uid = make_conductor(config)
+
+    text = conductor.build_request(
+        "소재", user_id=uid, session_id="s", kind=TurnKind.PROACTIVE
+    ).messages[-1].text
+
+    assert "하나만 골라" in text  # 선택 지시
+    assert "이름은 그대로" in text  # 요약기가 남긴 고유명사를 두뇌가 다시 버리지 않게
+
+
 def test_proactive_frame_carries_no_persona_worldview(tmp_path):
     """프레임은 모든 카드가 공유하는 코드라 특정 세계관을 넣으면 안 된다.
 
@@ -175,8 +208,8 @@ def test_callback_kind_frames_material_as_the_users_own_words(tmp_path):
     assert callback != news
     assert "사용자가 이직을 고민한다고 말했다" in callback  # 소재는 그대로 실린다
     assert "전에 한 말" in callback  # 출처가 사용자 자신임을 밝힌다
-    assert "되묻지 말고" not in callback  # 콜백은 되묻는 게 목적
-    assert "되묻지 말고" in news  # 뉴스는 반대
+    assert "질문으로 끝내지 마" not in callback  # 콜백은 되묻는 게 목적
+    assert "질문으로 끝내지 마" in news  # 뉴스는 반대
 
 
 def test_kind_does_not_change_system(tmp_path):

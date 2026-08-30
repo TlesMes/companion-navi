@@ -8,6 +8,7 @@ relevant_facts(장기기억)는 Phase 4에서 이 사이에 끼어든다.
 from __future__ import annotations
 
 import logging
+import re
 
 from navi.config import Config
 from navi.memory import MemoryStore
@@ -25,6 +26,10 @@ log = logging.getLogger(__name__)
 # 처음엔 "말은 네가 늘 쓰는 언어로 해"라는 보편 문구였는데, 그건 **모델이 카드에서
 # 언어를 추론**해야 하고 실패하던 게 정확히 그 추론이었다. 카드가 language를 선언하게
 # 하고(E5) 그 값을 여기 박는다 — 추론이 사라진다. 카드 값이라 종속도 안 생긴다.
+# 재료는 **항상 한국어**다(feed.md 3.3) — 그래서 카드도 한국어면 이 지시는 자기를
+# 부정하는 문장이 된다("한국어로 적혀 있지만 답은 한국어로"). 같으면 아예 안 넣는다:
+# 헛도는 대조 접속은 모델을 헷갈리게 하고 매 턴 토큰만 축낸다.
+_MATERIAL_LANGUAGE = "ko"
 _LANGUAGE_RULE = "소재는 한국어로 적혀 있지만 답은 {language}로 해."
 
 # 프롬프트에 쓸 언어 이름 — 코드(ko)를 그대로 넣으면 모델이 덜 확실하게 받는다.
@@ -53,8 +58,21 @@ _PROACTIVE_FRAME = (
     "(사용자는 지금 아무 말도 안 했어. 아래 소재로 네가 먼저 말을 꺼내줘 — "
     "사용자가 알려준 게 아니야. 어떻게 알게 됐는지는 굳이 말하지 말고, "
     "어디서 봤다거나 들었다고 출처를 지어내지도 마. "
-    f"{_LANGUAGE_RULE} 짧게, 되묻지 말고: {{trigger}})"
+    "소재를 다 옮기려 하지 말고 네가 가장 흥미로운 것 하나만 골라서, "
+    "거기 나온 작품·제품 이름은 그대로 말해. 질문으로 끝내지 마. "
+    f"{{language_rule}}: {{trigger}})"
 )
+# "짧게"를 길이 지시가 아니라 **선택 지시**로 바꾼 이유(사용자 판단 2026.08.28):
+# 길이를 세게 강제하면 사실이 잘려 나간다. 분업을 다시 그었다 — 요약기는 누락 없이
+# 남기고(SUMMARY_SYSTEM ⑦), 무엇을 말할지 고르는 건 여기가 한다. 지금까진 아무도
+# "고르라"는 말을 안 들어서, 요약기는 압축하다 고유명사를 버리고 두뇌는 다 전하려다
+# 길어졌다(실측: haiku 112자/21초).
+# 고유명사 규칙을 여기도 둔 건 요약기 ⑥이 애써 남긴 이름을 두뇌가 다시 버렸기 때문이다
+# (실측: gemini가 "GTA 6"을 "이번에 새로 나올 게임"으로 뭉갰다).
+# "되묻지 말고"를 "질문으로 끝내지 마"로 바꾼 근거(실측 2026.08.28, 실 재료 4건): 나쁜 3건이
+# **전부 끝을 질문으로 맺었다**("너 게임 하는 사람이야?"). 되묻기 자체보다 나쁜 건 이미
+# 알아야 할 걸 묻는 것이다 — 카드상 같이 사는 사이인데 처음 만난 사람에게 할 말이 된다.
+# 관측된 실패가 문장 끝의 질문이라 표적을 거기로 좁혔다. 세계관과 무관해 카드 종속은 없다.
 
 # 대화 콜백은 소재의 출처가 **사용자 자신**이라 위 프레임을 그대로 쓸 수 없다.
 # 두 군데가 정반대다: ①"사용자가 알려준 게 아니야"는 여기선 거짓이고 ②뉴스는 되묻지
@@ -63,7 +81,8 @@ _CALLBACK_FRAME = (
     "(사용자는 지금 아무 말도 안 했어. 아래는 사용자가 전에 한 말에서 나온 거야 — "
     "그 뒤가 어떻게 됐는지 궁금해서 네가 먼저 물어보는 거고, "
     "새로 알게 된 소식이 아니야. "
-    f"{_LANGUAGE_RULE} 짧게 한두 문장으로: {{trigger}})"
+    "짧게 한두 문장으로. "
+    f"{{language_rule}}: {{trigger}})"
 )
 
 # turn_assembly.md §3.3의 "enum + 전략맵". 조각이 더 늘면 Builder로 승격한다.
@@ -132,9 +151,14 @@ class Conductor:
         frame = _FRAMES.get(kind)
         if frame is None:  # REACTIVE — 진짜 사용자 발화라 감싸지 않는다
             return [Message(role="user", text=trigger_text)]
+        # 카드 언어가 재료 언어와 같으면 지시가 자기를 부정한다 — 아예 빼는 게 맞다.
         # 카드 검증을 통과한 언어만 오지만(SUPPORTED_LANGUAGES), 이름이 없으면 코드를
         # 그대로 쓴다 — 프레이밍 한 줄 때문에 턴이 죽는 게 더 나쁘다.
-        name = _LANGUAGE_NAMES.get(language, language)
-        return [
-            Message(role="user", text=frame.format(trigger=trigger_text, language=name))
-        ]
+        rule = (
+            ""
+            if language == _MATERIAL_LANGUAGE
+            else _LANGUAGE_RULE.format(language=_LANGUAGE_NAMES.get(language, language))
+        )
+        text = frame.format(trigger=trigger_text, language_rule=rule)
+        # 규칙이 빠지면 " .:" 같은 자국이 남는다 — 공백 정리 + 문장부호 중복 제거.
+        return [Message(role="user", text=re.sub(r"\s+", " ", text).replace(".:", ":"))]
