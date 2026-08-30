@@ -34,5 +34,6 @@ def test_anthropic_normalize_merges_same_role_and_forces_user_first():
     )
     assert out[0].role == "user"  # Anthropic 제약: user로 시작
     roles = [m.role for m in out]
-    assert all(a != b for a, b in zip(roles, roles[1:]))  # 교대
+    # strict=False가 의도 — 인접쌍 비교라 두 리스트 길이가 1 다른 게 정상이다
+    assert all(a != b for a, b in zip(roles, roles[1:], strict=False))  # 교대
     assert any(m.text == "응답1\n응답2" for m in out)  # 연속 user 병합

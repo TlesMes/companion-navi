@@ -32,7 +32,6 @@ import logging
 import zipfile
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)

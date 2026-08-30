@@ -39,6 +39,7 @@ voice-clone = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "ruff",            # 정적 검사 — 테스트가 못 잡는 결함용 (아래 [tool.ruff] 참조)
 ]
 
 [build-system]
@@ -50,3 +51,26 @@ include = ["navi*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+# 린터를 붙인 계기(2026.08.30): 데몬이 부팅에서 즉사하는 회귀가 머지까지 갔다 —
+# `_build_feed(config, store, user_id)`를 user_id 정의보다 앞에서 불렀다. **411 tests가
+# 전부 green이었다**(통합 테스트가 DaemonCore에 협력자를 직접 주입해 부팅 경로 _run을
+# 건너뛴다). 파이썬 컴파일러도 못 잡는다 — 지역변수라 문법상 유효하고 실행이 그 줄에
+# 닿아야 터진다. 실제로 데몬을 띄워서야 잡혔고, `ruff check --select F`는 그 버그를
+# `undefined name 'user_id'`로 **정적으로 지목한다**(검증함).
+#
+# 규칙셋을 F+B로 좁힌 건 목적이 스타일이 아니라 **버그**여서다:
+#   F = pyflakes    — 미정의 이름, 미사용 import/변수. 위 버그를 잡은 규칙.
+#   B = bugbear     — 루프 변수 클로저 포획(B023), zip strict 누락(B905) 등 진짜 결함.
+# E,W(스타일)를 넣으면 549건이 쏟아지는데 이번 목적과 무관해 뺐다. I(import 정렬)·
+# UP(문법 현대화)도 취향이라 뺐다 — 필요해지면 그때 별도로 논의한다.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["F", "B"]
+# B027: 추상 기반 클래스의 빈 메서드에 @abstractmethod가 없다 — MouthAdapter.warmup과
+# WakeWord.close는 **의도된 no-op 기본 구현**이다(구현체가 필요할 때만 재정의).
+# 추상으로 만들면 모든 어댑터가 빈 메서드를 강제로 써야 한다.
+ignore = ["B027"]

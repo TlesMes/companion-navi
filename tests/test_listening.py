@@ -89,7 +89,6 @@ async def test_silence_timeout_returns_to_sleep():
 async def test_request_sleep_returns_to_sleep_by_command():
     # 검문① 수면명령 시뮬레이션: 깨운 뒤 request_sleep() → 다음 프레임에서 SLEEP(COMMAND)
     session = _session(detect_at=1)
-    frames_pre = [SILENCE, SILENCE]  # 깨움 + 1프레임
     # run을 직접 돌리며 중간에 request_sleep 호출
     events = []
     agen = session.run(_aiter([SILENCE, SILENCE, SILENCE]))
