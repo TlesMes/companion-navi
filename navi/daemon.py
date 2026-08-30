@@ -524,10 +524,13 @@ def _build_feed(config, store, user_id: int):
         log.info("관심사 피드 비활성 — 선제 발화는 시간대 고정 힌트만 쓴다")
         return None
     sources = [RssSource(i.feed_url, i.topic_key) for i in cfg.interests]
-    recall = None
-    if cfg.auto_extract:
-        def recall() -> list:  # noqa: F811 — 조건부 정의(끄면 None)
-            return store.recall_recent_for_user(user_id, cfg.recent_turns_for_extract)
+    # 같은 이름에 None과 함수를 번갈아 넣으면 읽기 나쁘고 F811(재정의)에 걸린다.
+    # None = ② 끔이라는 계약(Feed.__init__)을 그대로 표현하는 조건부 대입으로 둔다.
+    recall = (
+        (lambda: store.recall_recent_for_user(user_id, cfg.recent_turns_for_extract))
+        if cfg.auto_extract
+        else None
+    )
     log.info(
         "관심사 피드 — RSS %d개, 대화 콜백 %s, 요약기 %s",
         len(sources), "on" if cfg.auto_extract else "off", cfg.summarizer_vendor,

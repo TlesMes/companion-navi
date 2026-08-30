@@ -111,10 +111,13 @@ async def profile(args: argparse.Namespace) -> None:
         turn_t0 = time.perf_counter()
         first_token_ms: float | None = None
 
-        def _echo(_tok: str) -> None:
+        def _echo(_tok: str, _t0: float = turn_t0) -> None:
+            # _t0를 기본인자로 묶는다 — 루프 변수를 자유변수로 잡으면(B023) 클로저가
+            # 다음 반복의 값을 보게 된다. 여기선 같은 반복에서 소비돼 실해가 없지만,
+            # 나중에 이 콜백이 반복 밖으로 새면 조용히 틀린 수치를 낸다.
             nonlocal first_token_ms
             if first_token_ms is None:
-                first_token_ms = (time.perf_counter() - turn_t0) * 1000
+                first_token_ms = (time.perf_counter() - _t0) * 1000
 
         result = await pipeline.run_turn(
             text, user_id=user_id, session_id=session_id, echo=_echo

@@ -22,11 +22,9 @@ from navi.conductor import Conductor
 from navi.config import Config, load_config
 from navi.gatekeeper import GateResult, check_gate
 from navi.memory import MemoryStore
-from navi.models import AudioChunk
 from navi.mouth import create_mouth
 from navi.persona import CharacterCard
 from navi.pipeline import TurnPipeline
-from navi.stt import create_stt
 
 # __name__ 금지: python -m navi.cli 실행 시 __main__이 되어 navi 로거 계층을 벗어난다
 log = logging.getLogger("navi.cli")

@@ -28,7 +28,7 @@ from navi.mouth.base import MouthAdapter
 from navi.mouth.sentence import SENTENCE_END
 
 if TYPE_CHECKING:
-    import numpy as np
+    pass
 
 logger = logging.getLogger(__name__)
 

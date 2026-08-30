@@ -296,8 +296,6 @@ def test_gptsovits_warmup_loads_engine_once():
     """warmup()이 _ensure_engine()을 호출해 엔진을 선로드하는지 확인."""
     from navi.mouth.gptsovits import GPTSoVITSMouth
 
-    calls: list[str] = []
-
     def fake_tts_fn(**_):  # 주입된 가짜 엔진 — 실 모델 로드 없이
         return iter([])
 
@@ -526,7 +524,7 @@ class _FakeWhisperModel:
         import wave as wavemod
 
         with wavemod.open(path, "rb") as wf:
-            frames = wf.getnframes()
+            wf.getnframes()  # 실제 wav로 열리는지 확인 — 깨진 파일이면 여기서 터진다
         self.transcribed.append(path)
 
         class _Seg:
