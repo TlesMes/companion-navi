@@ -563,9 +563,10 @@ async def _run(config, args) -> None:
     # os.chdir를 하므로 지연 해석은 깨진다(persona/voice.py).
     card = CharacterCard.load(config.persona_card_path, root=config.root)
     brain = create_brain(config)
-    feed = _build_feed(config, store, user_id)
     conductor = Conductor(card=card, memory=store, config=config)
     user_id = store.ensure_user(display_name="친구")
+    # user_id 확보 뒤에 지어야 한다 — 콜백 클로저가 그걸 닫아 잡는다.
+    feed = _build_feed(config, store, user_id)
     session_id = uuid.uuid4().hex
     bus = EventBus()
 
