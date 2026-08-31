@@ -244,6 +244,29 @@ class MemoryStore:
         )
         self._conn.commit()
 
+    # ─── 사용자 설정 오버라이드 ──────────────────────────────
+
+    def get_setting(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM setting WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._conn.execute(
+            "INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value,"
+            " updated_at = excluded.updated_at",
+            (key, value, _now_iso()),
+        )
+        self._conn.commit()
+
+    def all_settings(self) -> dict[str, str]:
+        return {
+            row["key"]: row["value"]
+            for row in self._conn.execute("SELECT key, value FROM setting")
+        }
+
     # ─── 원가 모니터링 ────────────────────────────────────────
 
     def log_usage(self, kind: str, usage: Usage, est_cost: float | None = None) -> None:

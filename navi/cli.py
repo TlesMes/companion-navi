@@ -14,7 +14,6 @@ import os
 import sys
 import time
 import uuid
-from dataclasses import replace
 from pathlib import Path
 
 from navi.brain import create_brain
@@ -474,11 +473,14 @@ def main() -> None:
     _setup_logging(args.verbose)
 
     persona_card = f"personas/{args.persona}.yaml" if args.persona else None
-    config = load_config(mouth_vendor=args.mouth, persona_card=persona_card)
-    if args.brain:
-        config = replace(config, brain=replace(config.brain, vendor=args.brain))
-    if args.db:
-        config = replace(config, db_path=Path(args.db))
+    # CLI 오버라이드는 load_config 안에서 처리한다 — 밖에서 replace하면 DB 층이
+    # --db가 아닌 yaml의 db_path를 읽고, 저장된 설정이 CLI를 이기는 역전이 생긴다.
+    config = load_config(
+        mouth_vendor=args.mouth,
+        persona_card=persona_card,
+        db_path=args.db,
+        brain_vendor=args.brain,
+    )
     input_wav = Path(args.input) if args.input else None
     active_timeout_ms = (
         int(args.active_timeout * 1000) if args.active_timeout is not None else None

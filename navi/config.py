@@ -5,14 +5,21 @@
 그렇다고 커밋 안 되는 자리가 없으면 실행 스크립트 기본값에 박히게 된다(실제로 그랬다 —
 run_navi.ps1의 -VadThreshold 50). config.local.yaml(gitignore)이 그 자리다.
 
-층위: config.yaml(공유) < config.local.yaml(머신 전용) < CLI 인자(이번 실행만).
+층위: config.yaml(공유) < config.local.yaml(머신 전용) < DB(사용자 오버라이드) < CLI 인자.
+
+**DB 층을 넣은 이유.** GUI에서 바꾼 값이 재기동하면 config.yaml로 복귀했다(gui.md:121).
+사용자가 고른 것과 개발자가 적어 둔 기본값이 같은 자리를 다투면 안 된다 — 사용자 쪽이
+이기고, 그 선택은 남아야 한다. 자리는 navi.db의 `setting` 테이블(_SETTING_KEYS 화이트리스트).
+**비밀은 이 층에 없다** — API 키는 .env가 자리다(navi.db는 통째로 복사되는 기억 파일).
+CLI는 여전히 최상위다: "이번 실행만"이라는 뜻이 저장된 선택보다 좁고 명시적이라서다.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+import sqlite3
+from dataclasses import dataclass, field, replace
 from datetime import time
 from pathlib import Path
 from typing import Any
@@ -198,8 +205,11 @@ class Config:
     db_path: Path
     recent_turns: int
     persona_card_path: Path
-    gemini_api_key: str | None
-    anthropic_api_key: str | None
+    # repr=False — frozen dataclass 기본 repr는 키를 원문으로 찍는다. 지금 config를
+    # 통째로 로깅하는 자리는 없지만(전부 config.brain.vendor 같은 필드 단위), 가드가
+    # 없으면 언제든 생긴다. 예외 트레이스백의 지역변수 덤프도 이 repr를 탄다.
+    gemini_api_key: str | None = field(repr=False)
+    anthropic_api_key: str | None = field(repr=False)
     # 마이크 입력 1관문 — RMS 에너지 VAD 임계(D15 캐스케이드의 energy 층).
     # config `ear.energy_vad_threshold`, 미지정·0이면 CLI에서 안 준 것과 같은 취급이라
     # daemon이 자기 기본(EnergyVad=150)으로 뜬다(mic.py:46, listening.py:62의 `vad or EnergyVad()`).
@@ -390,16 +400,85 @@ def _load_proactive(raw: dict[str, Any]) -> ProactiveConfig:
     )
 
 
+
+# 두뇌 벤더 후보 — create_brain(navi/brain/__init__.py)이 아는 것과 같은 집합.
+# DB·CLI에서 온 값을 Config에 넣기 전에 거르는 데 쓴다.
+_BRAIN_VENDORS = {"gemini", "anthropic", "echo"}
+
+# DB 층이 덮을 수 있는 설정 — **화이트리스트다.** 아무 키나 덮게 하면 db.path를 DB에서
+# 읽는 부트스트랩 순환이 생긴다(설정을 읽으려면 DB를 열어야 하고, DB를 열려면 경로가 필요).
+# 여기 없는 키는 setting 테이블에 들어 있어도 조용히 무시된다.
+_SETTING_KEYS = {"brain.vendor"}
+
+
+def _read_settings(db_path: Path) -> dict[str, str]:
+    """setting 테이블의 사용자 오버라이드 — 못 읽으면 빈 dict.
+
+    **MemoryStore를 쓰지 않는다.** MemoryStore.__init__이 executescript로 DB 파일과
+    스키마를 만들어 버려서, preflight나 GUI 런처가 load_config만 불러도 빈 navi.db가
+    생긴다. 설정을 읽는 행위가 파일을 만들면 안 된다.
+
+    파일 부재(첫 기동)·테이블 부재(구 DB)·잠김 등 **어떤 실패에도 {}를 돌려준다** —
+    _load_raw와 같은 태도다(잘못된 파일 하나로 데몬을 못 띄우는 게 더 나쁘다).
+    """
+    if not db_path.is_file():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute("SELECT key, value FROM setting").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError as exc:
+        # 테이블 부재는 **정상 상태**다 — 이 리포엔 마이그레이션 경로가 없어서(schema.sql)
+        # 이 변경 전에 만들어진 DB엔 setting이 없고, 데몬이 MemoryStore를 열면 그때 생긴다.
+        # 예상된 조건에 트레이스백을 찍으면 진짜 이상 신호가 묻힌다.
+        if "no such table" in str(exc):
+            return {}
+        log.warning("setting 테이블을 읽지 못했습니다 — 기본 설정으로 진행", exc_info=True)
+        return {}
+    except sqlite3.Error:
+        log.warning("setting 테이블을 읽지 못했습니다 — 기본 설정으로 진행", exc_info=True)
+        return {}
+    return {key: value for key, value in rows if key in _SETTING_KEYS}
+
+
+def _apply_settings(config: Config, settings: dict[str, str]) -> Config:
+    """DB 오버라이드를 Config에 반영 — 값이 이상하면 그 항목만 버린다.
+
+    DB에 쓰레기가 들어가도 데몬은 뜬다. 설정 하나 때문에 나비가 안 깨어나면 안 된다.
+    """
+    vendor = settings.get("brain.vendor")
+    if vendor is None:
+        return config
+    if vendor not in _BRAIN_VENDORS:
+        log.warning("setting brain.vendor 값이 이상해 무시함: %r", vendor)
+        return config
+    if vendor == config.brain.vendor:
+        return config
+    log.info("두뇌 벤더 — 사용자 설정(DB)이 config.yaml을 덮음: %s", vendor)
+    return replace(config, brain=replace(config.brain, vendor=vendor))
+
+
 def load_config(
     root: Path | None = None,
     *,
     mouth_vendor: str | None = None,
     persona_card: str | None = None,
+    db_path: str | Path | None = None,
+    brain_vendor: str | None = None,
 ) -> Config:
-    """config.yaml + .env를 합쳐 불변 Config로.
+    """config.yaml + .env + setting 테이블을 합쳐 불변 Config로.
 
     mouth_vendor·persona_card는 이번 실행만의 오버라이드(CLI --mouth/--persona) —
     벤더 섹션을 다시 읽어야 해서 후처리 replace()로는 안 되므로 여기서 주입한다.
+
+    db_path·brain_vendor도 CLI 오버라이드(--db/--brain)다. **호출부에서 replace()로
+    처리하면 안 된다** — DB 층이 --db로 지정한 DB가 아니라 yaml의 db_path를 읽게 되고,
+    저장된 설정이 CLI를 이기는 역전도 생긴다. 층위 순서는 이 함수 안에만 존재한다.
+
+    2단계인 이유: DB를 열려면 db_path가 필요한데 db_path는 yaml(+CLI)이 정한다.
+    ① yaml·local·CLI로 db_path 확정 → ② 그 DB에서 오버라이드 → ③ 나머지 CLI 인자.
     """
     root = root or Path.cwd()
     load_dotenv(root / ".env")
@@ -414,7 +493,7 @@ def load_config(
         raw.setdefault("mouth", {})["vendor"] = _vendor_from_card(
             root, card_path, raw.get("mouth", {}).get("vendor", "fake")
         )
-    return Config(
+    config = Config(
         root=root.resolve(),
         brain=BrainConfig(
             vendor=raw["brain"]["vendor"],
@@ -426,10 +505,19 @@ def load_config(
         proactive=_load_proactive(raw),
         control=_load_control(raw),
         feed=_load_feed(raw),
-        db_path=root / raw["db"]["path"],
+        # ① CLI --db가 있으면 그게 db_path다 — DB 층이 읽을 대상이 여기서 확정된다.
+        db_path=Path(db_path) if db_path else root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
         persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         energy_vad_threshold=float(raw.get("ear", {}).get("energy_vad_threshold", 0.0)),
     )
+    # ② DB 층 — 사용자가 GUI에서 고른 것이 config.yaml을 덮는다.
+    config = _apply_settings(config, _read_settings(config.db_path))
+    # ③ CLI — 최상위. 저장된 선택보다 좁고 명시적인 "이번 실행만"이 이긴다.
+    if brain_vendor:
+        if brain_vendor not in _BRAIN_VENDORS:
+            raise ValueError(f"알 수 없는 brain vendor: {brain_vendor!r}")
+        config = replace(config, brain=replace(config.brain, vendor=brain_vendor))
+    return config
