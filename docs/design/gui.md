@@ -128,6 +128,10 @@ PySide6(웹 UI와 갈라져 Tauri 경로 사망). pywebview는 Python 패키지 
 - **검증(실기)**: 데몬 `--voice --wakeword` + GUI — ① "나비야" 발화로 파이프라인 점등 흐름
   실측 ② GUI 버튼 전이가 MODE_CHANGED로 라이브 반영 ③ GUI 강제 종료 후 음성 대화 무영향
   ④ 취침창 변경이 재기동 후 유지(영속화는 데몬 소유 아님 — config 반영 여부는 이 PR에서 결정).
+  - **④의 결론과 그 뒤(2026.09.01):** 이 PR에선 "영속 안 함"으로 닫았고 A2가 그대로 실증했다
+    (재기동 시 config 복귀). 그 자리는 이후 **`setting` 테이블**이 됐다 — 층위
+    `config.yaml < config.local.yaml < DB < CLI`. 두뇌 벤더로 층위를 실증했고 취침창은 아직
+    화이트리스트(`_SETTING_KEYS`)에 안 올렸다. 상세 → progress.md 최상단.
 
 ## config.yaml · persona yaml 추가안
 
