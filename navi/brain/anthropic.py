@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 
 import anthropic
 
-from navi.brain.base import BrainAdapter
+from navi.brain.base import BrainAdapter, BrainAuthError, BrainUnavailable
 from navi.models import BrainResult, LlmRequest, Message, Usage
 
 _MAX_TOKENS = 1024
@@ -26,6 +26,18 @@ class AnthropicBrain(BrainAdapter):
     def __init__(self, api_key: str):
         super().__init__()
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
+
+    async def validate(self, model: str) -> None:
+        """벤더 예외를 계약상의 두 종류로 옮긴다 — 벤더 종속은 어댑터 뒤에(설계 원칙 1)."""
+        try:
+            await super().validate(model)
+        except BrainUnavailable as exc:
+            cause = exc.__cause__
+            if isinstance(
+                cause, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)
+            ):
+                raise BrainAuthError("Anthropic 키가 거부됐어요") from cause
+            raise
 
     async def generate_stream(self, request: LlmRequest) -> AsyncIterator[str]:
         self.last_result = None

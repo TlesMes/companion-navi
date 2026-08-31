@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
-from navi.brain.base import BrainAdapter
+from navi.brain.base import BrainAdapter, BrainAuthError, BrainUnavailable
 from navi.models import BrainResult, LlmRequest, Usage
 
 
@@ -20,6 +21,22 @@ class GeminiBrain(BrainAdapter):
     def __init__(self, api_key: str):
         super().__init__()
         self._client = genai.Client(api_key=api_key)
+
+    async def validate(self, model: str) -> None:
+        """벤더 예외를 계약상의 두 종류로 옮긴다 — 벤더 종속은 어댑터 뒤에(설계 원칙 1).
+
+        google-genai는 HTTP 상태를 예외 종류로 안 나눠서 code로 가른다.
+        400은 잘못된 키도 이 코드로 오기 때문에 함께 본다.
+        """
+        try:
+            await super().validate(model)
+        except BrainUnavailable as exc:
+            cause = exc.__cause__
+            if isinstance(cause, genai_errors.ClientError) and cause.code in (
+                400, 401, 403,
+            ):
+                raise BrainAuthError("Gemini 키가 거부됐어요") from cause
+            raise
 
     async def generate_stream(self, request: LlmRequest) -> AsyncIterator[str]:
         self.last_result = None

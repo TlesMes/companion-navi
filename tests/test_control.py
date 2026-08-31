@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from navi.bus import Event, EventBus, EventKind
 from navi.control import SwapRuntime, create_app
+from navi.control.runtime import SwapBusy
 from navi.daemon import DaemonCore
 from navi.heartbeat import ModeMachine, SleepWindow
 from navi.mouth.fake import FakeMouth
@@ -819,3 +820,155 @@ def test_personas_scan_skips_broken_yaml(tmp_path):
     client, *_ = _make(swap=swap)
     ids = {p["id"] for p in client.get("/personas").json()}
     assert ids == {"navi", "other"}  # 파손 카드는 조용히 건너뜀
+
+
+# ═══ 두뇌 교체 (벤더·키) ══════════════════════════════════════════════════
+#
+# 여기서 못 박는 것: **검증에 성공한 뒤에야 무엇이든 커밋한다.** 키를 먼저 .env에 쓰고
+# 검증하면 실패했을 때 멀쩡하던 키가 이미 덮인 뒤다 — 부분 적용이 남는다.
+
+_MIN_CONFIG = {
+    "brain": {
+        "vendor": "echo",
+        "models": {"gemini": "gemini-x", "anthropic": "claude-x", "echo": "echo"},
+    },
+    "mouth": {
+        "vendor": "supertonic",
+        "voice": {"name": "navi", "speed": 1.0},
+        "supertonic": {"voice_id": "F1", "lang": "ko"},
+    },
+    "db": {"path": "navi.db"},
+    "memory": {"recent_turns": 6},
+    "persona": {"card_path": "personas/navi.yaml"},
+}
+
+
+class _FakeBrain:
+    """validate가 무엇을 하느냐만 다른 두뇌 — 교체 계약 검증용."""
+
+    def __init__(self, *, fails=None):
+        self.fails = fails
+        self.validated = False
+
+    async def validate(self, model):
+        self.validated = True
+        if self.fails is not None:
+            raise self.fails
+
+
+def _brain_swap(tmp_path, monkeypatch, *, new_brain=None, env=None):
+    """config·store를 갖춘 SwapRuntime + create_brain 대역."""
+    import yaml
+
+    from navi.config import load_config
+    from navi.memory.store import MemoryStore
+
+    (tmp_path / "config.yaml").write_text(yaml.safe_dump(_MIN_CONFIG), encoding="utf-8")
+    (tmp_path / ".env").write_text(env or _EXISTING_ENV, encoding="utf-8")
+    swap, pipeline = _make_swap(tmp_path)
+
+    monkeypatch.setenv("GEMINI_API_KEY", "AIzaSy-existing-gemini-key")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    config = load_config(tmp_path)
+    store = MemoryStore(tmp_path / "navi.db")
+    swap._config = config
+    swap._store = store
+
+    made = new_brain if new_brain is not None else _FakeBrain()
+    monkeypatch.setattr("navi.brain.create_brain", lambda cfg, *, vendor=None: made)
+    return swap, pipeline, store, made
+
+
+_EXISTING_ENV = "# 주석\nGEMINI_API_KEY=AIzaSy-existing-gemini-key\n"
+
+
+def test_brain_state_never_leaks_the_key(tmp_path, monkeypatch):
+    """GET /brain의 재료 — 마스킹만 나가고 원문은 어떤 필드에도 없어야 한다."""
+    swap, _, _, _ = _brain_swap(tmp_path, monkeypatch)
+    state = swap.brain_state()
+
+    assert state["current"] == "echo"
+    assert "AIzaSy-existing-gemini-key" not in repr(state)
+    gemini = next(v for v in state["vendors"] if v["id"] == "gemini")
+    assert gemini["has_key"] is True and gemini["masked"] == "AIzaSy****-key"
+    anthropic = next(v for v in state["vendors"] if v["id"] == "anthropic")
+    assert anthropic["has_key"] is False and anthropic["masked"] == ""
+    echo = next(v for v in state["vendors"] if v["id"] == "echo")
+    assert echo["needs_key"] is False
+
+
+async def test_swap_brain_commits_after_validation(tmp_path, monkeypatch):
+    """성공 경로 — 파이프라인 두뇌 교체 + .env 갱신 + 벤더 영속이 한 번에."""
+    swap, pipeline, store, made = _brain_swap(tmp_path, monkeypatch)
+
+    result = await swap.swap_brain("anthropic", api_key="sk-ant-brand-new-key-1")
+
+    assert made.validated is True          # 값만 바꾸고 끝내지 않았다
+    assert pipeline._brain is made         # 다음 턴부터 새 두뇌
+    assert result["vendor"] == "anthropic" and result["key_saved"] is True
+    assert store.get_setting("brain.vendor") == "anthropic"  # 재기동 후에도 유지
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY=sk-ant-brand-new-key-1" in env
+    assert "GEMINI_API_KEY=AIzaSy-existing-gemini-key" in env  # 다른 키 보존
+
+
+async def test_swap_brain_rolls_back_on_bad_key(tmp_path, monkeypatch):
+    """키가 거부되면 **아무것도** 바뀌지 않는다 — 부분 적용 금지의 본체."""
+    from navi.brain.base import BrainAuthError
+
+    swap, pipeline, store, _ = _brain_swap(
+        tmp_path, monkeypatch, new_brain=_FakeBrain(fails=BrainAuthError("거부"))
+    )
+    before = pipeline._brain
+
+    with pytest.raises(BrainAuthError):
+        await swap.swap_brain("anthropic", api_key="sk-ant-wrong-key-value")
+
+    assert pipeline._brain is before                       # 기존 두뇌 유지
+    assert store.get_setting("brain.vendor") is None       # 영속 안 함
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "sk-ant-wrong-key-value" not in env             # .env 무변화
+    assert swap.brain_state()["current"] == "echo"
+
+
+async def test_swap_brain_network_failure_keeps_key_out_of_env(tmp_path, monkeypatch):
+    """네트워크 실패도 같은 규칙 — 실패 사유만 다르지 커밋 시점은 동일하다."""
+    from navi.brain.base import BrainUnavailable
+
+    swap, _, store, _ = _brain_swap(
+        tmp_path, monkeypatch, new_brain=_FakeBrain(fails=BrainUnavailable("끊김"))
+    )
+    with pytest.raises(BrainUnavailable):
+        await swap.swap_brain("anthropic", api_key="sk-ant-probably-fine-key")
+
+    assert "sk-ant-probably-fine-key" not in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert store.get_setting("brain.vendor") is None
+
+
+async def test_swap_brain_without_key_reuses_existing(tmp_path, monkeypatch):
+    """키 생략 = 기존 키로 벤더만 전환 — .env는 건드리지 않는다."""
+    swap, _, store, _ = _brain_swap(tmp_path, monkeypatch)
+    before = (tmp_path / ".env").read_text(encoding="utf-8")
+
+    result = await swap.swap_brain("gemini")
+
+    assert result["key_saved"] is False
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == before
+    assert store.get_setting("brain.vendor") == "gemini"
+
+
+async def test_swap_brain_rejects_unknown_vendor(tmp_path, monkeypatch):
+    swap, _, store, _ = _brain_swap(tmp_path, monkeypatch)
+    with pytest.raises(LookupError):
+        await swap.swap_brain("openai")
+    assert store.get_setting("brain.vendor") is None
+
+
+async def test_swap_brain_is_blocked_while_playing(tmp_path, monkeypatch):
+    """발화 중 교체 금지 — 페르소나·톤 교체와 같은 락을 공유한다."""
+    swap, pipeline, store, _ = _brain_swap(tmp_path, monkeypatch)
+    pipeline._mouth._playing = True  # 재생 중 시뮬레이션
+
+    with pytest.raises(SwapBusy):
+        await swap.swap_brain("gemini")
+    assert store.get_setting("brain.vendor") is None
