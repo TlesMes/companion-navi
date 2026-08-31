@@ -137,3 +137,97 @@ def test_energy_vad_threshold_from_base_yaml(tmp_path):
         _yaml.safe_dump(_CARD, allow_unicode=True), encoding="utf-8"
     )
     assert load_config(tmp_path).energy_vad_threshold == 80.0
+
+
+# --- DB 층 (사용자 오버라이드) ---------------------------------------------
+#
+# 층위: config.yaml < config.local.yaml < DB < CLI. 여기서 계약화하는 건 DB가 파일 두
+# 층을 이기고 CLI에는 진다는 것 — 이 순서가 뒤집히면 "이번 실행만"이 저장된 선택에
+# 덮이거나(--brain 무력화), GUI에서 고른 게 재기동마다 사라진다(gui.md:121의 구멍).
+
+
+def _set_setting(db_path, key, value):
+    """setting 테이블에 오버라이드를 심는다 — MemoryStore가 스키마를 만든다."""
+    from navi.memory.store import MemoryStore
+
+    store = MemoryStore(db_path)
+    store.set_setting(key, value)
+    store.close()
+
+
+def test_db_setting_beats_yaml(tmp_path):
+    """GUI에서 고른 벤더가 config.yaml(echo)을 이긴다 — 재기동해도 유지되는 근거."""
+    _write_repo(tmp_path)
+    _set_setting(tmp_path / "navi.db", "brain.vendor", "anthropic")
+    assert load_config(tmp_path).brain.vendor == "anthropic"
+
+
+def test_db_setting_beats_local_overlay(tmp_path):
+    """머신 전용 파일보다도 사용자 선택이 위 — 사용자 오버라이드는 자동 판단을 이긴다."""
+    _write_repo(tmp_path, local={"brain": {"vendor": "gemini"}})
+    _set_setting(tmp_path / "navi.db", "brain.vendor", "anthropic")
+    assert load_config(tmp_path).brain.vendor == "anthropic"
+
+
+def test_cli_beats_db_setting(tmp_path):
+    """CLI는 최상위 — "이번 실행만"이 저장된 선택보다 좁고 명시적이다."""
+    _write_repo(tmp_path)
+    _set_setting(tmp_path / "navi.db", "brain.vendor", "anthropic")
+    assert load_config(tmp_path, brain_vendor="gemini").brain.vendor == "gemini"
+
+
+def test_db_layer_follows_cli_db_path(tmp_path):
+    """--db로 다른 DB를 지목하면 DB 층도 그쪽을 읽는다.
+
+    CLI 오버라이드를 load_config 밖에서 replace하면 이게 깨진다 — 층이 yaml의
+    db_path(navi.db)를 읽어 엉뚱한 DB의 설정을 적용한다.
+    """
+    _write_repo(tmp_path)
+    _set_setting(tmp_path / "navi.db", "brain.vendor", "anthropic")  # 읽히면 안 되는 쪽
+    other = tmp_path / "other.db"
+    _set_setting(other, "brain.vendor", "gemini")
+    assert load_config(tmp_path, db_path=other).brain.vendor == "gemini"
+
+
+def test_unknown_setting_key_is_ignored(tmp_path):
+    """화이트리스트 밖은 무시 — db.path를 DB에서 읽는 부트스트랩 순환을 막는 가드."""
+    _write_repo(tmp_path)
+    _set_setting(tmp_path / "navi.db", "db.path", "/etc/passwd")
+    assert load_config(tmp_path).db_path == tmp_path / "navi.db"
+
+
+def test_garbage_vendor_value_is_ignored(tmp_path):
+    """DB에 쓰레기가 들어가도 데몬은 뜬다 — 설정 하나로 나비가 안 깨어나면 안 된다."""
+    _write_repo(tmp_path)
+    _set_setting(tmp_path / "navi.db", "brain.vendor", "openai")
+    assert load_config(tmp_path).brain.vendor == "echo"  # config.yaml 값 유지
+
+
+def test_load_config_does_not_create_db(tmp_path):
+    """설정을 읽는 행위가 파일을 만들면 안 된다 — preflight·GUI 런처도 load_config를 부른다."""
+    _write_repo(tmp_path)
+    assert load_config(tmp_path).brain.vendor == "echo"
+    assert not (tmp_path / "navi.db").exists()
+
+
+def test_db_without_setting_table_is_tolerated(tmp_path):
+    """구 DB(테이블 없음)를 만나도 기본 설정으로 진행한다 — 마이그레이션 경로가 없는 리포다."""
+    import sqlite3 as _sqlite3
+
+    _write_repo(tmp_path)
+    _sqlite3.connect(tmp_path / "navi.db").close()  # 빈 DB 파일
+    assert load_config(tmp_path).brain.vendor == "echo"
+
+
+def test_api_keys_are_not_in_repr(tmp_path):
+    """Config repr에 키 원문이 없어야 한다 — 예외 트레이스백의 지역변수 덤프가 이걸 탄다."""
+    import os
+
+    _write_repo(tmp_path)
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-secret-value-1234"
+    try:
+        config = load_config(tmp_path)
+    finally:
+        del os.environ["ANTHROPIC_API_KEY"]
+    assert config.anthropic_api_key == "sk-ant-secret-value-1234"
+    assert "sk-ant-secret" not in repr(config)
