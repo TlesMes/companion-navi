@@ -277,6 +277,30 @@
     border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
     transform: translateY(-75%) rotate(45deg);
   }
+  /* 펼쳐진 목록(팝업)까지 라운드로 — appearance:none으로는 컨트롤만 둥글고 목록은
+     OS가 그린 사각형이 남는다. base-select(Chromium 135+)라야 ::picker에 손이 닿는다.
+     이 창의 WebView2는 Chromium 151이라 지원되고, 미지원 런타임에선 위의 appearance:none
+     폴백이 그대로 남는다(컨트롤만 둥글고 목록은 네이티브). */
+  @supports (appearance: base-select) {
+    .set-row select { appearance: base-select; padding-right: 7px; }
+    .selwrap::after { display: none; }  /* base-select는 제 화살표(::picker-icon)를 갖는다 */
+    .set-row select::picker-icon { color: var(--text-muted); }
+    .set-row select::picker(select) {
+      appearance: base-select;
+      background: var(--surface-3);
+      border: 0.5px solid var(--border-strong);
+      border-radius: var(--radius);
+      padding: 4px;
+      box-shadow: 0 8px 22px var(--shadow);
+    }
+    .set-row select option {
+      border-radius: 6px; padding: 5px 8px; font-size: 12px;
+      color: var(--text-secondary); background: transparent;
+    }
+    .set-row select option::checkmark { display: none; }  /* 선택은 강조색으로 충분 */
+    .set-row select option:hover { background: var(--surface-1); color: var(--text-primary); }
+    .set-row select option:checked { background: var(--bg-accent); color: var(--text-accent); }
+  }
   .set-row input[type="password"] { width: 100%; }
   /* 키 입력은 행 아래로 흐르게 — 360px 폭에서 레이블과 나란히 두면 둘 다 못 읽는다 */
   #key-row { flex-direction: column; align-items: stretch; gap: 8px; }
