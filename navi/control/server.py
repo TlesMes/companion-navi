@@ -23,9 +23,10 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from navi.bus import Event, EventBus, EventKind
+from navi.brain.base import BrainAuthError, BrainUnavailable
 from navi.control.runtime import PersonaUnavailable, SwapBusy, SwapRuntime
 from navi.daemon import DaemonCore
 from navi.heartbeat import Mode, ModeCommand, SleepWindow
@@ -53,6 +54,14 @@ class PersonaBody(BaseModel):
 
 class VoiceBody(BaseModel):
     name: str  # 현재 페르소나 톤 목록의 name
+
+
+class BrainBody(BaseModel):
+    vendor: str                      # gemini | anthropic | echo
+    # SecretStr인 이유: 평범한 str이면 본문 검증이 실패했을 때 FastAPI가 **입력값을
+    # 그대로 422 응답에 실어 보내고** 예외 로그에도 남긴다. 키가 그렇게 새면 안 된다.
+    # 생략 = 기존 키로 벤더만 전환.
+    api_key: SecretStr | None = None
 
 
 def _payload_json(payload) -> object:
@@ -180,6 +189,36 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         except RuntimeError as exc:  # 파이프라인 없음(텍스트 모드)
             raise HTTPException(503, str(exc)) from exc
+
+    # --- 두뇌 교체 (벤더·키) — 판정은 SwapRuntime, 여긴 HTTP 번역만 ---
+
+    @app.get("/brain")
+    async def brain() -> dict:
+        """벤더 목록 + 키 보유 여부·마스킹. **키 원문은 어떤 필드에도 실리지 않는다.**"""
+        try:
+            return _swap().brain_state()
+        except RuntimeError as exc:  # 두뇌 런타임 미구성
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.post("/brain")
+    async def set_brain(body: BrainBody) -> dict:
+        try:
+            return await _swap().swap_brain(
+                body.vendor,
+                api_key=body.api_key.get_secret_value() if body.api_key else None,
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except SwapBusy as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except BrainAuthError as exc:  # 키가 거부됨 — 사용자가 고칠 수 있다
+            raise HTTPException(422, str(exc)) from exc
+        except BrainUnavailable as exc:  # 네트워크·장애 — 나중에 되는 종류다
+            raise HTTPException(502, str(exc)) from exc
+        except ValueError as exc:  # 값에 개행 등 — write_env_key의 거부
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:  # 키 부재·런타임 미구성
+            raise HTTPException(422, str(exc)) from exc
 
     @app.post("/shutdown")
     async def shutdown() -> dict:
