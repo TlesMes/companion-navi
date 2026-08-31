@@ -93,7 +93,10 @@ class MemoryStore:
         ).fetchall()
         return [_row_to_turn(r) for r in rows]
 
-    # ─── 친밀도 ─────────────────────────────────────────────
+    # ─── 친밀도 — ✖ 폐기 (D9, 2026.08.31) ───────────────────
+    # 새 코드는 쓰지 말 것. `update_intimacy`는 부르는 곳이 없고 `get_intimacy`는 늘 0을
+    # 돌려준다(Conductor가 첫 프로필만 고르는 이유). 폐기 사유 → design/aliveness.md §3.3.
+    # 테이블 제거는 마이그레이션 경로가 없어(executescript + IF NOT EXISTS) 별도 판단.
 
     def get_intimacy(self, user_id: int) -> float:
         row = self._conn.execute(
@@ -102,7 +105,7 @@ class MemoryStore:
         return row["score"] if row else 0.0
 
     def update_intimacy(self, user_id: int, delta: float) -> float:
-        """산식(D9)은 Phase 4 — 지금은 단순 가감만 제공한다."""
+        """단순 가감. 산식(D9)은 폐기됐고 이 메서드를 부르는 곳도 없다."""
         self._conn.execute(
             "UPDATE intimacy SET score = score + ?, updated_at = ? WHERE user_id = ?",
             (delta, _now_iso(), user_id),

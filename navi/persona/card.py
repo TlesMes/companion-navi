@@ -99,7 +99,11 @@ class CharacterCard:
         )
 
     def profile_for(self, intimacy: float) -> PersonaProfile:
-        """min_intimacy ≤ 친밀도인 프로필 중 가장 높은 단계. 미달이면 첫 단계."""
+        """min_intimacy ≤ 친밀도인 프로필 중 가장 높은 단계. 미달이면 첫 단계.
+
+        **실질적으로 항상 첫 프로필을 돌려준다** — 친밀도(D9)는 폐기됐고 카드는 프로필을
+        1개만 갖는다(design/aliveness.md §3.3). 다단계 선택 로직은 죽은 채 남아 있다.
+        """
         chosen = self.profiles[0]
         for profile in self.profiles:
             if intimacy >= profile.min_intimacy:
@@ -107,7 +111,10 @@ class CharacterCard:
         return chosen
 
     def system_prompt(self, intimacy: float) -> str:
-        """캐싱 대상 — 친밀도 단계가 바뀌지 않는 한 매 호출 동일한 문자열이어야 한다."""
+        """캐싱 대상 — 매 호출 동일한 문자열이어야 한다.
+
+        D9 폐기로 프로필이 1개 고정이라 이 불변식은 이제 무조건 성립한다.
+        """
         profile = self.profile_for(intimacy)
         examples = "\n\n".join(
             f"사용자: {u}\n{self.character}: {a}"

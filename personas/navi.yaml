@@ -18,7 +18,8 @@ voice:
       - { name: 기본, icon: mood-smile, voice_id: F1 }
 
 profiles:
-  # 친밀도 단계별 프로필. Phase 1은 1단계만 — 단계 추가는 Phase 4(페르소나 전환).
+  # 프로필은 1개 고정. 친밀도 단계별 다중 프로필은 폐기했다(D9, 2026.08.31) —
+  # 단계마다 example_dialogues를 따로 쓰면 말투 일관성이 깨진다. min_intimacy는 사문.
   - name: 새 식구
     min_intimacy: 0
     background: |

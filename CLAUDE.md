@@ -21,7 +21,7 @@
 | [docs/checklist.md](./docs/checklist.md) | 남은 작업만 추린 실행 체크리스트(A 실기 잔여 / B Phase 3 본류 / C D8 동결 / D 백로그) | **다음에 뭘 할지 고를 때** |
 | [docs/design/plan.md](./docs/design/plan.md) | 로드맵(Phase 0–5)·원칙 전체·기술 스택과 선정 이유 | **전체 진행 상황·방향을 파악해야 할 때** |
 | [docs/design/architecture.md](./docs/design/architecture.md) | 모듈 인터페이스(계약)·데이터 모델·모드 상태머신·보류 결정 D1~D16 | 구현 작업 시 |
-| [docs/design/aliveness.md](./docs/design/aliveness.md) | 동적 거동 — 턴 메타데이터(D14)·능동성 3층·상태 진화(친밀도·기억) | 능동성·기억·감정 구현 시 |
+| [docs/design/aliveness.md](./docs/design/aliveness.md) | 동적 거동 — 턴 메타데이터(D14)·능동성 3층·상태 진화(기억). **§3.3 = D9 친밀도 폐기 사유** | 능동성·기억·감정 구현 시 |
 | [docs/design/vendor_cost.md](./docs/design/vendor_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
 | [docs/design/gui.md](./docs/design/gui.md) | 최소 GUI 설계·구현 계획(PR 3분할)·목업([gui_mockup.html](./docs/design/gui_mockup.html)) | Stage 15 GUI 구현 시 |
 | [docs/research/tts_pivot.md](./docs/research/tts_pivot.md) | Supertonic→Zero-shot 보이스 클로닝 전환 및 아키텍처 검토 | D3 배경 파악 시 |

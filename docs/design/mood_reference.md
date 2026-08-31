@@ -70,7 +70,7 @@ LLM 스트림:  [mood:comfort] 고생했네. 뭐가 제일 힘들었어?
 ### 3.4 시스템 프롬프트 출력 규칙 — [card.py](../navi/persona/card.py) `system_prompt`
 - 말미(대화 규칙 뒤)에 강제 문구 추가: "응답의 **맨 앞에 반드시** `[mood:neutral|bright|comfort|calm]`
   중 하나를 붙인다. 이 태그는 시스템 신호이며 **대사가 아니다** — 그 뒤에 실제 말을 잇는다."
-- **캐싱 불변식 유지**: 친밀도 단계와 무관한 고정 문자열이라 캐시 안정(system_prompt docstring 준수).
+- **캐싱 불변식 유지**: 카드 프로필과 무관한 고정 문자열이라 캐시 안정(system_prompt docstring 준수).
 - **traits의 "감정 태그 금지"와 상충 아님**을 명시 — 금지 대상은 *대사 안의* 대괄호 행동/감정
   묘사고, 이건 *맨 앞 1개 제어 토큰*이다. 카드 traits는 건드리지 않는다.
 
