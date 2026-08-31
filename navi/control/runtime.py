@@ -271,10 +271,12 @@ class SwapRuntime:
         self._guard_not_playing()
 
         field = BRAIN_KEY_FIELDS.get(vendor)
-        candidate = config
+        # vendor까지 갈아야 한다 — 키 필드만 바꾸면 파이프라인은 새 두뇌로 도는데
+        # brain_state()가 옛 벤더를 보고해 GUI가 틀린 값을 그린다(실기에서 확인).
+        candidate = replace(config, brain=replace(config.brain, vendor=vendor))
         if field is not None:
             key = api_key or self._key_of(vendor)
-            candidate = replace(config, **{field: key})
+            candidate = replace(candidate, **{field: key})
 
         # 키 부재는 여기서 걸린다(create_brain의 기존 에러 메시지를 그대로 쓴다)
         brain = create_brain(candidate, vendor=vendor)
