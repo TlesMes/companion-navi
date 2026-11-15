@@ -113,6 +113,35 @@ def test_normalize_absorbs_spacing_and_final_punctuation_only():
     assert normalize_fact_text("사용자는 개발자다") != normalize_fact_text("사용자는 디자이너다")
 
 
+def test_parse_accepts_attributes_written_after_the_sentence():
+    """규칙은 대괄호 안이지만 모델이 문장 뒤에 붙이기도 한다 (실측 2026.11.15, Haiku).
+
+    안 받으면 만료가 안 읽혀 지난 예정이 기본 수명만큼 남고, 문장에 꼬리가 붙은 채 저장된다.
+    """
+    reply = "[fact:plan|src:T1] 사용자는 2026-11-20(금)에 치과에 간다.|until:2026-11-20"
+
+    (fact,) = parse_facts(reply, 10)
+
+    assert fact.text == "사용자는 2026-11-20(금)에 치과에 간다."
+    assert fact.until == date(2026, 11, 20) and fact.src == 1
+
+
+def test_parse_prefers_the_bracket_when_an_attribute_appears_twice():
+    reply = "[fact:plan|until:2026-11-20] 사용자는 치과에 간다. | until:2026-12-31 | replaces:F3"
+
+    (fact,) = parse_facts(reply, 10)
+
+    assert fact.until == date(2026, 11, 20)
+    assert fact.replaces == 3
+    assert fact.text == "사용자는 치과에 간다."
+
+
+def test_parse_leaves_a_pipe_inside_the_sentence_alone():
+    (fact,) = parse_facts("[fact:preference] 사용자는 A|B 테스트 얘기를 좋아한다.", 10)
+
+    assert fact.text == "사용자는 A|B 테스트 얘기를 좋아한다."
+
+
 def test_kinds_are_the_four_the_prompt_names():
     """분류를 바꾸면 프롬프트 규칙 ②도 함께 바꿔야 한다 — 어긋나면 추출이 조용히 버려진다."""
     from navi.memory.facts import FACT_SYSTEM
@@ -137,6 +166,51 @@ def test_prompt_numbers_turns_and_known_facts_in_separate_spaces(tmp_path):
     assert f"F{fact_id} (profile) 사용자는 개발자다." in prompt
     assert f"T{turn_id} (" in prompt and "사용자: 나 이직했어" in prompt
     assert "오늘: " in prompt
+
+
+def test_prompt_gives_the_weekday_so_the_model_need_not_compute_it(tmp_path):
+    """"다음 주 금요일"을 날짜로 바꾸려면 말한 날의 요일이 있어야 한다 — 달력은 코드가 센다.
+
+    (실측 2026.11.15: 날짜만 줬더니 모델이 끝 날짜를 이틀 틀렸다.)
+    """
+    from datetime import datetime as dt
+
+    store, uid = _store(tmp_path)
+    store.append_turn("s", uid, "user", "다음 주 금요일에 치과 가", ts=dt(2026, 11, 12, 20, 0))
+
+    prompt = build_fact_prompt(store.turns_after(uid, 0, 10), [], dt(2026, 11, 15, 9, 0))
+
+    assert "오늘: 2026-11-15 일" in prompt
+    assert "(2026-11-12 목) 사용자: 다음 주 금요일에 치과 가" in prompt
+
+
+def test_prompt_carries_a_calendar_one_week_per_line(tmp_path):
+    """요일만으로는 모자랐다 — 모델이 날짜를 세지 않고 표에서 읽게 한다.
+
+    (실측 2026.11.15: 요일을 줘도 "다음 주 금요일"을 하루 틀렸다.) 한 줄이 한 주라서
+    "다음 주"는 말한 날이 든 줄의 바로 아랫줄이다.
+    """
+    from datetime import datetime as dt
+
+    store, uid = _store(tmp_path)
+    store.append_turn("s", uid, "user", "다음 주 금요일에 치과 가", ts=dt(2026, 11, 12, 20, 0))
+
+    lines = build_fact_prompt(
+        store.turns_after(uid, 0, 10), [], dt(2026, 11, 15, 9, 0)
+    ).splitlines()
+
+    start = lines.index("[달력]") + 1
+    assert lines[start].startswith("2026-11-09(월)") and "2026-11-12(목)" in lines[start]
+    assert "2026-11-20(금)" in lines[start + 1]  # 다음 주 금요일
+    assert lines[start + 4].startswith("2026-12-07(월)")  # 말한 주 뒤로 4주
+    assert lines[start + 5] == ""  # 거기서 끝난다
+
+
+def test_system_prompt_forbids_relative_dates_in_fact_text():
+    """사실은 몇 주씩 남는다 — "다음 주 금요일"이라고 적힌 문장은 일주일 뒤엔 틀린 말이 된다."""
+    from navi.memory.facts import FACT_SYSTEM
+
+    assert "상대적인 날짜" in FACT_SYSTEM and "실제 날짜" in FACT_SYSTEM
 
 
 def test_prompt_includes_navi_lines_as_context(tmp_path):
