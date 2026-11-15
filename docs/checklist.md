@@ -22,7 +22,9 @@ F1~F5는 서버 없이 이 저장소 안에서 끝난다. 순서대로 쌓인다
       F2 직전 커밋(`1333697`)을 꺼내 잰다 — 방법은 memory.md §5.
 - [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 구현 완료, PR 대기. 턴만 포트로 뗐고
       (`append_turn`이 `turn_id` 반환·`ts` 수용), 사실 메서드는 F3·F4에서 더한다.
-- [ ] **F3. 사실 추출** (`feat/memory-fact-extract`) — `fact` 테이블 + 추출 배치.
+- [ ] **F3. 사실 추출** (`feat/memory-fact-extract`) — 구현 완료, **실호출 확인(2026.11.15, Haiku 3회), 커밋·PR 대기.**
+      `fact`·`fact_cursor` 테이블 + 추출기(memory.md §4.1). 기본 config(추출 벤더 echo)에서는 꺼져 있다.
+      형식·지어내지 않기·모순 대체는 통과. 뒤집힌 사실이 "취소됐다"는 새 사실로 남는 것은 그대로 두기로 결정(memory.md §4.1).
 - [ ] **F4. 조립에 사실 주입** (`feat/conductor-facts`) — `recall_relevant_facts(query, k)` + `LlmRequest.context`.
 - [ ] **F5. 최근 창 축소** (`refactor/recent-window`) — 회상 정답률 유지 + 토큰 감소를 F1과 비교.
 - [ ] **F6. 문서 정합** — D6 표기 통일("보류"), "로컬 전용 해자" 문장 세 곳(aliveness §3.4·plan·arch 원칙 7).
