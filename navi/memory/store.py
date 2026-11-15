@@ -165,6 +165,24 @@ class MemoryStore(MemoryPort):
         rows = self._conn.execute(sql + " ORDER BY fact_id ASC", params).fetchall()
         return [_row_to_fact(r) for r in rows]
 
+    def recall_relevant_facts(self, user_id: int, query: str, k: int) -> list[Fact]:
+        """이번 턴에 넣을 사실 최대 k개 (MemoryPort). query는 아직 안 쓴다.
+
+        고르는 규칙은 점수가 아니라 종류다(facts.py FACT_KINDS 주석): **신상(profile)을
+        먼저 다 넣고**, 남는 자리를 나머지의 최신 것으로 채운다. 최근 순 하나로만 자르면
+        몇 달 전에 들은 가족 이름이 지난주 잡사실에 밀려난다.
+
+        순서는 신상 → 나머지, 각각 오래된 순. 새 사실은 각 구간의 끝에 붙으므로 앞쪽은
+        그대로다(프롬프트 캐시).
+        """
+        if k <= 0:
+            return []
+        active = self.active_facts(user_id, _now_iso())
+        profile = [f for f in active if f.kind == "profile"][-k:]
+        room = k - len(profile)
+        rest = [f for f in active if f.kind != "profile"]
+        return profile + (rest[-room:] if room > 0 else [])
+
     def fact_cursor(self, user_id: int) -> int:
         """추출기에 보인 마지막 turn_id — 없으면 0(처음부터)."""
         row = self._conn.execute(

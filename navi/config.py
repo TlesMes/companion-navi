@@ -205,6 +205,10 @@ class FactsConfig:
     min_new_user_turns: int  # 새 사용자 발화가 이만큼 쌓여야 LLM을 부른다
     max_rows_per_batch: int  # 한 번에 추출기에 보일 대화 행 수
     retry_backoff_s: float
+    # 한 턴에 넣는 사실 상한. 0이면 주입을 끈다(추출은 계속 돈다). 값은 추정이다 —
+    # 실측(2026.11.15, 6건)으로 건당 30토큰대라 50건이면 턴당 1,700토큰 안팎, 카드와
+    # 비슷한 크기다. 사실이 실제로 쌓인 뒤 고친다.
+    max_injected: int = 50
 
 
 @dataclass(frozen=True)
@@ -379,6 +383,7 @@ def _load_facts(raw: dict[str, Any]) -> FactsConfig:
         min_new_user_turns=int(f.get("min_new_user_turns", 4)),
         max_rows_per_batch=int(f.get("max_rows_per_batch", 40)),
         retry_backoff_s=float(f.get("retry_backoff_s", 1800)),
+        max_injected=int(f.get("max_injected", 50)),
     )
 
 

@@ -1,8 +1,8 @@
 """오케스트레이터 (01 문서 4.6절) — 페르소나+기억+트리거를 한 요청으로 조립.
 
 조립 순서는 캐싱 친화적으로 고정한다(마스터 플랜 — 입력비 0 수렴):
-[고정: 캐릭터 카드 시스템 프롬프트] → [매번 변함: 최근 턴 + 이번 트리거].
-relevant_facts(장기기억)는 Phase 4에서 이 사이에 끼어든다.
+[고정: 캐릭터 카드 시스템 프롬프트] → [가끔 변함: 기억한 사실] → [매번 변함: 최근 턴 +
+이번 트리거]. 사실은 추출이 돌 때만 바뀐다(design/memory.md).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import re
 
 from navi.config import Config
 from navi.memory import MemoryPort
-from navi.models import LlmRequest, Message, TurnKind
+from navi.models import Fact, LlmRequest, Message, TurnKind
 from navi.persona import CharacterCard
 
 log = logging.getLogger(__name__)
@@ -98,6 +98,38 @@ _FRAMES = {
 # 카드의 프로필 단계 구조 자체는 페르소나 스키마를 손볼 때 함께 정리한다.
 _NO_INTIMACY = 0.0
 
+# 기억한 사실 블록의 머리말. 프레임과 같은 제약이 걸린다 — **어느 카드에도 성립해야 한다.**
+# 그래서 "어떤 사이인지"는 말하지 않고(카드 소유) 쓰는 법만 말한다.
+#   · "'사용자'는 지금 너와 말하는 상대야": 사실 문장이 3인칭("사용자는 …")이라 그게
+#     누구인지 못 박아 둔다. 안 그러면 제3자 이야기로 읽힐 수 있다.
+#   · "대화 기록에는 없어도 실제로 있었던 일": 카드 공통 규칙(persona/card.py)이
+#     "이어지는 대화 기록만이 실제로 있었던 일이다"라고 말한다. 사실은 바로 그 기록
+#     밖에서 오므로, 풀어 주지 않으면 모델이 규칙을 따라 사실을 무시할 수 있다.
+#     system 쪽 규칙을 고치지 않은 건 사실이 없는 턴의 프롬프트를 건드리지 않기 위해서다.
+#   · "늘어놓지 마": 아는 걸 다 말하려 드는 게 가장 흔한 실패일 것이라 미리 막는다.
+#     **실측 전의 추정이다** — 실제로 어떻게 새는지 보고 고친다.
+# 사실은 재료와 마찬가지로 한국어 고정이라, 카드 언어가 다르면 같은 언어 규칙을 붙인다.
+_FACTS_HEADER = (
+    "[기억]\n"
+    "아래는 지난 대화들에서 네가 알게 된 것들이야. 지금 보이는 대화 기록에는 없어도 "
+    "실제로 있었던 일이야. '사용자'는 지금 너와 말하는 상대야. "
+    "이미 알고 있는 걸 전제로 말하되, 지금 이야기와 상관없으면 꺼내지 말고 "
+    "목록처럼 늘어놓지도 마."
+)
+_FACTS_LANGUAGE_RULE = " 아래는 한국어로 적혀 있지만 답은 {language}로 해."
+
+
+def _facts_block(facts: list[Fact], language: str) -> str:
+    """사실 목록 → 프롬프트 블록. 없으면 빈 문자열(머리말만 보내지 않는다)."""
+    if not facts:
+        return ""
+    header = _FACTS_HEADER
+    if language != _MATERIAL_LANGUAGE:
+        header += _FACTS_LANGUAGE_RULE.format(
+            language=_LANGUAGE_NAMES.get(language, language)
+        )
+    return "\n".join([header, *(f"- {f.text}" for f in facts)])
+
 
 class Conductor:
     def __init__(self, card: CharacterCard, memory: MemoryPort, config: Config):
@@ -130,18 +162,41 @@ class Conductor:
         turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
         messages = [Message(role=t.role, text=t.text) for t in turns]
         messages.extend(self._frame(kind, trigger_text, self._card.language))
+        facts = self._recall_facts(user_id, trigger_text)
         request = LlmRequest(
             system=self._card.system_prompt(_NO_INTIMACY),
             messages=messages,
             model=self._config.brain.model,
+            context=_facts_block(facts, self._card.language),
         )
+        # 사실 수와 글자 수를 매 턴 남긴다 — 사실이 늘어 전부 넣을 수 없게 되는 시점
+        # (검색 도입)의 근거다(design/memory.md §1 조건 3). 토큰이 아니라 글자인 건
+        # 벤더 중립으로 셀 수 있는 게 그것뿐이어서다.
         log.info(
-            "요청 조립 — system %d자, 메시지 %d개(기억 %d턴 + 트리거), model=%s",
-            len(request.system), len(messages), len(turns), request.model,
+            "요청 조립 — system %d자, 사실 %d건(%d자), 메시지 %d개(기억 %d턴 + 트리거), model=%s",
+            len(request.system), len(facts), len(request.context),
+            len(messages), len(turns), request.model,
         )
         log.debug("system 전문:\n%s", request.system)
+        log.debug("context 전문:\n%s", request.context)
         log.debug("messages: %s", messages)
         return request
+
+    def _recall_facts(self, user_id: int, trigger_text: str) -> list[Fact]:
+        """이번 턴에 넣을 사실. 꺼 두었거나(enabled·max_injected) 인출이 실패하면 빈 목록.
+
+        실패를 삼키는 이유: 사실은 있으면 좋은 것이지 턴의 전제가 아니다. 기억 저장소가
+        서버로 가면 인출은 네트워크 호출이 되는데, 그게 늦거나 죽었다고 나비가 대답을
+        못 하면 안 된다. 최근 턴 인출은 삼키지 않는다 — 그건 없으면 대화가 아니다.
+        """
+        cfg = self._config.facts
+        if not cfg.enabled or cfg.max_injected <= 0:
+            return []
+        try:
+            return self._memory.recall_relevant_facts(user_id, trigger_text, cfg.max_injected)
+        except Exception:
+            log.warning("사실 인출 실패 — 이번 턴은 사실 없이 간다", exc_info=True)
+            return []
 
     @staticmethod
     def _frame(kind: TurnKind, trigger_text: str, language: str = "ko") -> list[Message]:

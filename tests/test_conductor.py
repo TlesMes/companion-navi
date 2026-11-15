@@ -16,7 +16,7 @@ from navi.config import (
     WakeWordConfig,
 )
 from navi.memory import MemoryPort, MemoryStore
-from navi.models import Turn, TurnKind, VoiceProfile
+from navi.models import Fact, Turn, TurnKind, VoiceProfile
 from navi.persona import CharacterCard
 
 CARD_PATH = Path(__file__).parents[1] / "personas" / "navi.yaml"
@@ -80,8 +80,10 @@ def make_conductor(config: Config) -> tuple[Conductor, MemoryStore, int]:
 class _PortOnlyMemory(MemoryPort):
     """포트 메서드만 있는 기억 — SQLite도, 모드·피드·친밀도 메서드도 없다."""
 
-    def __init__(self, turns: list[Turn]):
+    def __init__(self, turns: list[Turn], facts: list[Fact] | None = None):
         self._turns = turns
+        self._facts = facts or []
+        self.fact_queries: list[tuple[str, int]] = []
 
     def append_turn(self, session_id, user_id, role, text, trigger_type="manual", *, ts=None):
         raise AssertionError("조립은 기억에 쓰지 않는다")
@@ -91,6 +93,10 @@ class _PortOnlyMemory(MemoryPort):
 
     def recall_recent_for_user(self, user_id, n):
         return self._turns[-n:]
+
+    def recall_relevant_facts(self, user_id, query, k):
+        self.fact_queries.append((query, k))
+        return self._facts[:k]
 
 
 def test_conductor_needs_nothing_beyond_the_port(tmp_path):
@@ -378,3 +384,130 @@ async def test_e2e_with_echo_brain(tmp_path):
     store.append_turn("s1", uid, "assistant", result.full_text)
     store.log_usage("llm", result.usage)
     assert [t.text for t in store.recall_recent("s1", 10)] == ["안녕 나비", "안녕 나비"]
+
+
+# --- 사실 주입 (design/memory.md §3) ---
+
+
+def _fact(fact_id: int, text: str, kind: str = "profile") -> Fact:
+    return Fact(
+        fact_id=fact_id, kind=kind, text=text, source_turn_id=None,
+        status="active", expires_at=None, created_at=datetime.now(UTC),
+    )
+
+
+def _conductor_with(tmp_path, memory, **facts_overrides) -> Conductor:
+    config = make_config(tmp_path)
+    if facts_overrides:
+        config = replace(config, facts=replace(config.facts, **facts_overrides))
+    return Conductor(
+        card=CharacterCard.load(config.persona_card_path), memory=memory, config=config
+    )
+
+
+def test_facts_go_into_context_not_system_or_messages(tmp_path):
+    """배치 순서 [카드] → [사실] → [최근 턴]의 조립 쪽 절반 — 사실은 제 필드에만 들어간다.
+
+    system에 섞이면 사실이 하나 늘 때마다 카드의 캐시가 깨지고, messages에 섞이면
+    사용자가 한 말처럼 읽힌다.
+    """
+    facts = [_fact(1, "사용자의 동생 이름은 민준이다."), _fact(2, "사용자는 커피를 못 마신다.")]
+    with_facts = _conductor_with(tmp_path, _PortOnlyMemory([], facts))
+    without = _conductor_with(tmp_path, _PortOnlyMemory([]))
+
+    request = with_facts.build_request("뭐해?", user_id=1, session_id="s")
+    bare = without.build_request("뭐해?", user_id=1, session_id="s")
+
+    assert "- 사용자의 동생 이름은 민준이다.\n- 사용자는 커피를 못 마신다." in request.context
+    assert request.system == bare.system
+    assert request.messages == bare.messages
+    assert "민준" not in request.system
+
+
+def test_no_facts_means_no_context_block(tmp_path):
+    """사실이 없으면 머리말도 안 보낸다 — 빈 목록 위의 "아래는 네가 알게 된 것들"은 거짓말이다."""
+    conductor = _conductor_with(tmp_path, _PortOnlyMemory([]))
+
+    assert conductor.build_request("뭐해?", user_id=1, session_id="s").context == ""
+
+
+def test_fact_recall_gets_the_trigger_as_query_and_the_configured_cap(tmp_path):
+    """query는 지금 안 쓰이지만 넘긴다 — 검색을 붙일 때 호출부를 안 고치기 위한 자리."""
+    memory = _PortOnlyMemory([], [_fact(i, f"사실{i}") for i in range(1, 6)])
+    conductor = _conductor_with(tmp_path, memory, max_injected=3)
+
+    request = conductor.build_request("동생 얘기 해줘", user_id=1, session_id="s")
+
+    assert memory.fact_queries == [("동생 얘기 해줘", 3)]
+    assert request.context.count("\n- ") == 3
+
+
+def test_injection_off_never_touches_the_facts_store(tmp_path):
+    """끄는 길은 둘이다 — enabled=false(기능 전체), max_injected=0(추출은 두고 주입만)."""
+
+    class _Untouchable(_PortOnlyMemory):
+        def recall_relevant_facts(self, user_id, query, k):
+            raise AssertionError("꺼 둔 주입이 사실을 인출했다")
+
+    for overrides in ({"enabled": False}, {"max_injected": 0}):
+        conductor = _conductor_with(tmp_path, _Untouchable([]), **overrides)
+        assert conductor.build_request("뭐해?", user_id=1, session_id="s").context == ""
+
+
+def test_fact_recall_failure_does_not_kill_the_turn(tmp_path):
+    """사실은 턴의 전제가 아니다 — 인출이 죽어도 나비는 대답한다(사실 없이)."""
+
+    class _Broken(_PortOnlyMemory):
+        def recall_relevant_facts(self, user_id, query, k):
+            raise RuntimeError("기억 저장소가 응답하지 않는다")
+
+    conductor = _conductor_with(tmp_path, _Broken([]))
+
+    request = conductor.build_request("뭐해?", user_id=1, session_id="s")
+
+    assert request.context == ""
+    assert request.messages[-1].text == "뭐해?"
+
+
+def test_facts_header_adds_a_language_rule_only_for_non_korean_cards():
+    """사실은 한국어 고정이라 재료와 같은 문제가 난다 — 다른 언어 카드가 한국어로 샌다."""
+    from navi.conductor import _facts_block
+
+    facts = [_fact(1, "사용자는 개발자다.")]
+
+    assert "일본어로 해" in _facts_block(facts, "ja")
+    assert "한국어로 적혀 있지만" not in _facts_block(facts, "ko")
+
+
+def test_facts_reach_the_request_from_a_real_store(tmp_path):
+    """저장소 → 포트 → 조립이 이어진다. 대체된 사실과 만료된 사실은 안 들어간다."""
+    config = make_config(tmp_path)
+    conductor, store, uid = make_conductor(config)
+    old = store.insert_fact(uid, "plan", "사용자는 부산으로 이사한다.", source_turn_id=None,
+                            expires_at=None)
+    new = store.insert_fact(uid, "plan", "사용자는 이사를 취소했다.", source_turn_id=None,
+                            expires_at=None)
+    store.supersede_fact(uid, old, new)
+    store.insert_fact(uid, "plan", "사용자는 어제 면접을 봤다.", source_turn_id=None,
+                      expires_at="2000-01-01T00:00:00+00:00")
+    store.insert_fact(uid, "profile", "사용자는 개발자다.", source_turn_id=None, expires_at=None)
+
+    context = conductor.build_request("뭐해?", user_id=uid, session_id="s").context
+
+    assert "이사를 취소했다" in context and "개발자다" in context
+    assert "부산으로 이사한다" not in context
+    assert "면접" not in context
+
+
+def test_facts_header_overrides_the_cards_record_only_rule(tmp_path):
+    """카드 공통 규칙은 "대화 기록만이 실제"라고 말한다 — 사실은 그 기록 밖에서 온다.
+
+    머리말이 이걸 풀어 주지 않으면 규칙을 잘 따르는 모델일수록 사실을 무시한다.
+    카드 쪽 문구가 바뀌면 이 짝도 다시 봐야 해서 둘을 한 테스트에 묶는다.
+    """
+    conductor = _conductor_with(tmp_path, _PortOnlyMemory([], [_fact(1, "사용자는 개발자다.")]))
+
+    request = conductor.build_request("뭐해?", user_id=1, session_id="s")
+
+    assert "이어지는 대화 기록만이 실제로 있었던 일이다" in request.system
+    assert "대화 기록에는 없어도 실제로 있었던 일" in request.context

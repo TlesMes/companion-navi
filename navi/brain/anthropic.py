@@ -50,6 +50,17 @@ class AnthropicBrain(BrainAdapter):
                 "cache_control": {"type": "ephemeral"},
             }
         ]
+        if request.context:
+            # 카드 뒤 별도 블록 + 자체 캐시 경계. 사실이 바뀌면 이 블록부터만 다시 쓰이고
+            # 카드 경계는 그대로 맞는다. 사실은 추출이 돌 때만 바뀌므로 그 사이 턴들은
+            # 카드+사실을 통째로 읽는다(모델별 최소 프리픽스를 넘길 때 — 모듈 독스트링).
+            system.append(
+                {
+                    "type": "text",
+                    "text": request.context,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
         messages = [
             {"role": m.role, "content": m.text}
             for m in _normalize(request.messages)

@@ -133,6 +133,7 @@ memory:
     min_new_user_turns: 4   # 새 사용자 발화가 이만큼 쌓이면 추출 1회(LLM 1콜)
     max_rows_per_batch: 40  # 한 번에 추출기에 보일 대화 행 수. 밀린 건 다음 tick이 이어 먹는다
     retry_backoff_s: 1800   # 추출 실패 뒤 재시도 간격
+    max_injected: 50        # 한 턴에 넣는 사실 상한(신상 먼저, 나머지는 최신 순). 0이면 주입 끔
 
 persona:
   # 인격 교체는 이 한 줄. navi.yaml = 나비 한국어 기본 페르소나.

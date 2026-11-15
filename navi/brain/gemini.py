@@ -53,7 +53,13 @@ class GeminiBrain(BrainAdapter):
             model=request.model,
             contents=contents,
             config=types.GenerateContentConfig(
-                system_instruction=request.system,
+                # 사실 블록은 카드 뒤에 붙인다 — implicit caching은 앞부분 일치로 걸리므로
+                # 덜 변하는 카드가 앞이어야 한다(LlmRequest 독스트링).
+                system_instruction=(
+                    f"{request.system}\n\n{request.context}"
+                    if request.context
+                    else request.system
+                ),
                 # 잡담 티어는 즉답성 우선 — thinking이 첫 토큰을 수 초~수십 초 지연시킴
                 # (실측 2026.06.13). D1 깊은 대화 티어 도입 시 티어별로 재검토.
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
