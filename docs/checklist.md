@@ -20,12 +20,14 @@ F1~F5는 서버 없이 이 저장소 안에서 끝난다. 순서대로 쌓인다
       테스트 정리(PR #53)도 머지했다.
 - [ ] **F1. 기준선 측정** — **미룸(2026.11.15, 사용자 판단: 구현 먼저).** 전후 수치가 필요해지면
       F2 직전 커밋(`1333697`)을 꺼내 잰다 — 방법은 memory.md §5.
-- [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 구현 완료, PR 대기. 턴만 포트로 뗐고
+- [x] **F2. `MemoryPort` 추출** — 완료(2026.11.15, PR #54 머지). 턴만 포트로 뗐고
       (`append_turn`이 `turn_id` 반환·`ts` 수용), 사실 메서드는 F3·F4에서 더한다.
-- [ ] **F3. 사실 추출** (`feat/memory-fact-extract`) — 구현 완료, **실호출 확인(2026.11.15, Haiku 3회), 커밋·PR 대기.**
+- [x] **F3. 사실 추출** — 완료(2026.11.15, PR #55 머지). 실호출 확인(Haiku 3회).
       `fact`·`fact_cursor` 테이블 + 추출기(memory.md §4.1). 기본 config(추출 벤더 echo)에서는 꺼져 있다.
       형식·지어내지 않기·모순 대체는 통과. 뒤집힌 사실이 "취소됐다"는 새 사실로 남는 것은 그대로 두기로 결정(memory.md §4.1).
-- [ ] **F4. 조립에 사실 주입** (`feat/conductor-facts`) — `recall_relevant_facts(query, k)` + `LlmRequest.context`.
+- [ ] **F4. 조립에 사실 주입** (`feat/conductor-facts`) — 구현 완료, **실호출 확인(2026.11.15, Haiku 5회), 커밋·PR 대기.**
+      `recall_relevant_facts(user_id, query, k)` + `LlmRequest.context`(memory.md §4.2). 신상 먼저, 나머지는 최신 순, 상한 50.
+      창 밖 사실을 답하고, 무관한 턴에 늘어놓지 않고, 취소된 일정을 되물었다. 안 본 것: 사실 수십 건·선제 발화 턴·다른 언어 카드.
 - [ ] **F5. 최근 창 축소** (`refactor/recent-window`) — 회상 정답률 유지 + 토큰 감소를 F1과 비교.
 - [ ] **F6. 문서 정합** — D6 표기 통일("보류"), "로컬 전용 해자" 문장 세 곳(aliveness §3.4·plan·arch 원칙 7).
 - [ ] **F7. 서버 착수 전 결정** — 프로토콜(D22)·인증(D23)·쿼터 한도(D24)·작업 큐(D25),

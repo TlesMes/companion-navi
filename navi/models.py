@@ -87,12 +87,18 @@ class LlmRequest:
     """Conductor가 조립하고 Brain 어댑터가 벤더 형식으로 변환하는 요청.
 
     캐싱 친화 순서로 조립된다(마스터 플랜 — 입력비 0 수렴):
-    system(캐릭터 카드, 고정) → messages(최근 턴 + 이번 트리거, 매번 변함).
+    system(캐릭터 카드, 고정) → context(기억한 사실, 가끔 변함) → messages(최근 턴 +
+    이번 트리거, 매번 변함). 덜 변하는 것이 앞이다.
+
+    context를 system에 이어 붙이지 않고 필드로 둔 이유: 어댑터가 둘 사이에 캐시 경계를
+    놓을 수 있어야 한다. 사실이 하나 늘 때 카드까지 다시 과금되면 안 된다. 벤더가 그런
+    경계를 모르면 어댑터가 system 뒤에 붙이면 된다 — 순서만 지키면 된다.
     """
 
     system: str
     messages: list[Message]  # 시간순, 마지막이 이번 트리거
     model: str
+    context: str = ""  # 빈 문자열 = 넣을 사실 없음. 어댑터는 빈 블록을 보내지 않는다
 
 
 @dataclass(frozen=True)

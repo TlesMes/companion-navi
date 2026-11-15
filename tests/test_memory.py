@@ -271,3 +271,46 @@ def test_append_turn_reads_naive_timestamp_as_local(tmp_path):
 
 def test_memory_store_satisfies_the_port(tmp_path):
     assert isinstance(MemoryStore(tmp_path / "t.db"), MemoryPort)
+
+
+# --- 사실 인출 (MemoryPort.recall_relevant_facts) ---
+
+
+def _add_fact(store, uid, kind, text):
+    return store.insert_fact(uid, kind, text, source_turn_id=None, expires_at=None)
+
+
+def test_relevant_facts_keep_profile_when_the_cap_is_tight(tmp_path):
+    """오래된 신상이 최근 잡사실에 밀리지 않는다 — 종류를 둔 이유가 이것이다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    _add_fact(store, uid, "profile", "사용자의 동생 이름은 민준이다.")  # 가장 오래됨
+    for i in range(5):
+        _add_fact(store, uid, "ongoing", f"요즘 일 {i}")
+
+    texts = [f.text for f in store.recall_relevant_facts(uid, "아무 말", 3)]
+
+    assert texts == ["사용자의 동생 이름은 민준이다.", "요즘 일 3", "요즘 일 4"]
+
+
+def test_relevant_facts_order_is_stable_when_a_fact_is_added(tmp_path):
+    """새 사실은 제 구간 끝에 붙는다 — 앞쪽이 그대로여야 프롬프트 캐시가 산다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    _add_fact(store, uid, "preference", "사용자는 커피를 못 마신다.")
+    _add_fact(store, uid, "profile", "사용자는 개발자다.")
+    before = [f.text for f in store.recall_relevant_facts(uid, "", 10)]
+
+    _add_fact(store, uid, "plan", "사용자는 제주도에 간다.")
+    after = [f.text for f in store.recall_relevant_facts(uid, "", 10)]
+
+    assert before == ["사용자는 개발자다.", "사용자는 커피를 못 마신다."]  # 신상이 앞
+    assert after[: len(before)] == before
+
+
+def test_relevant_facts_with_no_room_returns_nothing(tmp_path):
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    _add_fact(store, uid, "profile", "사용자는 개발자다.")
+
+    assert store.recall_relevant_facts(uid, "", 0) == []
