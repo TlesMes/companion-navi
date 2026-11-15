@@ -16,7 +16,8 @@
 방향은 [design/service.md](./design/service.md), 구현 계획은 [design/memory.md](./design/memory.md).
 F1~F5는 서버 없이 이 저장소 안에서 끝난다. 순서대로 쌓인다.
 
-- [ ] **F0. 선행 정리** — PR #50~#52 머지, `docs/service-design`·`test/prune-redundant-tests` 반영.
+- [x] **F0. 선행 정리** — 완료(2026.11.15). PR #50~#52 머지, 설계 문서 main 반영.
+      테스트 정리는 PR #53으로 올렸다(머지 대기 — F1과 파일이 겹치지 않아 기다릴 필요는 없다).
 - [ ] **F1. 기준선 측정** (`research/memory-baseline`) — 턴당 입력 토큰 + 회상 테스트(memory.md §5).
       실제 LLM 호출이 들어 실행 전 비용 확인.
 - [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 턴·사실만. `append_turn`이 `turn_id` 반환·`ts` 수용.
