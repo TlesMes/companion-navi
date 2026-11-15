@@ -47,37 +47,8 @@ def test_pcm_to_samples_is_little_endian():
     assert list(_pcm_to_samples(b"\x01\x00")) == [1]
 
 
-# --- FakeWakeWord ---
-
-
-def test_fake_detect_at_fires_on_nth_call():
-    ww = FakeWakeWord(detect_at=3)
-    chunk = _frame([0])
-    assert [ww.detect(chunk) for _ in range(5)] == [False, False, True, False, False]
-
-
-def test_fake_trigger_callback_takes_priority():
-    # trigger가 있으면 detect_at 무시하고 콜백 결과를 따른다
-    ww = FakeWakeWord(detect_at=1, trigger=lambda c: c.sample_rate == SR)
-    assert ww.detect(_frame([0])) is True
-    assert ww.detect(AudioChunk(pcm=b"", sample_rate=8000)) is False
-
-
-def test_fake_no_trigger_never_fires():
-    ww = FakeWakeWord()
-    assert not any(ww.detect(_frame([0])) for _ in range(10))
-
-
-def test_fake_declares_frame_length_and_sample_rate():
-    ww = FakeWakeWord(frame_length=512, sample_rate=SR)
-    assert ww.frame_length == 512
-    assert ww.sample_rate == SR
-    assert isinstance(ww, WakeWord)
-
-
-def test_fake_close_is_noop():
-    FakeWakeWord().close()  # 예외 없이 통과
-
+# FakeWakeWord 자체의 테스트는 두지 않는다 — 테스트 대역이고, 틀리면 그걸 쓰는
+# test_listening.py(청취 상태머신)가 먼저 깨진다.
 
 # --- 팩토리 ---
 
@@ -112,7 +83,7 @@ def test_porcupine_is_wakeword_subclass():
     assert issubclass(PorcupineWakeWord, WakeWord)
 
 
-# --- Vosk (채택 엔진) ---
+# --- Vosk (보존 — D7에서 openWakeWord로 확정, 어댑터는 남겨 둠) ---
 
 
 def test_strip_spaces_absorbs_korean_word_boundaries():
