@@ -17,10 +17,11 @@
 F1~F5는 서버 없이 이 저장소 안에서 끝난다. 순서대로 쌓인다.
 
 - [x] **F0. 선행 정리** — 완료(2026.11.15). PR #50~#52 머지, 설계 문서 main 반영.
-      테스트 정리는 PR #53으로 올렸다(머지 대기 — F1과 파일이 겹치지 않아 기다릴 필요는 없다).
-- [ ] **F1. 기준선 측정** (`research/memory-baseline`) — 턴당 입력 토큰 + 회상 테스트(memory.md §5).
-      실제 LLM 호출이 들어 실행 전 비용 확인.
-- [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 턴·사실만. `append_turn`이 `turn_id` 반환·`ts` 수용.
+      테스트 정리(PR #53)도 머지했다.
+- [ ] **F1. 기준선 측정** — **미룸(2026.11.15, 사용자 판단: 구현 먼저).** 전후 수치가 필요해지면
+      F2 직전 커밋(`1333697`)을 꺼내 잰다 — 방법은 memory.md §5.
+- [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 구현 완료, PR 대기. 턴만 포트로 뗐고
+      (`append_turn`이 `turn_id` 반환·`ts` 수용), 사실 메서드는 F3·F4에서 더한다.
 - [ ] **F3. 사실 추출** (`feat/memory-fact-extract`) — `fact` 테이블 + 추출 배치.
 - [ ] **F4. 조립에 사실 주입** (`feat/conductor-facts`) — `recall_relevant_facts(query, k)` + `LlmRequest.context`.
 - [ ] **F5. 최근 창 축소** (`refactor/recent-window`) — 회상 정답률 유지 + 토큰 감소를 F1과 비교.

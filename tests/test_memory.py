@@ -1,7 +1,8 @@
 import json
 import sqlite3
+from datetime import UTC, datetime, timedelta
 
-from navi.memory import MemoryStore
+from navi.memory import MemoryPort, MemoryStore
 from navi.models import Usage
 
 
@@ -227,3 +228,46 @@ def test_setting_upsert_and_persist(tmp_path):
     assert reopened.get_setting("brain.vendor") == "echo"
     count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM setting").fetchone()[0]
     assert count == 1
+
+
+# --- 기억 포트(MemoryPort) 계약 — design/memory.md §3 ---
+
+
+def test_append_turn_returns_id_that_recall_carries(tmp_path):
+    """사실이 출처 턴을 가리키려면 적재가 식별자를 돌려주고, 인출한 턴이 그걸 들고 있어야 한다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+
+    first = store.append_turn("s1", uid, "user", "하나")
+    second = store.append_turn("s1", uid, "assistant", "둘")
+
+    assert second > first
+    assert [t.turn_id for t in store.recall_recent_for_user(uid, 10)] == [first, second]
+
+
+def test_append_turn_keeps_given_timestamp(tmp_path):
+    """지난 대화를 옮겨 넣을 때 발화 시각이 '지금'으로 뭉개지면 안 된다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    spoken = datetime(2026, 5, 1, 9, 30, tzinfo=UTC)
+
+    store.append_turn("s1", uid, "user", "지난달 얘기", ts=spoken)
+
+    assert store.recall_recent_for_user(uid, 1)[0].created_at == spoken
+
+
+def test_append_turn_reads_naive_timestamp_as_local(tmp_path):
+    """tz 없는 시각은 로컬로 보고 UTC로 저장한다 — 피드 수집의 now와 같은 약속."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    naive = datetime(2026, 5, 1, 9, 30)
+
+    store.append_turn("s1", uid, "user", "x", ts=naive)
+
+    stored = store.recall_recent_for_user(uid, 1)[0].created_at
+    assert stored.utcoffset() == timedelta(0)
+    assert stored == naive.astimezone(UTC)
+
+
+def test_memory_store_satisfies_the_port(tmp_path):
+    assert isinstance(MemoryStore(tmp_path / "t.db"), MemoryPort)

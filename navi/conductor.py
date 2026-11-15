@@ -11,7 +11,7 @@ import logging
 import re
 
 from navi.config import Config
-from navi.memory import MemoryStore
+from navi.memory import MemoryPort
 from navi.models import LlmRequest, Message, TurnKind
 from navi.persona import CharacterCard
 
@@ -92,8 +92,15 @@ _FRAMES = {
 }
 
 
+# 친밀도는 폐기됐다(D9, aliveness.md §3.3). 저장소의 값은 올리는 곳이 없어 늘 0이었고,
+# 그래서 카드의 첫 프로필만 골라 왔다. 그 0을 기억에서 읽어 오던 것을 상수로 바꿨다 —
+# 거동은 같고, 조립이 기억 포트(MemoryPort)에 폐기된 메서드를 요구하지 않게 된다.
+# 카드의 프로필 단계 구조 자체는 페르소나 스키마를 손볼 때 함께 정리한다.
+_NO_INTIMACY = 0.0
+
+
 class Conductor:
-    def __init__(self, card: CharacterCard, memory: MemoryStore, config: Config):
+    def __init__(self, card: CharacterCard, memory: MemoryPort, config: Config):
         self._card = card
         self._memory = memory
         self._config = config
@@ -120,18 +127,17 @@ class Conductor:
     ) -> LlmRequest:
         # session_id는 Phase 1에선 미사용 — 단기기억을 세션 경계 없이 인출해야
         # "껐다 켜도 어제 대화를 기억"이 성립한다. 계약(4.6) 유지 차원에서 받아둔다.
-        intimacy = self._memory.get_intimacy(user_id)
         turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
         messages = [Message(role=t.role, text=t.text) for t in turns]
         messages.extend(self._frame(kind, trigger_text, self._card.language))
         request = LlmRequest(
-            system=self._card.system_prompt(intimacy),
+            system=self._card.system_prompt(_NO_INTIMACY),
             messages=messages,
             model=self._config.brain.model,
         )
         log.info(
-            "요청 조립 — system %d자, 메시지 %d개(기억 %d턴 + 트리거), 친밀도 %.0f, model=%s",
-            len(request.system), len(messages), len(turns), intimacy, request.model,
+            "요청 조립 — system %d자, 메시지 %d개(기억 %d턴 + 트리거), model=%s",
+            len(request.system), len(messages), len(turns), request.model,
         )
         log.debug("system 전문:\n%s", request.system)
         log.debug("messages: %s", messages)
