@@ -972,3 +972,101 @@ async def test_swap_brain_is_blocked_while_playing(tmp_path, monkeypatch):
     with pytest.raises(SwapBusy):
         await swap.swap_brain("gemini")
     assert store.get_setting("brain.vendor") is None
+
+
+# --- 두뇌 HTTP 표면 -------------------------------------------------------
+
+
+def test_get_brain_masks_the_key(tmp_path, monkeypatch):
+    """응답 어디에도 키 원문이 없어야 한다 — 이 요청은 GUI가 매번 부른다."""
+    swap, *_ = _brain_swap(tmp_path, monkeypatch)
+    client, *_ = _make(swap=swap)
+
+    res = client.get("/brain")
+    assert res.status_code == 200
+    assert "AIzaSy-existing-gemini-key" not in res.text
+    assert res.json()["current"] == "echo"
+
+
+def test_post_brain_bad_key_is_422(tmp_path, monkeypatch):
+    """키 거부(422)와 네트워크(502)를 가른다 — 사용자가 할 일이 다르다."""
+    from navi.brain.base import BrainAuthError
+
+    swap, *_ = _brain_swap(
+        tmp_path, monkeypatch, new_brain=_FakeBrain(fails=BrainAuthError("키가 거부됐어요"))
+    )
+    client, *_ = _make(swap=swap)
+    res = client.post("/brain", json={"vendor": "anthropic", "api_key": "sk-ant-bad-key-value"})
+
+    assert res.status_code == 422
+    assert "sk-ant-bad-key-value" not in res.text  # 실패 응답에도 원문이 없어야 한다
+
+
+def test_post_brain_network_failure_is_502(tmp_path, monkeypatch):
+    from navi.brain.base import BrainUnavailable
+
+    swap, *_ = _brain_swap(
+        tmp_path, monkeypatch, new_brain=_FakeBrain(fails=BrainUnavailable("끊김"))
+    )
+    client, *_ = _make(swap=swap)
+    assert client.post("/brain", json={"vendor": "anthropic", "api_key": "k"}).status_code == 502
+
+
+class _RecordingStore:
+    """set_setting만 기록하는 대역.
+
+    TestClient는 앱을 별도 스레드에서 돌려 진짜 MemoryStore의 단일 스레드 규약에 걸린다
+    (실제 데몬은 컨트롤 서버와 턴이 같은 이벤트 루프라 무관 — server.py 상단 주석).
+    영속 자체는 SwapRuntime 층 테스트가 진짜 store로 검증한다.
+    """
+
+    def __init__(self):
+        self.saved = {}
+
+    def set_setting(self, key, value):
+        self.saved[key] = value
+
+
+def test_post_brain_succeeds_and_persists(tmp_path, monkeypatch):
+    swap, pipeline, _store, made = _brain_swap(tmp_path, monkeypatch)
+    swap._store = _RecordingStore()
+    client, *_ = _make(swap=swap)
+
+    res = client.post("/brain", json={"vendor": "gemini"})
+    assert res.status_code == 200 and res.json()["vendor"] == "gemini"
+    assert pipeline._brain is made
+    assert swap._store.saved == {"brain.vendor": "gemini"}
+
+
+def test_post_brain_unknown_vendor_is_404(tmp_path, monkeypatch):
+    swap, *_ = _brain_swap(tmp_path, monkeypatch)
+    client, *_ = _make(swap=swap)
+    assert client.post("/brain", json={"vendor": "openai"}).status_code == 404
+
+
+def test_post_brain_while_playing_is_409(tmp_path, monkeypatch):
+    swap, pipeline, *_ = _brain_swap(tmp_path, monkeypatch)
+    pipeline._mouth._playing = True
+    client, *_ = _make(swap=swap)
+    assert client.post("/brain", json={"vendor": "gemini"}).status_code == 409
+
+
+def test_brain_endpoints_503_without_swap_runtime():
+    """swap 미주입 세션 — 두뇌 API도 기존 교체 API와 같은 503."""
+    client, *_ = _make()
+    assert client.get("/brain").status_code == 503
+    assert client.post("/brain", json={"vendor": "echo"}).status_code == 503
+
+
+async def test_swap_brain_updates_reported_vendor(tmp_path, monkeypatch):
+    """교체 뒤 brain_state가 새 벤더를 보고해야 한다.
+
+    키 필드만 갈고 vendor를 안 갈면 파이프라인은 새 두뇌로 도는데 GET /brain은 옛
+    벤더를 보고한다 — GUI가 설정을 다시 열면 틀린 값을 그린다(실기에서 발견).
+    """
+    swap, *_ = _brain_swap(tmp_path, monkeypatch)
+    assert swap.brain_state()["current"] == "echo"
+
+    result = await swap.swap_brain("gemini")
+    assert result["vendor"] == "gemini"
+    assert swap.brain_state()["current"] == "gemini"
