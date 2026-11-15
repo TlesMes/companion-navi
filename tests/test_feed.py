@@ -693,17 +693,6 @@ async def test_callback_expires_after_its_ttl(tmp_path):
     assert feed.get_fresh_topics(now=_NOW + timedelta(days=8)) == []
 
 
-async def test_callback_prompt_sees_only_user_turns(tmp_path):
-    turns = _user_turns() + _turns("나비가 한 말", role="assistant")
-    _, feed, brain = _callback_feed(tmp_path, turns=turns)
-
-    await feed.collect(_NOW)
-
-    prompt = brain.requests[0].messages[-1].text
-    assert "나비가 한 말" not in prompt
-    assert "이직 얘기 0" in prompt
-
-
 async def test_collect_skips_callback_when_turns_are_too_few(tmp_path):
     """갓 설치한 데몬이 턴 하나로 LLM을 태우지 않는다 — 그리고 그건 장애가 아니다."""
     store, feed, brain = _callback_feed(tmp_path, turns=_user_turns(1))

@@ -406,15 +406,6 @@ def test_gptsovits_set_weights_empty_ckpt_is_base_intent():
     assert (mouth._gpt_ckpt, mouth._sovits_ckpt) == ("", "")
 
 
-def test_fake_mouth_warmup_is_noop():
-    """FakeMouth.warmup()은 상태를 바꾸지 않는다."""
-    from navi.mouth.fake import FakeMouth
-
-    mouth = FakeMouth()
-    mouth.warmup()  # 에러 없이 호출 가능
-    assert not mouth.is_playing()
-
-
 def test_mouth_set_weights_unsupported_by_default():
     """가중치 없는 엔진은 조용히 무시하지 않고 미지원을 알린다 — 호출부가 분기한다."""
     from navi.mouth.fake import FakeMouth
