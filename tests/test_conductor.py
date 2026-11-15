@@ -84,6 +84,7 @@ class _PortOnlyMemory(MemoryPort):
         self._turns = turns
         self._facts = facts or []
         self.fact_queries: list[tuple[str, int]] = []
+        self.windows: list[tuple[int, int]] = []
 
     def append_turn(self, session_id, user_id, role, text, trigger_type="manual", *, ts=None):
         raise AssertionError("조립은 기억에 쓰지 않는다")
@@ -93,6 +94,10 @@ class _PortOnlyMemory(MemoryPort):
 
     def recall_recent_for_user(self, user_id, n):
         return self._turns[-n:]
+
+    def recall_working_window(self, user_id, min_rows, max_rows):
+        self.windows.append((min_rows, max_rows))
+        return self._turns[-max_rows:]
 
     def recall_relevant_facts(self, user_id, query, k):
         self.fact_queries.append((query, k))
@@ -511,3 +516,55 @@ def test_facts_header_overrides_the_cards_record_only_rule(tmp_path):
 
     assert "이어지는 대화 기록만이 실제로 있었던 일이다" in request.system
     assert "대화 기록에는 없어도 실제로 있었던 일" in request.context
+
+
+# --- 줄어드는 대화 창 ---
+
+
+def test_conductor_asks_memory_for_the_shrinking_window_with_both_bounds(tmp_path):
+    """창 길이는 조립이 아니라 기억이 정한다 — 조립은 하한·상한만 건넨다."""
+    memory = _PortOnlyMemory([])
+    conductor = _conductor_with(tmp_path, memory)
+    config = make_config(tmp_path)
+
+    conductor.build_request("뭐해?", user_id=1, session_id="s")
+
+    assert memory.windows == [(config.recent_turns_min, config.recent_turns)]
+
+
+def test_window_does_not_shrink_when_facts_are_not_injected(tmp_path):
+    """창을 줄여도 되는 근거는 "사실이 대신한다"뿐이다 — 주입을 끄면 고정 창으로 돌아간다.
+
+    (추출은 돌고 주입만 끈 상태에서 창까지 줄면 그 구간은 어디에도 없다.)
+    """
+    for overrides in ({"enabled": False}, {"max_injected": 0}):
+        config = replace(
+            make_config(tmp_path), recent_turns=6, recent_turns_min=2,
+        )
+        config = replace(config, facts=replace(config.facts, **overrides))
+        store = MemoryStore(tmp_path / f"{'-'.join(overrides)}.db")
+        uid = store.ensure_user("친구")
+        last = 0
+        for i in range(10):
+            last = store.append_turn("s", uid, "user", f"턴{i}")
+        store.set_fact_cursor(uid, last)  # 추출은 따라잡았다
+        conductor = Conductor(
+            card=CharacterCard.load(config.persona_card_path), memory=store, config=config
+        )
+
+        request = conductor.build_request("트리거", user_id=uid, session_id="s")
+
+        assert len(request.messages) == 6 + 1  # 상한 그대로 + 트리거
+
+
+def test_window_shrinks_end_to_end_when_extraction_has_caught_up(tmp_path):
+    config = replace(make_config(tmp_path), recent_turns=6, recent_turns_min=2)
+    conductor, store, uid = make_conductor(config)
+    last = 0
+    for i in range(10):
+        last = store.append_turn("s", uid, "user", f"턴{i}")
+    store.set_fact_cursor(uid, last)
+
+    request = conductor.build_request("트리거", user_id=uid, session_id="s")
+
+    assert [m.text for m in request.messages] == ["턴8", "턴9", "트리거"]

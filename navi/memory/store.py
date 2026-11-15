@@ -103,6 +103,19 @@ class MemoryStore(MemoryPort):
         ).fetchall()
         return [_row_to_turn(r) for r in rows]
 
+    def recall_working_window(self, user_id: int, min_rows: int, max_rows: int) -> list[Turn]:
+        """최근 대화, 길이는 추출 커서가 정한다 (MemoryPort).
+
+        커서 뒤(아직 추출기에 안 보인 행)가 n행이면 창은 max(min_rows, n)행이고 max_rows를
+        넘지 않는다. 추출이 돌면 n이 0으로 떨어져 창이 min_rows로 줄고, 대화가 쌓이면 다시
+        늘어난다. 커서가 안 움직이면(추출 꺼짐·텍스트 CLI) 늘 max_rows다 — 예전 거동 그대로.
+        """
+        pending = self._conn.execute(
+            "SELECT COUNT(*) FROM conversation_turn WHERE user_id = ? AND turn_id > ?",
+            (user_id, self.fact_cursor(user_id)),
+        ).fetchone()[0]
+        return self.recall_recent_for_user(user_id, min(max_rows, max(min_rows, pending)))
+
     def turns_after(self, user_id: int, after_turn_id: int, limit: int) -> list[Turn]:
         """after_turn_id **다음부터** 오래된 순으로 최대 limit행 — 사실 추출의 입력.
 

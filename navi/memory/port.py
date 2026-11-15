@@ -49,6 +49,19 @@ class MemoryPort(ABC):
         """
 
     @abstractmethod
+    def recall_working_window(self, user_id: int, min_rows: int, max_rows: int) -> list[Turn]:
+        """조립에 넣을 최근 대화 — 사실과 합쳐 **빈틈이 없도록** 기억이 길이를 정한다.
+
+        보장: 아직 사실로 옮겨지지 않은 대화는 (max_rows 안에서) 전부 들어 있다. 사실
+        추출이 따라잡은 구간은 사실 블록이 대신하므로 뺄 수 있고, 그때도 말의 흐름을
+        잇기 위해 min_rows는 남긴다. 그래서 길이는 min_rows와 max_rows 사이를 오간다.
+
+        길이를 조립이 아니라 기억이 정하는 이유: "어디까지 사실로 옮겼는가"는 기억만 안다.
+        추출이 꺼져 있거나 밀려 있으면 이 창은 줄지 않는다 — 줄이면 그 대화는 사실에도
+        창에도 없게 된다.
+        """
+
+    @abstractmethod
     def recall_relevant_facts(self, user_id: int, query: str, k: int) -> list[Fact]:
         """이번 턴에 넣을 사실 최대 k개 — 지금 유효한 것만(대체·만료 제외).
 

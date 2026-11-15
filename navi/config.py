@@ -244,6 +244,11 @@ class Config:
     feed: FeedConfig = field(default_factory=lambda: _load_feed({}))
     # 사실 추출(Phase 4). 기본값을 둔 이유는 feed와 같다.
     facts: FactsConfig = field(default_factory=lambda: _load_facts({}))
+    # 최근 대화 창의 하한(행). 창은 이 값과 recent_turns(상한) 사이를 오간다 — 사실
+    # 추출이 따라잡은 만큼 줄어든다(MemoryPort.recall_working_window). 8인 이유: 추출이
+    # 새 사용자 발화 4개마다 도니 한 묶음이 약 8행이다. 그보다 작으면 방금 추출된
+    # 대화가 창에서 통째로 사라져 말의 흐름이 끊긴다. 추정값이다.
+    recent_turns_min: int = 8
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -546,6 +551,7 @@ def load_config(
         # ① CLI --db가 있으면 그게 db_path다 — DB 층이 읽을 대상이 여기서 확정된다.
         db_path=Path(db_path) if db_path else root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
+        recent_turns_min=int(raw["memory"].get("recent_turns_min", 8)),
         persona_card_path=card_path,
         gemini_api_key=os.getenv("GEMINI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,

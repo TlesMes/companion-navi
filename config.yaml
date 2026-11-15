@@ -123,7 +123,11 @@ db:
   path: navi.db
 
 memory:
-  recent_turns: 20      # 단기기억 인출 행 수 — 사용자·나비 발화가 각각 한 행이라 약 10왕복
+  # 최근 대화 창(행 수 — 사용자·나비 발화가 각각 한 행이라 20이면 약 10왕복).
+  # 창은 min과 상한 사이를 오간다: 아직 사실로 옮기지 않은 대화는 전부 남기고, 추출이
+  # 따라잡으면 min까지 줄어든다. 추출이 꺼져 있으면(아래 facts) 늘 상한이다.
+  recent_turns: 20      # 상한
+  recent_turns_min: 8   # 하한 — 말의 흐름을 잇는 데 남기는 최소 행
   facts:
     # 사실 추출(Phase 4) — 대화에서 사용자에 대한 사실을 뽑아 쌓는다. 설계 → docs/design/memory.md.
     # 추출기 벤더는 따로 안 적으면 feed.summarizer.vendor를 따른다. **echo면 추출이 꺼진다.**
