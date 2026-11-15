@@ -231,3 +231,34 @@ def test_api_keys_are_not_in_repr(tmp_path):
         del os.environ["ANTHROPIC_API_KEY"]
     assert config.anthropic_api_key == "sk-ant-secret-value-1234"
     assert "sk-ant-secret" not in repr(config)
+
+
+# ── 사실 추출 설정 (Phase 4) ──
+
+
+def test_facts_extractor_follows_feed_summarizer_by_default(tmp_path):
+    """둘 다 '저가 티어 배치'라 벤더를 한 번만 정하면 되게 한다."""
+    from navi.config import _load_facts
+
+    raw = {"feed": {"summarizer": {"vendor": "anthropic"}}}
+
+    assert _load_facts(raw).extractor_vendor == "anthropic"
+
+
+def test_facts_extractor_vendor_can_be_set_on_its_own(tmp_path):
+    from navi.config import _load_facts
+
+    raw = {
+        "feed": {"summarizer": {"vendor": "anthropic"}},
+        "memory": {"facts": {"extractor": {"vendor": "gemini"}, "min_new_user_turns": 6}},
+    }
+
+    cfg = _load_facts(raw)
+    assert (cfg.extractor_vendor, cfg.min_new_user_turns) == ("gemini", 6)
+
+
+def test_facts_default_to_echo_extractor_which_means_off(tmp_path):
+    """섹션이 없으면 echo다 — 데몬은 echo 추출기를 띄우지 않는다(_build_facts)."""
+    from navi.config import _load_facts
+
+    assert _load_facts({}).extractor_vendor == "echo"

@@ -610,3 +610,63 @@ async def test_collect_does_not_block_the_dispatcher(tmp_path):
 
     release.set()
     await _drain(bus, task)
+
+
+# ── Phase 4: 사실 추출 배선 ──
+
+
+class _SlowFacts:
+    """놔줄 때까지 안 끝나는 추출기 — 데몬이 이걸 기다리는지 본다."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls: list = []
+
+    async def maybe_extract(self, now):
+        self.calls.append(now)
+        self.started.set()
+        await self.release.wait()
+        return 0
+
+
+@pytest.mark.asyncio
+async def test_fact_extraction_runs_on_tick_without_blocking_the_dispatcher():
+    """추출은 LLM 1콜이라 몇 초다 — 인라인이면 그동안 말을 걸어도 대답이 없다."""
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    facts = _SlowFacts()
+    core, _ = _proactive_core(clock, bus, inits=inits, events=[], facts=facts)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(facts.started.is_set)
+    await _wait(lambda: len(inits) == 1)  # 추출이 멈춰 있어도 같은 tick의 발화 판정이 끝났다
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await asyncio.sleep(0.05)
+    assert len(facts.calls) == 1  # 돌고 있는 동안엔 겹쳐 띄우지 않는다
+
+    facts.release.set()
+    await _drain(bus, task)
+
+
+@pytest.mark.asyncio
+async def test_fact_extraction_failure_does_not_kill_the_daemon():
+    class _Boom:
+        async def maybe_extract(self, now):
+            raise RuntimeError("추출기 장애")
+
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    core, _ = _proactive_core(clock, bus, inits=inits, events=[], facts=_Boom())
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: len(inits) == 1)
+    assert not task.done()
+    await _drain(bus, task)

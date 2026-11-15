@@ -102,3 +102,36 @@ CREATE TABLE IF NOT EXISTS setting (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- 사실(Phase 4, design/memory.md) — 대화에서 뽑은 "사용자에 대해 아는 것".
+-- 한 행 = 혼자 읽어도 뜻이 통하는 문장 하나. 키-값이 아니라 문장인 건 어떤 사실이 나올지
+-- 미리 정할 수 없어서고, 그대로 프롬프트에 들어가며 나중에 문장 단위로 임베딩할 수 있다.
+-- 사용자 단위다 — 페르소나를 바꿔도 같은 사실을 본다(design/service.md §16).
+--
+-- kind에 CHECK를 걸지 않았다. 이 리포엔 마이그레이션 경로가 없어(위 topic_candidate 주석)
+-- 분류를 고치면 제약을 못 바꾼다. 분류는 아직 튜닝 대상이라 검증은 코드가 한다
+-- (navi/memory/facts.py FACT_KINDS). status는 뜻이 고정이라 CHECK를 둔다.
+--
+-- 지우지 않고 superseded로 남기는 이유: 추출이 틀려 멀쩡한 사실을 덮었을 때 되돌릴 수 있어야
+-- 한다. expires_at이 지난 사실도 지우지 않는다 — 주입에서만 빠진다.
+CREATE TABLE IF NOT EXISTS fact (
+    fact_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL REFERENCES user(user_id),
+    kind           TEXT    NOT NULL,   -- profile | preference | ongoing | plan
+    text           TEXT    NOT NULL,
+    source_turn_id INTEGER REFERENCES conversation_turn(turn_id),  -- 원문 확인·연쇄 삭제의 축
+    status         TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded')),
+    superseded_by  INTEGER REFERENCES fact(fact_id),
+    expires_at     TEXT,               -- ISO UTC. NULL = 만료 없음(신상·선호)
+    created_at     TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fact_active ON fact (user_id, status, fact_id);
+
+-- 추출 커서 — 어느 턴까지 추출기에 보였는가. fact의 MAX(source_turn_id)로 대신할 수 없다:
+-- 뽑을 게 없는 구간이면 사실이 0건이라 커서가 안 움직이고, 같은 턴을 매번 다시 LLM에 보낸다.
+CREATE TABLE IF NOT EXISTS fact_cursor (
+    user_id      INTEGER PRIMARY KEY REFERENCES user(user_id),
+    last_turn_id INTEGER NOT NULL,
+    updated_at   TEXT    NOT NULL
+);

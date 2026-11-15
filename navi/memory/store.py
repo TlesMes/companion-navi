@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from navi.memory.port import MemoryPort
-from navi.models import TopicCandidate, Turn, Usage
+from navi.models import Fact, TopicCandidate, Turn, Usage
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -102,6 +102,84 @@ class MemoryStore(MemoryPort):
             (user_id, n),
         ).fetchall()
         return [_row_to_turn(r) for r in rows]
+
+    def turns_after(self, user_id: int, after_turn_id: int, limit: int) -> list[Turn]:
+        """after_turn_id **다음부터** 오래된 순으로 최대 limit행 — 사실 추출의 입력.
+
+        recall_recent_*와 방향이 반대다(저쪽은 최신 n행). 추출은 커서 뒤를 차례로 먹어야
+        밀린 구간을 건너뛰지 않는다.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM conversation_turn WHERE user_id = ? AND turn_id > ?"
+            " ORDER BY turn_id ASC LIMIT ?",
+            (user_id, after_turn_id, limit),
+        ).fetchall()
+        return [_row_to_turn(r) for r in rows]
+
+    # ─── 사실 (Phase 4, design/memory.md) ────────────────────
+
+    def insert_fact(
+        self,
+        user_id: int,
+        kind: str,
+        text: str,
+        *,
+        source_turn_id: int | None,
+        expires_at: str | None,
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO fact (user_id, kind, text, source_turn_id, expires_at, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, kind, text, source_turn_id, expires_at, _now_iso()),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def supersede_fact(self, user_id: int, old_fact_id: int, new_fact_id: int) -> bool:
+        """옛 사실을 '대체됨'으로 돌린다. 지우지 않는다 — 추출 오류를 되돌릴 수 있게.
+
+        user_id를 조건에 넣는 건 추출기가 준 번호를 그대로 믿지 않기 위해서다(모델이 없는
+        번호를 지어낼 수 있다). 실제로 바뀐 행이 있을 때만 True.
+        """
+        cur = self._conn.execute(
+            "UPDATE fact SET status = 'superseded', superseded_by = ?"
+            " WHERE fact_id = ? AND user_id = ? AND status = 'active'",
+            (new_fact_id, old_fact_id, user_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def active_facts(self, user_id: int, now_iso: str, limit: int | None = None) -> list[Fact]:
+        """지금 유효한 사실 — 대체되지도 만료되지도 않은 것. 오래된 순.
+
+        limit를 주면 **최신 limit건**을 오래된 순으로 돌려준다(recall_recent와 같은 모양).
+        """
+        sql = (
+            "SELECT * FROM fact WHERE user_id = ? AND status = 'active'"
+            " AND (expires_at IS NULL OR expires_at > ?)"
+        )
+        params: tuple = (user_id, now_iso)
+        if limit is not None:
+            sql = f"SELECT * FROM ({sql} ORDER BY fact_id DESC LIMIT ?)"
+            params += (limit,)
+        rows = self._conn.execute(sql + " ORDER BY fact_id ASC", params).fetchall()
+        return [_row_to_fact(r) for r in rows]
+
+    def fact_cursor(self, user_id: int) -> int:
+        """추출기에 보인 마지막 turn_id — 없으면 0(처음부터)."""
+        row = self._conn.execute(
+            "SELECT last_turn_id FROM fact_cursor WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return row["last_turn_id"] if row else 0
+
+    def set_fact_cursor(self, user_id: int, turn_id: int) -> None:
+        self._conn.execute(
+            "INSERT INTO fact_cursor (user_id, last_turn_id, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(user_id) DO UPDATE SET last_turn_id = excluded.last_turn_id,"
+            " updated_at = excluded.updated_at",
+            (user_id, turn_id, _now_iso()),
+        )
+        self._conn.commit()
 
     # ─── 친밀도 — ✖ 폐기 (D9, 2026.08.31) ───────────────────
     # 새 코드는 쓰지 말 것. `update_intimacy`는 부르는 곳이 없고 `get_intimacy`는 늘 0을
@@ -300,6 +378,18 @@ def _row_to_turn(row: sqlite3.Row) -> Turn:
         session_id=row["session_id"],
         trigger_type=row["trigger_type"],
         turn_id=row["turn_id"],
+    )
+
+
+def _row_to_fact(row: sqlite3.Row) -> Fact:
+    return Fact(
+        fact_id=row["fact_id"],
+        kind=row["kind"],
+        text=row["text"],
+        source_turn_id=row["source_turn_id"],
+        status=row["status"],
+        expires_at=_opt_dt(row["expires_at"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
 
 

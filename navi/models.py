@@ -40,6 +40,23 @@ class Turn:
 
 
 @dataclass(frozen=True)
+class Fact:
+    """fact 한 행 — 대화에서 뽑은, 사용자에 대해 아는 것 하나 (design/memory.md).
+
+    text는 혼자 읽어도 뜻이 통하는 문장이다("사용자의 동생 이름은 민준이다"). 그대로
+    프롬프트에 들어간다.
+    """
+
+    fact_id: int
+    kind: str  # profile | preference | ongoing | plan
+    text: str
+    source_turn_id: int | None
+    status: str  # active | superseded
+    expires_at: datetime | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class TopicCandidate:
     """topic_candidate 한 행 — 나비가 먼저 말 걸 재료 하나 (D13/feed.md 3.1).
 

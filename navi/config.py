@@ -192,6 +192,22 @@ class FeedConfig:
 
 
 @dataclass(frozen=True)
+class FactsConfig:
+    """사실 추출(Phase 4, design/memory.md) — 대화에서 사용자에 대한 사실을 뽑아 쌓는다.
+
+    extractor_vendor가 echo면 추출은 꺼진다 — echo는 프롬프트를 되돌려줄 뿐이라 뽑히는 게
+    없는데, 그대로 돌리면 커서만 전진해 그 대화를 영영 추출하지 못한다.
+    값은 전부 튜닝 대상이다.
+    """
+
+    enabled: bool
+    extractor_vendor: str  # 대화용 두뇌와 별개 — 추출도 저가 티어로
+    min_new_user_turns: int  # 새 사용자 발화가 이만큼 쌓여야 LLM을 부른다
+    max_rows_per_batch: int  # 한 번에 추출기에 보일 대화 행 수
+    retry_backoff_s: float
+
+
+@dataclass(frozen=True)
 class Config:
     # 리포 루트 — persona 카드 voice 섹션 등 런타임에 상대경로를 풀 때의 기준.
     # gptsovits 웜업이 os.chdir를 하므로 "그때 가서 CWD 기준"은 성립하지 않는다.
@@ -222,6 +238,8 @@ class Config:
     # 필드 추가로 기존 Config 생성부(테스트·스크립트)가 안 깨지게 한다.
     # 기본은 "섹션 없는 config.yaml"과 동일하다(_load_feed({})).
     feed: FeedConfig = field(default_factory=lambda: _load_feed({}))
+    # 사실 추출(Phase 4). 기본값을 둔 이유는 feed와 같다.
+    facts: FactsConfig = field(default_factory=lambda: _load_facts({}))
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -347,6 +365,20 @@ def _load_control(raw: dict[str, Any]) -> ControlConfig:
     return ControlConfig(
         enabled=bool(c.get("enabled", True)),
         port=int(c.get("port", 8765)),
+    )
+
+
+def _load_facts(raw: dict[str, Any]) -> FactsConfig:
+    f = raw.get("memory", {}).get("facts", {})
+    # 따로 안 적으면 피드 요약기와 같은 벤더를 쓴다 — 둘 다 "저가 티어 배치"라 한 번만
+    # 정하면 되게 한다. 인스턴스는 따로 만든다(daemon._build_facts).
+    fallback = raw.get("feed", {}).get("summarizer", {}).get("vendor", "echo")
+    return FactsConfig(
+        enabled=bool(f.get("enabled", True)),
+        extractor_vendor=str(f.get("extractor", {}).get("vendor") or fallback),
+        min_new_user_turns=int(f.get("min_new_user_turns", 4)),
+        max_rows_per_batch=int(f.get("max_rows_per_batch", 40)),
+        retry_backoff_s=float(f.get("retry_backoff_s", 1800)),
     )
 
 
@@ -505,6 +537,7 @@ def load_config(
         proactive=_load_proactive(raw),
         control=_load_control(raw),
         feed=_load_feed(raw),
+        facts=_load_facts(raw),
         # ① CLI --db가 있으면 그게 db_path다 — DB 층이 읽을 대상이 여기서 확정된다.
         db_path=Path(db_path) if db_path else root / raw["db"]["path"],
         recent_turns=int(raw["memory"]["recent_turns"]),
