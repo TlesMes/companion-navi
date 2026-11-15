@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 from datetime import time as dtime
 from pathlib import Path
 
@@ -14,8 +15,8 @@ from navi.config import (
     ProactiveConfig,
     WakeWordConfig,
 )
-from navi.memory import MemoryStore
-from navi.models import TurnKind, VoiceProfile
+from navi.memory import MemoryPort, MemoryStore
+from navi.models import Turn, TurnKind, VoiceProfile
 from navi.persona import CharacterCard
 
 CARD_PATH = Path(__file__).parents[1] / "personas" / "navi.yaml"
@@ -74,6 +75,43 @@ def make_conductor(config: Config) -> tuple[Conductor, MemoryStore, int]:
     uid = store.ensure_user("친구")
     card = CharacterCard.load(config.persona_card_path)
     return Conductor(card=card, memory=store, config=config), store, uid
+
+
+class _PortOnlyMemory(MemoryPort):
+    """포트 메서드만 있는 기억 — SQLite도, 모드·피드·친밀도 메서드도 없다."""
+
+    def __init__(self, turns: list[Turn]):
+        self._turns = turns
+
+    def append_turn(self, session_id, user_id, role, text, trigger_type="manual", *, ts=None):
+        raise AssertionError("조립은 기억에 쓰지 않는다")
+
+    def recall_recent(self, session_id, n):
+        raise AssertionError("조립은 세션 단위로 인출하지 않는다")
+
+    def recall_recent_for_user(self, user_id, n):
+        return self._turns[-n:]
+
+
+def test_conductor_needs_nothing_beyond_the_port(tmp_path):
+    """기억 저장소를 갈아 끼울 수 있다는 것의 증명 — 조립이 포트 밖의 것을 부르면 여기서 죽는다.
+
+    (폐기된 친밀도를 기억에서 읽어 오던 호출이 이 경계를 넘고 있었다.)
+    """
+    config = make_config(tmp_path)
+    turns = [
+        Turn(role="user", text="어제 한 얘기", created_at=datetime.now(UTC), session_id="s"),
+        Turn(role="assistant", text="응 들었어", created_at=datetime.now(UTC), session_id="s"),
+    ]
+    conductor = Conductor(
+        card=CharacterCard.load(config.persona_card_path),
+        memory=_PortOnlyMemory(turns),
+        config=config,
+    )
+
+    request = conductor.build_request("오늘 트리거", user_id=1, session_id="새세션")
+
+    assert [m.text for m in request.messages] == ["어제 한 얘기", "응 들었어", "오늘 트리거"]
 
 
 def test_build_request_assembles_persona_memory_trigger(tmp_path):

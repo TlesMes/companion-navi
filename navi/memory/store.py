@@ -13,6 +13,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from navi.memory.port import MemoryPort
 from navi.models import TopicCandidate, Turn, Usage
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
@@ -22,7 +23,10 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-class MemoryStore:
+class MemoryStore(MemoryPort):
+    """SQLite 구현. 대화 기억(MemoryPort) 외에 모드·피드 후보·설정·사용량도 함께 쥔다 —
+    그쪽은 포트 밖이고 데몬이 이 클래스를 직접 쓴다."""
+
     def __init__(self, db_path: Path | str):
         self._conn = sqlite3.connect(db_path)
         self._conn.row_factory = sqlite3.Row
@@ -62,14 +66,20 @@ class MemoryStore:
         role: str,
         text: str,
         trigger_type: str = "manual",
-    ) -> None:
-        self._conn.execute(
+        *,
+        ts: datetime | None = None,
+    ) -> int:
+        # 저장은 항상 UTC다(_now_iso와 같은 규약). tz 없는 ts는 로컬 시각으로 본다 —
+        # 피드 수집의 now 처리와 같은 약속이라 호출부가 어느 쪽을 넘겨도 한 줄로 선다.
+        created_at = ts.astimezone(UTC).isoformat() if ts is not None else _now_iso()
+        cur = self._conn.execute(
             "INSERT INTO conversation_turn"
             " (session_id, user_id, role, text, created_at, trigger_type)"
             " VALUES (?, ?, ?, ?, ?, ?)",
-            (session_id, user_id, role, text, _now_iso(), trigger_type),
+            (session_id, user_id, role, text, created_at, trigger_type),
         )
         self._conn.commit()
+        return cur.lastrowid
 
     def recall_recent(self, session_id: str, n: int) -> list[Turn]:
         """해당 세션의 최근 n턴, 시간순."""
@@ -289,6 +299,7 @@ def _row_to_turn(row: sqlite3.Row) -> Turn:
         created_at=datetime.fromisoformat(row["created_at"]),
         session_id=row["session_id"],
         trigger_type=row["trigger_type"],
+        turn_id=row["turn_id"],
     )
 
 

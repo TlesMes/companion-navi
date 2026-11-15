@@ -34,6 +34,9 @@ class Turn:
     created_at: datetime
     session_id: str
     trigger_type: str = "manual"  # manual(사용자호출) | proactive(능동)
+    # 저장소가 매긴 식별자 — 인출한 턴에만 있다. 사실이 출처 턴을 가리킬 때 쓴다.
+    # 손으로 만든 Turn(테스트·프롬프트 조립용)은 None이다.
+    turn_id: int | None = None
 
 
 @dataclass(frozen=True)
