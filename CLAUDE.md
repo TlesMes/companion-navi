@@ -24,6 +24,8 @@
 | [docs/design/aliveness.md](./docs/design/aliveness.md) | 동적 거동 — 턴 메타데이터(D14)·능동성 3층·상태 진화(기억). **§3.3 = D9 친밀도 폐기 사유** | 능동성·기억·감정 구현 시 |
 | [docs/design/vendor_cost.md](./docs/design/vendor_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
 | [docs/design/gui.md](./docs/design/gui.md) | 최소 GUI 설계·구현 계획(PR 3분할)·목업([gui_mockup.html](./docs/design/gui_mockup.html)) | Stage 15 GUI 구현 시 |
+| [docs/design/service.md](./docs/design/service.md) | 서비스화 설계 — 서버 코어 + 엣지 음성, 결정 D18~D31, 공백·취약점 검토 | 서버·클라이언트 분리 작업 시 |
+| [docs/design/memory.md](./docs/design/memory.md) | Phase 4 기억 계층 구현 계획 — 계약 변경·PR 분할·기준선 측정 | **지금 진행 중인 작업** |
 | [docs/research/tts_pivot.md](./docs/research/tts_pivot.md) | Supertonic→Zero-shot 보이스 클로닝 전환 및 아키텍처 검토 | D3 배경 파악 시 |
 
 ## 커밋 컨벤션 (Conventional Commits)
@@ -47,7 +49,18 @@ type(scope): 제목 (한국어, 50자 내)
 - 브랜치명: `type/scope-요지` (예: `feat/ear-vad`, `research/d3-tts`)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
-## 현재 상태 (2026.09.01)
+## 현재 상태 (2026.11.15)
+
+**서비스화 방향을 정했고, 다음 작업은 Phase 4(기억)다(2026.11.15).** 단일 사용자 데몬을
+"서버 + 클라이언트"로 넓힌다 — **서버 코어 + 엣지 음성**(조립·기억·두뇌는 서버, 마이크·STT·TTS·
+게이트는 클라이언트), 단독 모드는 개인용으로 남긴다. 설계는 [service.md](./docs/design/service.md),
+코드는 아직 바뀌지 않았다. **지금 할 일은 [checklist.md](./docs/checklist.md) F 묶음** —
+기준선 측정 → `MemoryPort` 추출 → 사실 추출 → 조립 주입 → 창 축소([memory.md](./docs/design/memory.md)).
+벡터 검색은 미뤘다. **아래 "항상 지킬 것"의 원칙은 유지하되, "로컬 전용 저장이 해자"는
+"개인정보 보안"으로 바뀌었다**(service.md §2.2.1 — 옛 문장이 aliveness·plan·arch에 남아 있다).
+상세 → [progress.md](./docs/progress.md) 최상단.
+
+**이하는 2026.09.01 기준 기록이다.**
 
 **두뇌를 GUI에서 갈아끼운다 — 재기동 없이, 선택은 남는다(2026.09.01).** 헤더 톱니 → 설정
 팝업에서 벤더를 고르고 키를 넣으면 검증 후 교체된다([navi/control/runtime.py](./navi/control/runtime.py)

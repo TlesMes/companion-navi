@@ -11,6 +11,22 @@
 
 ---
 
+## F. Phase 4 기억 → 서비스화 — 다음 작업 (2026.11.15 시작)
+
+방향은 [design/service.md](./design/service.md), 구현 계획은 [design/memory.md](./design/memory.md).
+F1~F5는 서버 없이 이 저장소 안에서 끝난다. 순서대로 쌓인다.
+
+- [ ] **F0. 선행 정리** — PR #50~#52 머지, `docs/service-design`·`test/prune-redundant-tests` 반영.
+- [ ] **F1. 기준선 측정** (`research/memory-baseline`) — 턴당 입력 토큰 + 회상 테스트(memory.md §5).
+      실제 LLM 호출이 들어 실행 전 비용 확인.
+- [ ] **F2. `MemoryPort` 추출** (`refactor/memory-port`) — 턴·사실만. `append_turn`이 `turn_id` 반환·`ts` 수용.
+- [ ] **F3. 사실 추출** (`feat/memory-fact-extract`) — `fact` 테이블 + 추출 배치.
+- [ ] **F4. 조립에 사실 주입** (`feat/conductor-facts`) — `recall_relevant_facts(query, k)` + `LlmRequest.context`.
+- [ ] **F5. 최근 창 축소** (`refactor/recent-window`) — 회상 정답률 유지 + 토큰 감소를 F1과 비교.
+- [ ] **F6. 문서 정합** — D6 표기 통일("보류"), "로컬 전용 해자" 문장 세 곳(aliveness §3.4·plan·arch 원칙 7).
+- [ ] **F7. 서버 착수 전 결정** — 프로토콜(D22)·인증(D23)·쿼터 한도(D24)·작업 큐(D25),
+      서버 코드를 둘 저장소. 구현 순서는 service.md §7(턴 게이트웨이 → 서버 기억 → 피드 → 학습 큐 → 서버 TTS).
+
 ## A. 미검증 잔여 — 코드는 있고 실물엔 안 붙음
 
 마이크·스피커 앞에서만 되는 작업. 이 묶음을 끝내면 "배선은 됐는데 실기 확인이 없다"는 부채가 사라진다.
