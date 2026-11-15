@@ -46,18 +46,25 @@ _DEFAULT_TTL_DAYS = {"plan": 30, "ongoing": 90}
 FACT_SYSTEM = (
     "너는 대화에서 '사용자에 대해 오래 기억해 둘 사실'을 뽑는 추출기다. 규칙: "
     "①한 줄에 하나씩 `[fact:종류|src:T번호] 문장` 형식으로만 쓴다. 그 밖의 말은 쓰지 않는다. "
+    "덧붙이는 표시(until·replaces)는 전부 **대괄호 안**에 넣는다 — "
+    "`[fact:plan|src:T12|until:2026-12-01|replaces:F3] 문장`. 문장 뒤에는 아무것도 붙이지 않는다. "
     "②종류는 넷 중 하나다 — profile(이름·가족·직업·사는 곳처럼 잘 안 바뀌는 신상), "
     "preference(좋아하거나 싫어하는 것), ongoing(요즘 겪고 있는 일이나 상태), "
     "plan(앞으로 할 예정인 일). "
     "③문장은 사용자를 '사용자'라고 3인칭으로 부르고, 앞뒤 대화 없이 혼자 읽어도 뜻이 통하게 "
     "쓴다. '그것'·'걔' 같은 말 대신 가리키는 대상을 적는다. "
+    "'내일'·'다음 주 금요일'·'요번 주말' 같은 상대적인 날짜도 쓰지 않는다 — '11월 20일'처럼 "
+    "실제 날짜로 바꿔 적는다. 날짜는 암산하지 말고 [달력]에서 찾는다: 한 줄이 한 주(월~일)다. "
+    "그 말이 나온 대화 줄의 날짜가 든 줄이 '이번 주', 바로 아랫줄이 '다음 주', 그 아랫줄이 "
+    "'다다음 주'다. 그 줄에서 해당 요일의 날짜를 읽는다. "
     "④사용자가 직접 말한 것만 적는다. 나비의 말은 맥락으로만 읽고 사실로 뽑지 않는다. "
     "추측하지 않는다. "
     "⑤인사·잡담·지나가는 기분은 뽑지 않는다. 일주일 뒤에도 쓸모 있을 것만 고른다. "
     "⑥src에는 그 사실이 나온 대화 줄의 T번호를 적는다. "
-    "⑦plan에 끝나는 날짜가 있으면 `|until:2026-12-01`을 붙인다. 날짜는 대화 줄 앞의 날짜와 "
-    "'오늘'로 계산한다. 모르면 붙이지 않는다. "
-    "⑧새 사실이 '이미 아는 사실' 중 하나를 바꾸거나 뒤집으면 `|replaces:F번호`를 붙인다. "
+    "⑦plan에 끝나는 날짜가 있으면 대괄호 안에 `|until:2026-12-01`을 넣는다. 문장에 적은 날짜와 같은 "
+    "방법으로 [달력]에서 찾는다('오늘'이 아니라 **말한 날** 기준이다). 모르면 붙이지 않는다. "
+    "⑧새 사실이 '이미 아는 사실' 중 하나를 바꾸거나 뒤집으면 대괄호 안에 `|replaces:F번호`를 "
+    "넣는다. "
     "이미 아는 사실과 같은 내용은 다시 쓰지 않는다. "
     "⑨한국어로 쓴다. "
     "⑩뽑을 게 없으면 아무것도 쓰지 않는다."
@@ -66,6 +73,10 @@ FACT_SYSTEM = (
 _FENCE = re.compile(r"^```[^\n]*\n(.*?)\n?```$", re.DOTALL)
 _FACT_RE = re.compile(r"^\s*\[fact:\s*([^\]\n]{1,80})\]\s*(\S.*)$", re.MULTILINE)
 _NUMBER = re.compile(r"\d+")
+# 문장 **뒤**에 붙은 속성 — `…예정이다.|until:2026-11-20`. 규칙은 대괄호 안에 넣으라고 하지만
+# 실측(2026.11.15)에서 Haiku가 한 응답 통째로 뒤에 붙였다. 그대로 두면 만료가 안 읽히고
+# 문장에 꼬리가 남아 프롬프트로 되먹여진다. 아는 키만 떼어 낸다(문장 속 `|`는 건드리지 않는다).
+_TRAILING_ATTRS = re.compile(r"(?:\s*\|\s*(?:src|until|replaces)\s*:\s*[^|\s]+)+\s*$")
 _WHITESPACE = re.compile(r"\s+")
 _MAX_TURN_CHARS = 300  # 붙여넣기 한 덩어리가 프롬프트를 삼키는 걸 막는다
 
@@ -112,7 +123,13 @@ def parse_facts(text: str, max_facts: int) -> list[ParsedFact]:
         kind = parts[0].casefold()
         if kind not in FACT_KINDS:
             continue
-        attrs = dict(p.split(":", 1) for p in parts[1:] if ":" in p)
+        pairs = [p for p in parts[1:] if ":" in p]
+        tail = _TRAILING_ATTRS.search(body)
+        if tail:
+            body = body[: tail.start()]
+            # 뒤에 붙은 것을 먼저 넣어 대괄호 안의 값이 이기게 한다(둘 다 있으면 규칙대로 쓴 쪽).
+            pairs = [p.strip() for p in tail.group().split("|") if ":" in p] + pairs
+        attrs = dict(p.split(":", 1) for p in pairs)
         attrs = {k.strip().casefold(): v for k, v in attrs.items()}
         sentence = clean_summary(body)
         key = normalize_fact_text(sentence)
@@ -147,6 +164,41 @@ def _local_date(moment: datetime) -> date:
     return moment.astimezone().date()
 
 
+_WEEKDAYS = "월화수목금토일"
+
+
+def _dated(moment: datetime) -> str:
+    """`2026-11-12 목` — 요일을 코드가 적어 준다.
+
+    "다음 주 금요일"을 날짜로 바꾸려면 말한 날의 요일이 필요한데, 날짜만 주면 모델이
+    요일을 암산한다. 실측(2026.11.15)에서 그 암산이 이틀 틀렸다. 달력 계산은 결정론이
+    할 수 있는 일이라 모델에 맡기지 않는다.
+    """
+    day = _local_date(moment)
+    return f"{day.isoformat()} {_WEEKDAYS[day.weekday()]}"
+
+
+_CALENDAR_WEEKS_AHEAD = 4  # 말한 주 뒤로 몇 주를 더 보여 줄지 — "다다음 주"·"이달 말"까지 덮는다
+
+
+def _calendar(first: date, last: date) -> list[str]:
+    """첫 대화가 든 주부터 마지막 대화 뒤 몇 주까지 — 한 줄이 한 주(월~일).
+
+    요일을 적어 주는 것만으로는 모자랐다(실측 2026.11.15): Haiku가 "목요일에 말한
+    '다음 주 금요일'"을 하루씩 틀리게 셌다. 틀린 날짜가 확정된 문장으로 몇 주 남는 건
+    상대 날짜가 남는 것보다 나쁘다. 그래서 세는 일을 없앤다 — 모델은 표에서 읽기만 한다.
+    한 줄을 한 주로 묶은 건 "다음 주"가 "아랫줄"이 되게 하려는 것이다.
+    """
+    monday = first - timedelta(days=first.weekday())
+    end = last + timedelta(weeks=_CALENDAR_WEEKS_AHEAD)
+    lines = []
+    while monday <= end:
+        week = [monday + timedelta(days=i) for i in range(7)]
+        lines.append("  ".join(f"{d.isoformat()}({_WEEKDAYS[d.weekday()]})" for d in week))
+        monday += timedelta(weeks=1)
+    return lines
+
+
 def build_fact_prompt(turns: list[Turn], known: list[Fact], now: datetime) -> str:
     """추출기에 보일 한 덩어리 — 오늘 날짜, 이미 아는 사실, 새 대화.
 
@@ -156,15 +208,18 @@ def build_fact_prompt(turns: list[Turn], known: list[Fact], now: datetime) -> st
     번호에 T·F를 붙이는 건 두 번호 공간이 한 프롬프트에 같이 있어서다 — `#18`만 쓰면
     턴인지 사실인지 모델이 헷갈린다.
     """
-    lines = [f"오늘: {_local_date(now).isoformat()}", "", "[이미 아는 사실]"]
+    lines = [f"오늘: {_dated(now)}", "", "[이미 아는 사실]"]
     if known:
         lines += [f"F{f.fact_id} ({f.kind}) {f.text}" for f in known]
     else:
         lines.append("(없음)")
+    if turns:
+        days = [_local_date(t.created_at) for t in turns]
+        lines += ["", "[달력]", *_calendar(min(days), max(days))]
     lines += ["", "[새 대화]"]
     for turn in turns:
         speaker = "사용자" if turn.role == "user" else "나비"
-        day = _local_date(turn.created_at).isoformat()
+        day = _dated(turn.created_at)
         lines.append(f"T{turn.turn_id} ({day}) {speaker}: {turn.text[:_MAX_TURN_CHARS]}")
     return "\n".join(lines)
 
