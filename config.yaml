@@ -123,7 +123,16 @@ db:
   path: navi.db
 
 memory:
-  recent_turns: 20      # 단기기억 인출 턴 수 (장기기억은 Phase 4)
+  recent_turns: 20      # 단기기억 인출 행 수 — 사용자·나비 발화가 각각 한 행이라 약 10왕복
+  facts:
+    # 사실 추출(Phase 4) — 대화에서 사용자에 대한 사실을 뽑아 쌓는다. 설계 → docs/design/memory.md.
+    # 추출기 벤더는 따로 안 적으면 feed.summarizer.vendor를 따른다. **echo면 추출이 꺼진다.**
+    enabled: true
+    # extractor:
+    #   vendor: anthropic
+    min_new_user_turns: 4   # 새 사용자 발화가 이만큼 쌓이면 추출 1회(LLM 1콜)
+    max_rows_per_batch: 40  # 한 번에 추출기에 보일 대화 행 수. 밀린 건 다음 tick이 이어 먹는다
+    retry_backoff_s: 1800   # 추출 실패 뒤 재시도 간격
 
 persona:
   # 인격 교체는 이 한 줄. navi.yaml = 나비 한국어 기본 페르소나.

@@ -53,6 +53,7 @@ from navi.models import AudioChunk, TurnKind
 if TYPE_CHECKING:
     from navi.config import ProactiveConfig
     from navi.feed import Feed
+    from navi.memory.facts import FactExtractor
 
 log = logging.getLogger("navi.daemon")
 
@@ -149,6 +150,7 @@ class DaemonCore:
         count_initiations_today: Callable[[], int] | None = None,
         memory_snapshot: Callable[[], list] | None = None,
         feed: Feed | None = None,  # D13 관심사 피드 — 미주입이면 고정 힌트만 쓴다
+        facts: FactExtractor | None = None,  # Phase 4 사실 추출 — 미주입이면 안 뽑는다
         response_window_s: float = 300.0,
         rng: random.Random | None = None,  # 2층 hazard 주사위 — 테스트에서 seed 고정
     ) -> None:
@@ -171,6 +173,8 @@ class DaemonCore:
         self._memory_snapshot = memory_snapshot
         self._feed = feed
         self._collect_task: asyncio.Task | None = None
+        self._facts = facts
+        self._facts_task: asyncio.Task | None = None
         self._response_window_s = response_window_s
         self._rng = rng or random.Random()
         # 마지막 상호작용 시각(벽시계) — 타이밍 2층의 기준. 기동 시각으로 시작해
@@ -235,6 +239,7 @@ class DaemonCore:
                 if self._machine is not None:
                     self._apply_mode(self._machine.tick())  # 시간 전이(창 진입·만료)
                 self._maybe_collect()  # D13 수집 — 시각 게이트 통과 시 백그라운드로
+                self._maybe_extract_facts()  # Phase 4 — 새 대화가 쌓였으면 백그라운드로
                 await self._maybe_initiate()  # 능동성 2·3층 — 게이트 통과 시에만
                 log.debug("tick — %s", self.state.snapshot(now=self._now))
 
@@ -311,6 +316,26 @@ class DaemonCore:
                 log.info("피드 수집 배치 완료")
         except Exception:
             log.exception("피드 수집 실패 — 다음 tick에 다시 시도한다")
+
+    def _maybe_extract_facts(self) -> None:
+        """사실 추출을 **백그라운드로** 띄운다 — _maybe_collect와 같은 이유로 인라인 금지.
+
+        추출은 LLM 1콜이라 몇 초 걸린다. 발화 판정과 독립이고 모드도 안 본다 — 취침 중이어도
+        낮에 나눈 대화는 정리해 둔다. 새 대화가 모자라면 추출기가 LLM 없이 바로 돌아온다.
+        """
+        if self._facts is None:
+            return
+        if self._facts_task is not None and not self._facts_task.done():
+            return
+        self._facts_task = asyncio.create_task(self._run_extract_facts(self._wall_now()))
+
+    async def _run_extract_facts(self, now: datetime) -> None:
+        """추출 한 묶음. 예외가 task 밖으로 새면 조용히 죽으므로 여기서 삼킨다."""
+        assert self._facts is not None
+        try:
+            await self._facts.maybe_extract(now)
+        except Exception:
+            log.exception("사실 추출 실패 — 다음 tick에 다시 시도한다")
 
     async def _maybe_initiate(self) -> None:
         """TICK마다 "지금 먼저 말 걸까"를 판정하고, 그렇다면 주제→발화까지 굴린다.
@@ -552,6 +577,38 @@ def _build_feed(config, store, user_id: int):
     )
 
 
+def _build_facts(config, store, user_id: int):
+    """사실 추출기 조립 — 끄거나 추출 벤더가 echo면 None.
+
+    echo를 막는 이유: echo는 프롬프트를 되돌려줄 뿐이라 뽑히는 게 없는데, 그대로 돌리면
+    커서만 전진해 그 대화를 영영 추출하지 못한다. 기본 config(요약기 echo)로 띄운 데몬이
+    조용히 대화를 "소비"해 버리면 나중에 벤더를 켜도 되돌릴 수 없다.
+
+    추출기는 대화용 두뇌·피드 요약기와 다른 인스턴스다(_build_feed와 같은 이유).
+    """
+    from navi.brain import create_brain
+    from navi.memory.facts import FactExtractor
+
+    cfg = config.facts
+    if not cfg.enabled:
+        log.info("사실 추출 비활성")
+        return None
+    if cfg.extractor_vendor == "echo":
+        log.info("사실 추출 꺼짐 — 추출 벤더가 echo다(memory.facts.extractor.vendor)")
+        return None
+    log.info("사실 추출 — 추출기 %s, 새 사용자 발화 %d개마다", cfg.extractor_vendor,
+             cfg.min_new_user_turns)
+    return FactExtractor(
+        store=store,
+        user_id=user_id,
+        extractor=create_brain(config, vendor=cfg.extractor_vendor),
+        model=config.brain.model_for(cfg.extractor_vendor),
+        min_new_user_turns=cfg.min_new_user_turns,
+        max_rows_per_batch=cfg.max_rows_per_batch,
+        retry_backoff_s=cfg.retry_backoff_s,
+    )
+
+
 async def _run(config, args) -> None:
     from navi.brain import create_brain
     from navi.conductor import Conductor
@@ -570,6 +627,7 @@ async def _run(config, args) -> None:
     user_id = store.ensure_user(display_name="친구")
     # user_id 확보 뒤에 지어야 한다 — 콜백 클로저가 그걸 닫아 잡는다.
     feed = _build_feed(config, store, user_id)
+    facts = _build_facts(config, store, user_id)
     session_id = uuid.uuid4().hex
     bus = EventBus()
 
@@ -814,6 +872,7 @@ async def _run(config, args) -> None:
         count_initiations_today=count_initiations_today,
         memory_snapshot=lambda: store.recall_recent_for_user(user_id, config.recent_turns),
         feed=feed,
+        facts=facts,
     )
 
     # 컨트롤 플레인(Stage 15) — 같은 이벤트 루프의 태스크로 기동. 예외는 삼킨다:
