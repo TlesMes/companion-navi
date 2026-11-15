@@ -314,3 +314,55 @@ def test_relevant_facts_with_no_room_returns_nothing(tmp_path):
     _add_fact(store, uid, "profile", "사용자는 개발자다.")
 
     assert store.recall_relevant_facts(uid, "", 0) == []
+
+
+# --- 줄어드는 대화 창 (MemoryPort.recall_working_window) ---
+
+
+def _talk(store, uid, rows):
+    return [store.append_turn("s", uid, "user" if i % 2 == 0 else "assistant", f"말{i}")
+            for i in range(rows)]
+
+
+def test_working_window_stays_full_while_nothing_is_extracted(tmp_path):
+    """추출이 꺼져 있으면(커서가 안 움직이면) 예전 고정 창과 같다 — 줄이면 그냥 잊는 것이다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    _talk(store, uid, 30)
+
+    window = store.recall_working_window(uid, min_rows=8, max_rows=20)
+
+    assert [t.text for t in window] == [f"말{i}" for i in range(10, 30)]
+
+
+def test_working_window_shrinks_to_the_floor_once_extraction_catches_up(tmp_path):
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    ids = _talk(store, uid, 30)
+    store.set_fact_cursor(uid, ids[-1])  # 전부 추출기에 보였다
+
+    window = store.recall_working_window(uid, min_rows=8, max_rows=20)
+
+    assert [t.text for t in window] == [f"말{i}" for i in range(22, 30)]
+
+
+def test_working_window_never_drops_a_row_the_extractor_has_not_seen(tmp_path):
+    """사실에도 창에도 없는 대화가 생기면 안 된다 — 이 창의 존재 이유."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    ids = _talk(store, uid, 30)
+    store.set_fact_cursor(uid, ids[17])  # 뒤의 12행은 아직 안 보였다
+
+    window = store.recall_working_window(uid, min_rows=8, max_rows=20)
+
+    assert [t.turn_id for t in window] == ids[18:]
+
+
+def test_working_window_is_capped_when_extraction_falls_far_behind(tmp_path):
+    """밀린 대화가 상한보다 많으면 상한에서 자른다 — 그 구간은 다음 추출이 메운다."""
+    store = MemoryStore(tmp_path / "t.db")
+    uid = store.ensure_user("친구")
+    ids = _talk(store, uid, 50)
+    store.set_fact_cursor(uid, ids[4])
+
+    assert len(store.recall_working_window(uid, min_rows=8, max_rows=20)) == 20

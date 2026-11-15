@@ -12,7 +12,7 @@ import re
 
 from navi.config import Config
 from navi.memory import MemoryPort
-from navi.models import Fact, LlmRequest, Message, TurnKind
+from navi.models import Fact, LlmRequest, Message, Turn, TurnKind
 from navi.persona import CharacterCard
 
 log = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ class Conductor:
     ) -> LlmRequest:
         # session_id는 Phase 1에선 미사용 — 단기기억을 세션 경계 없이 인출해야
         # "껐다 켜도 어제 대화를 기억"이 성립한다. 계약(4.6) 유지 차원에서 받아둔다.
-        turns = self._memory.recall_recent_for_user(user_id, self._config.recent_turns)
+        turns = self._recall_turns(user_id)
         messages = [Message(role=t.role, text=t.text) for t in turns]
         messages.extend(self._frame(kind, trigger_text, self._card.language))
         facts = self._recall_facts(user_id, trigger_text)
@@ -181,6 +181,19 @@ class Conductor:
         log.debug("context 전문:\n%s", request.context)
         log.debug("messages: %s", messages)
         return request
+
+    def _recall_turns(self, user_id: int) -> list[Turn]:
+        """최근 대화. 사실을 주입하는 동안만 줄어드는 창을 쓴다.
+
+        창을 줄여도 되는 근거는 "빠진 구간을 사실이 대신한다"뿐이다. 주입을 꺼 두면
+        (enabled·max_injected) 그 근거가 없으므로 예전처럼 고정 길이로 읽는다.
+        """
+        cfg = self._config
+        if not cfg.facts.enabled or cfg.facts.max_injected <= 0:
+            return self._memory.recall_recent_for_user(user_id, cfg.recent_turns)
+        return self._memory.recall_working_window(
+            user_id, cfg.recent_turns_min, cfg.recent_turns
+        )
 
     def _recall_facts(self, user_id: int, trigger_text: str) -> list[Fact]:
         """이번 턴에 넣을 사실. 꺼 두었거나(enabled·max_injected) 인출이 실패하면 빈 목록.
