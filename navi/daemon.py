@@ -908,17 +908,18 @@ def main() -> None:
     if args.command == "stop":
         raise SystemExit(cmd_stop())
 
-    from dataclasses import replace
-
     from navi.config import load_config
 
     _setup_logging(args.verbose)
     persona_card = f"personas/{args.persona}.yaml" if args.persona else None
-    config = load_config(mouth_vendor=args.mouth, persona_card=persona_card)
-    if args.brain:
-        config = replace(config, brain=replace(config.brain, vendor=args.brain))
-    if args.db:
-        config = replace(config, db_path=Path(args.db))
+    # CLI 오버라이드는 load_config 안에서 처리한다 — 밖에서 replace하면 DB 층이
+    # --db가 아닌 yaml의 db_path를 읽고, 저장된 설정이 CLI를 이기는 역전이 생긴다.
+    config = load_config(
+        mouth_vendor=args.mouth,
+        persona_card=persona_card,
+        db_path=args.db,
+        brain_vendor=args.brain,
+    )
 
     if not acquire_pidfile():
         print(f"이미 실행 중입니다 (PID {_read_pid(PID_FILE)}) — stop으로 먼저 내리세요")

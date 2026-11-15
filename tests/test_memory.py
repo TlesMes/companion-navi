@@ -210,3 +210,20 @@ def test_last_collect_at_starts_none_and_keeps_single_row(tmp_path):
     assert reopened.last_collect_at() == _T1
     count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM feed_meta").fetchone()[0]
     assert count == 1  # 누적이 아니라 1행 upsert
+
+
+def test_setting_upsert_and_persist(tmp_path):
+    """사용자 설정 오버라이드 — 재기동 후에도 남아야 존재 이유가 성립한다(gui.md:121)."""
+    db = tmp_path / "t.db"
+    store = MemoryStore(db)
+    assert store.get_setting("brain.vendor") is None  # 첫 기동 = 오버라이드 없음
+
+    store.set_setting("brain.vendor", "anthropic")
+    store.set_setting("brain.vendor", "echo")  # 같은 키는 누적이 아니라 덮어쓰기
+    assert store.all_settings() == {"brain.vendor": "echo"}
+    store.close()
+
+    reopened = MemoryStore(db)
+    assert reopened.get_setting("brain.vendor") == "echo"
+    count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM setting").fetchone()[0]
+    assert count == 1

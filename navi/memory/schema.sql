@@ -89,3 +89,16 @@ CREATE TABLE IF NOT EXISTS feed_meta (
     id              INTEGER PRIMARY KEY CHECK (id = 1),  -- 단일 행 강제
     last_collect_at TEXT
 );
+
+-- 사용자 설정 오버라이드 — config.yaml을 이기고 CLI에는 지는 층(navi/config.py 독스트링).
+-- GUI에서 바꾼 값이 재기동 뒤에도 남게 하는 게 존재 이유다(gui.md:121의 구멍).
+-- ⚠ 비밀은 여기 없다 — API 키는 .env가 자리다. navi.db는 백업·이관 때 통째로 복사하는
+-- 기억 파일이라 정상 작업 중에 새는 경로다.
+-- key/value 일반형인 건 이 리포에 마이그레이션 경로가 없어서다(위 topic_candidate 주석 참조):
+-- 손잡이가 늘어도 컬럼을 못 늘리는 상황이 안 온다. 값은 전부 TEXT 한 종류고, 해석은
+-- 읽는 쪽의 화이트리스트(_SETTING_KEYS)가 항목별로 한다.
+CREATE TABLE IF NOT EXISTS setting (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
