@@ -164,6 +164,13 @@ class TurnPipeline:
         log.info("목소리 교체: %s → %s", self._voice.name, voice.name)
         self._voice = voice
 
+    def set_brain(self, brain: BrainAdapter) -> None:
+        """두뇌 교체 — 다음 턴부터 적용. 진행 중인 턴은 건드리지 않는다(set_voice와 동형).
+
+        재생 중 거부(409)와 새 두뇌의 유효성 확인은 호출부(SwapRuntime)의 몫이다.
+        """
+        self._brain = brain
+
     async def swap_weights(
         self, gpt_ckpt: str, sovits_ckpt: str, *, ref_lang: str = "", gen_lang: str = ""
     ) -> None:

@@ -5,7 +5,22 @@ from __future__ import annotations
 from navi.brain.base import BrainAdapter
 from navi.config import Config
 
-__all__ = ["BrainAdapter", "create_brain"]
+__all__ = [
+    "BRAIN_ENV_NAMES",
+    "BRAIN_KEY_FIELDS",
+    "BRAIN_VENDORS",
+    "BrainAdapter",
+    "create_brain",
+]
+
+# 이 팩토리가 아는 벤더 — 표시 순서이기도 하다(GUI 라디오).
+BRAIN_VENDORS = ("gemini", "anthropic", "echo")
+
+# 키가 필요한 벤더 → Config 속성명 / .env 변수명. echo는 키가 없어서 양쪽 다 없다.
+# **여기가 단일 소유자다** — preflight(부팅 전 점검)와 컨트롤 플레인(런타임 교체)이
+# 같은 재료를 봐야 "키 있음으로 보이는데 막히는" 어긋남이 안 생긴다.
+BRAIN_KEY_FIELDS = {"anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}
+BRAIN_ENV_NAMES = {"anthropic": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
 
 
 def create_brain(config: Config, *, vendor: str | None = None) -> BrainAdapter:

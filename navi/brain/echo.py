@@ -10,6 +10,9 @@ from navi.models import BrainResult, LlmRequest, Usage
 
 
 class EchoBrain(BrainAdapter):
+    async def validate(self, model: str) -> None:
+        """키도 네트워크도 없다 — 검증할 것이 없으므로 통과."""
+
     async def generate_stream(self, request: LlmRequest) -> AsyncIterator[str]:
         self.last_result = None
         self._cancelled = False

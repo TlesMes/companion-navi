@@ -649,6 +649,10 @@ async def _run(config, args) -> None:
     swap = SwapRuntime(
         conductor=conductor,
         pipeline=pipeline,
+        # 두뇌 교체용 — config는 키·모델의 출처, store는 벤더 선택을 남길 자리.
+        # ⚠ 요약기(_build_feed)는 별도 인스턴스라 여기 교체 대상이 아니다.
+        config=config,
+        store=store,
         personas_dir=config.persona_card_path.parent,
         root=config.root,
         vendor=config.mouth.vendor,

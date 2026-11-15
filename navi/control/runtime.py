@@ -19,13 +19,19 @@ persona_id(카드 주인)와 voice_persona_id(톤 세트·VoiceProfile 주인). 
 from __future__ import annotations
 
 import logging
+import os
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from navi.brain import BRAIN_ENV_NAMES, BRAIN_KEY_FIELDS, BRAIN_VENDORS
 from navi.persona import CharacterCard, PersonaVoice, missing_assets
+from navi.secrets import mask_key, write_env_key
 
 if TYPE_CHECKING:
     from navi.conductor import Conductor
+    from navi.config import Config
+    from navi.memory.store import MemoryStore
     from navi.models import VoiceProfile
     from navi.pipeline import TurnPipeline
 
@@ -54,7 +60,11 @@ class SwapRuntime:
         vendor: str,
         persona_id: str,
         loaded_ckpts: tuple[str, str],  # 부팅 시 로드된 가중치 — "같은 음색" 비교 키
+        config: Config | None = None,  # None = 두뇌 교체 불가(구 호출부·테스트)
+        store: MemoryStore | None = None,  # 벤더 선택을 영속할 자리
     ) -> None:
+        self._config = config
+        self._store = store
         self._conductor = conductor
         self._pipeline = pipeline
         self._personas_dir = personas_dir
@@ -214,6 +224,85 @@ class SwapRuntime:
             return False
         self._loaded_ckpts = vendor_voice.ckpts
         return True
+
+    # --- 두뇌 (벤더·키) --------------------------------------------------
+
+    def brain_state(self) -> dict:
+        """현재 벤더 + 벤더별 키 보유 여부·마스킹 값. **키 원문은 절대 싣지 않는다.**
+
+        조회와 실행이 같은 재료를 본다(availability와 같은 규칙) — GUI가 "키 있음"으로
+        그렸는데 막히거나 그 반대인 어긋남이 안 생기게.
+        """
+        config = self._require_config()
+        return {
+            "current": config.brain.vendor,
+            "vendors": [
+                {
+                    "id": vendor,
+                    "model": config.brain.model_for(vendor),
+                    "needs_key": vendor in BRAIN_KEY_FIELDS,
+                    "has_key": bool(self._key_of(vendor)),
+                    "masked": mask_key(self._key_of(vendor)),
+                }
+                for vendor in BRAIN_VENDORS
+            ],
+        }
+
+    async def swap_brain(self, vendor: str, api_key: str | None = None) -> dict:
+        """대화용 두뇌 교체 — 검증에 성공한 뒤에야 무엇이든 커밋한다.
+
+        **순서가 계약이다.** 키를 먼저 .env에 쓰고 검증하면, 실패했을 때 멀쩡하던 키가
+        이미 덮인 뒤다. 그래서 후보 키는 .env·환경을 거치지 않고 후보 Config에만 넣어
+        검증하고, 통과한 다음에 .env·환경·pipeline·setting을 한꺼번에 갱신한다.
+        실패하면 기존 두뇌·기존 .env·기존 setting이 전부 그대로다.
+
+        ⚠ **피드 요약기는 건드리지 않는다.** _build_feed(daemon.py)가 config.feed의
+        벤더로 별도 인스턴스를 만든다 — 어댑터 하나는 동시 요청 1건이 계약이라(brain/
+        base.py) 공유하면 선제 발화와 수집이 last_result를 두고 경합한다.
+        """
+        from navi.brain import create_brain
+
+        config = self._require_config()
+        if vendor not in BRAIN_VENDORS:
+            raise LookupError(f"알 수 없는 두뇌 벤더: {vendor!r}")
+        if self._pipeline is None:
+            raise RuntimeError("파이프라인 없음 — 두뇌를 갈아끼울 자리가 없다")
+        # 발화 중 교체 금지 — swap_persona와 같은 락(파이프라인 턴 락)을 공유한다.
+        self._guard_not_playing()
+
+        field = BRAIN_KEY_FIELDS.get(vendor)
+        candidate = config
+        if field is not None:
+            key = api_key or self._key_of(vendor)
+            candidate = replace(config, **{field: key})
+
+        # 키 부재는 여기서 걸린다(create_brain의 기존 에러 메시지를 그대로 쓴다)
+        brain = create_brain(candidate, vendor=vendor)
+        await brain.validate(candidate.brain.model_for(vendor))
+
+        # ── 여기부터 커밋 ──
+        if field is not None and api_key:
+            write_env_key(config.root, BRAIN_ENV_NAMES[vendor], api_key)
+            os.environ[BRAIN_ENV_NAMES[vendor]] = api_key
+        self._pipeline.set_brain(brain)
+        self._config = candidate
+        if self._store is not None:
+            self._store.set_setting("brain.vendor", vendor)
+        log.info("두뇌 교체: %s (모델 %s)", vendor, candidate.brain.model_for(vendor))
+        return {
+            "vendor": vendor,
+            "model": candidate.brain.model_for(vendor),
+            "key_saved": bool(field is not None and api_key),
+        }
+
+    def _key_of(self, vendor: str) -> str | None:
+        field = BRAIN_KEY_FIELDS.get(vendor)
+        return getattr(self._require_config(), field) if field else None
+
+    def _require_config(self) -> Config:
+        if self._config is None:
+            raise RuntimeError("두뇌 런타임 미구성")
+        return self._config
 
     # --- 톤 (현재 목소리 주인의 톤 세트 안에서만) ----------------------
 

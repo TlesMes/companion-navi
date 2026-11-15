@@ -40,6 +40,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from navi.brain import BRAIN_KEY_FIELDS
 from navi.config import load_config
 from navi.persona import CharacterCard, missing_assets
 
@@ -53,8 +54,9 @@ TEXT_ONLY = "none"
 _BASE_VENV = Path(".venv")
 _VOICE_VENV = Path(".venv-voice")
 
-# 키가 필요한 두뇌 → Config 속성명. echo는 키가 없어도 되므로 여기 없다.
-_BRAIN_KEYS = {"anthropic": "anthropic_api_key", "gemini": "gemini_api_key"}
+# 키가 필요한 두뇌 → Config 속성명. 정의는 navi.brain이 소유한다 — 부팅 전 점검과
+# 런타임 교체(컨트롤 플레인)가 같은 재료를 봐야 판정이 어긋나지 않는다.
+_BRAIN_KEYS = BRAIN_KEY_FIELDS
 
 
 @dataclass
