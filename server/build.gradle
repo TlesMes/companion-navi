@@ -26,6 +26,7 @@ dependencies {
     implementation 'com.anthropic:anthropic-java:3.8.0'
 
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
     // JPA가 아니라 JdbcClient — 행 잠금(쿼터)과 SKIP LOCKED(큐, D25)를 SQL로 직접 쓴다.
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-flyway'
