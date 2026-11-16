@@ -1,0 +1,40 @@
+import org.springframework.boot.gradle.plugin.SpringBootPlugin
+
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.2'
+}
+
+group = 'navi'
+version = '0.1.0'
+
+java {
+    // Virtual Threads(21+)가 전제다(service.md §11). 기본 java가 17이어도 빌드가 25를 찾아 쓴다.
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation platform(SpringBootPlugin.BOM_COORDINATES)
+    implementation 'org.springframework.boot:spring-boot-starter'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'tools.jackson.core:jackson-databind'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // 공유 픽스처(tests/fixtures)와 카드(personas)는 저장소 루트에 있다 — Python과 같은 파일을 읽는다.
+    systemProperty 'navi.repoRoot', rootDir.parentFile.absolutePath
+    systemProperty 'file.encoding', 'UTF-8'
+}
