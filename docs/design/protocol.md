@@ -55,7 +55,7 @@
 
 | type | 필드 | 뜻 |
 | :-- | :-- | :-- |
-| `session.ready` | `protocol`, `user_id`, `personas` | 연결됨. 첫 메시지 |
+| `session.ready` | `protocol`, `user_id`, `personas`, `limits` | 연결됨. 첫 메시지 |
 | `turn.accepted` | `turn_id` | 턴을 받았다. 생성 시작 |
 | `turn.mood` | `turn_id`, `mood` | 이 응답의 무드. **본문보다 먼저 온다** |
 | `turn.delta` | `turn_id`, `seq`, `text` | 본문 조각 |
@@ -64,6 +64,8 @@
 | `turn.confirmed` | `turn_id`, `ok` | 재생 보고를 처리했다 |
 | `turn.error` | `turn_id`, `code`, `message` | 거절 또는 실패 |
 
+- `limits` — `max_text_chars`, `turns_per_minute`, `daily_tokens`. 클라이언트가 보내기 전에 걸러
+  낼 수 있게 알려 줄 뿐이고, 집행은 서버가 한다(§3.4).
 - `mood` — `neutral` / `bright` / `calm`. 서버가 응답 맨 앞의 `[mood:key]` 태그를 떼어 이 필드로
   보낸다(service.md §8, G2). **본문에는 태그가 없다.** 클라이언트는 `turn.mood`를 받고 톤(레퍼런스)을
   고른 뒤 본문을 합성한다. 무드 키의 뜻은 페르소나 번들이 정한다.
@@ -85,10 +87,26 @@
 | `unknown_persona` | 서버가 모르는 페르소나 키 | 번들을 맞춘다 |
 | `busy` | 이 연결에 진행 중인 턴이 있다 | 취소하고 `turn.cancelled`를 기다린 뒤 다시 보낸다 |
 | `duplicate_turn` | 이미 받은 `turn_id` | 새 `turn_id`로 보낸다 |
+| `text_too_long` | 발화가 `max_text_chars`를 넘는다 | 보내지 않는다(기다려도 같다) |
+| `rate_limited` | 최근 60초의 턴이 `turns_per_minute`에 닿았다 | `retry_after_s`초 뒤에 보낸다 |
+| `daily_quota_exceeded` | 오늘 쓴 토큰이 `daily_tokens`에 닿았다 | `retry_after_s`초(사용자 시간대 자정) 뒤에 보낸다 |
 | `brain_unavailable` | 두뇌 호출 실패 | 사용자에게 안내 문구를 재생한다(service.md §3, G5) |
 | `internal` | 서버 오류 | 〃 |
 
 `turn.accepted` 전의 오류는 턴이 만들어지지 않은 것이다. `turn.accepted` 뒤의 오류는 턴이 폐기된 것이다.
+
+### 3.4 한도 (G7, D24)
+
+| 한도 | 임시값 | 세는 법 |
+| :-- | :-- | :-- |
+| 발화 길이 | 500자 | `text`의 코드 포인트 수 |
+| 분당 턴 | 20 | 최근 60초에 **받은** 턴. 거절된 요청은 세지 않고, 취소·폐기된 턴은 센다 |
+| 일일 토큰 | 300,000 | 입력(캐시 포함) + 출력. "오늘"은 사용자 시간대의 날짜 |
+
+- 한도에 걸린 요청은 턴이 만들어지지 않고 두뇌도 부르지 않는다. 연결은 유지된다.
+- 일일 토큰은 **턴 앞에서 확인하고 턴 뒤에 차감한다.** 그래서 마지막 한 턴만큼은 넘을 수 있다.
+- 폐기된 턴도 차감한다 — 취소를 반복해 한도를 비껴갈 수 없다.
+- 값은 설정이고 임시다. 좋은 값은 사용 로그가 쌓인 뒤 정한다.
 
 ## 4. 턴의 흐름
 
