@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: navi-server
+  threads:
+    virtual:
+      enabled: true   # 요청마다 가상 스레드 — 두뇌 스트림을 붙든 채 막혀도 된다(service.md §11)
+
+navi:
+  brain:
+    vendor: ${NAVI_BRAIN_VENDOR:echo}       # echo | anthropic
+    model: ${NAVI_BRAIN_MODEL:claude-haiku-4-5}
+    max-tokens: 1024
+    anthropic-api-key: ${ANTHROPIC_API_KEY:}
