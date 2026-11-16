@@ -25,7 +25,22 @@ dependencies {
     // 두뇌 벤더 SDK — 어댑터(brain/AnthropicBrain) 밖으로 타입이 새지 않게 한다.
     implementation 'com.anthropic:anthropic-java:3.8.0'
 
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    // JPA가 아니라 JdbcClient — 행 잠금(쿼터)과 SKIP LOCKED(큐, D25)를 SQL로 직접 쓴다.
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    runtimeOnly 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+    // bootRun 때 compose.yaml의 PostgreSQL을 띄우고 접속 정보를 잡아 준다(로컬 개발 전용).
+    developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-jdbc-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-flyway-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
     testImplementation 'tools.jackson.core:jackson-databind'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

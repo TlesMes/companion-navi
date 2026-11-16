@@ -11,3 +11,14 @@ navi:
     model: ${NAVI_BRAIN_MODEL:claude-haiku-4-5}
     max-tokens: 1024
     anthropic-api-key: ${ANTHROPIC_API_KEY:}
+
+---
+# 저장소. 로컬 기본값은 compose.yaml의 PostgreSQL이다.
+spring:
+  datasource:
+    url: ${NAVI_DB_URL:jdbc:postgresql://localhost:5433/navi}
+    username: ${NAVI_DB_USER:navi}
+    password: ${NAVI_DB_PASSWORD:navi}
+  docker:
+    compose:
+      lifecycle-management: start-only   # bootRun이 띄우되, 끝날 때 내리지 않는다(데이터 유지)
