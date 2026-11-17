@@ -425,3 +425,24 @@ async def test_fake_mouth_counts_what_it_consumed():
     await mouth.speak_stream(tokens(), VOICE)
 
     assert mouth.played_chars == len("안녕. 왔어?")
+
+
+def test_registration_limit_is_reported_with_the_wait(tmp_path):
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            self.send_response(429)
+            self.send_header("Retry-After", "1800")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        link = ServerLink(f"http://127.0.0.1:{httpd.server_port}", tmp_path / "server_token")
+        with pytest.raises(BrainUnavailable, match="1800초"):
+            link._token()
+        assert not (tmp_path / "server_token").exists()
+    finally:
+        httpd.shutdown()

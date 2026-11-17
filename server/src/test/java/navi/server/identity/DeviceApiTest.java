@@ -31,6 +31,8 @@ class DeviceApiTest {
     @BeforeEach
     void setUp() {
         mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        // 여기 테스트는 같은 주소에서 여러 번 등록한다 — 등록 제한은 RegistrationLimitTest가 본다.
+        jdbc.sql("DELETE FROM device_registration").update();
     }
 
     private JsonNode register() throws Exception {
