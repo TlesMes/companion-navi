@@ -146,10 +146,10 @@ class WorkerApiTest {
         assertThat(facts.recall(user, 10)).extracting(FactStore.Fact::text).containsExactly(
                 "사용자의 동생 이름은 민준이다.", "사용자는 주말에 등산을 간다.");
         // 출처·대체는 그 사용자의 것일 때만 받는다.
-        assertThat(jdbc.sql("SELECT source_message_id FROM fact WHERE text LIKE '%민준%'")
-                .query(Long.class).single()).isEqualTo(src);
-        assertThat(jdbc.sql("SELECT source_message_id FROM fact WHERE text LIKE '%등산%'")
-                .query(Long.class).optional()).isEmpty();
+        List<Long> sources = jdbc.sql(
+                        "SELECT source_message_id FROM fact WHERE user_id = ? AND status = 'active' ORDER BY fact_id")
+                .param(user).query((rs, n) -> rs.getObject(1, Long.class)).list();
+        assertThat(sources).containsExactly(src, null); // 민준(제 발화) / 등산(남의 발화라 버림)
         assertThat(facts.recall(other, 10)).extracting(FactStore.Fact::text).containsExactly("남의 사실.");
         assertThat(facts.cursor(user)).isEqualTo(last);
         assertThat(jdbc.sql("SELECT tokens FROM usage_daily WHERE user_id = ?").param(user)

@@ -7,9 +7,11 @@ import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import navi.server.crypto.FieldCipher;
 import navi.server.jobs.JobQueue;
 import navi.server.jobs.JobQueue.Claimed;
 import navi.server.quota.UsageLedger;
+import navi.server.turn.TurnStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -70,10 +72,12 @@ public class FactJobs {
     private final JobQueue queue;
     private final UsageLedger ledger;
     private final FactsProperties props;
+    private final FieldCipher cipher;
 
     public FactJobs(
             JdbcClient jdbc, FactStore facts, JobQueue queue, UsageLedger ledger,
-            FactsProperties props) {
+            FactsProperties props, FieldCipher cipher) {
+        this.cipher = cipher;
         this.jdbc = jdbc;
         this.facts = facts;
         this.queue = queue;
@@ -108,15 +112,17 @@ public class FactJobs {
         long userId = job.userId();
         long cursor = facts.cursor(userId);
         List<Map<String, Object>> turns = jdbc.sql("""
-                        SELECT m.message_id, m.role, left(m.text, :max_chars) AS text, m.created_at
+                        SELECT m.message_id, m.role, m.text, m.created_at
                         """ + PENDING_CONFIRMED + " ORDER BY m.message_id LIMIT :limit")
                 .param("user", userId).param("cursor", cursor)
-                .param("max_chars", MAX_TURN_CHARS).param("limit", props.maxRowsPerBatch())
+                .param("limit", props.maxRowsPerBatch())
                 .query((rs, n) -> {
                     Map<String, Object> turn = new LinkedHashMap<>();
                     turn.put("id", rs.getLong("message_id"));
                     turn.put("role", rs.getString("role"));
-                    turn.put("text", rs.getString("text"));
+                    // 본문은 암호문이다 — 풀어서 워커에 준다. 워커와의 통로는 서버 내부망·TLS 몫이다.
+                    turn.put("text", truncate(
+                            cipher.decrypt(userId, TurnStore.TEXT, rs.getString("text")), MAX_TURN_CHARS));
                     turn.put("created_at",
                             rs.getObject("created_at", OffsetDateTime.class).toInstant().toString());
                     return turn;
@@ -179,6 +185,12 @@ public class FactJobs {
         log.info("사실 추출 완료 user={} job={} 적재={} 대체={} 토큰={}",
                 userId, jobId, stored, superseded, tokens);
         return stored;
+    }
+
+    private static String truncate(String text, int maxCodePoints) {
+        return text.codePointCount(0, text.length()) <= maxCodePoints
+                ? text
+                : text.substring(0, text.offsetByCodePoints(0, maxCodePoints));
     }
 
     private Long ownMessage(long userId, Long messageId) {

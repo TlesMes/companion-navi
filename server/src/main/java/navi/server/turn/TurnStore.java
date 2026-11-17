@@ -5,6 +5,7 @@ import java.util.UUID;
 import navi.server.assembly.Message;
 import navi.server.assembly.TurnKind;
 import navi.server.brain.Usage;
+import navi.server.crypto.FieldCipher;
 import navi.server.quota.UsageLedger;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -30,12 +31,17 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 public class TurnStore {
 
+    /** 본문 칸 이름 — 암호문의 인증 데이터로 묶인다(다른 칸으로 옮기면 안 풀린다). */
+    public static final String TEXT = "turn_message.text";
+
     private final JdbcClient jdbc;
     private final UsageLedger ledger;
+    private final FieldCipher cipher;
 
-    public TurnStore(JdbcClient jdbc, UsageLedger ledger) {
+    public TurnStore(JdbcClient jdbc, UsageLedger ledger, FieldCipher cipher) {
         this.jdbc = jdbc;
         this.ledger = ledger;
+        this.cipher = cipher;
     }
 
     /**
@@ -78,7 +84,8 @@ public class TurnStore {
                          LIMIT ?
                         """)
                 .params(userId, personaKey, limit)
-                .query((rs, n) -> new Message(rs.getString("role"), rs.getString("text")))
+                .query((rs, n) -> new Message(
+                        rs.getString("role"), cipher.decrypt(userId, TEXT, rs.getString("text"))))
                 .list();
         return newestFirst.reversed();
     }
@@ -150,9 +157,20 @@ public class TurnStore {
             jdbc.sql("DELETE FROM turn_message WHERE turn_id = ? AND role = 'assistant'")
                     .param(turnId).update();
         } else {
-            // PostgreSQL의 left()는 문자(코드 포인트) 단위로 자른다. 본문보다 길면 그대로 둔다.
-            jdbc.sql("UPDATE turn_message SET text = left(text, ?) WHERE turn_id = ? AND role = 'assistant'")
-                    .params(playedChars, turnId).update();
+            // 본문은 암호문이라 DB에서 못 자른다 — 풀어서 코드 포인트 단위로 자르고 다시 잠근다.
+            // 본문보다 길게 보고되면 그대로 둔다.
+            record Reply(long id, String text) {}
+            for (Reply reply : jdbc.sql(
+                            "SELECT message_id, text FROM turn_message WHERE turn_id = ? AND role = 'assistant'")
+                    .param(turnId)
+                    .query((rs, n) -> new Reply(rs.getLong(1), rs.getString(2))).list()) {
+                String plain = cipher.decrypt(userId, TEXT, reply.text());
+                if (plain.codePointCount(0, plain.length()) > playedChars) {
+                    String heard = plain.substring(0, plain.offsetByCodePoints(0, playedChars));
+                    jdbc.sql("UPDATE turn_message SET text = ? WHERE message_id = ?")
+                            .params(cipher.encrypt(userId, TEXT, heard), reply.id()).update();
+                }
+            }
         }
         jdbc.sql("UPDATE turn SET status = 'confirmed', interrupted = ? WHERE turn_id = ?")
                 .params(interrupted, turnId).update();
@@ -243,6 +261,6 @@ public class TurnStore {
 
     private void insertMessage(long turnId, long userId, String personaKey, String role, String text) {
         jdbc.sql("INSERT INTO turn_message (turn_id, user_id, persona_key, role, text) VALUES (?, ?, ?, ?, ?)")
-                .params(turnId, userId, personaKey, role, text).update();
+                .params(turnId, userId, personaKey, role, cipher.encrypt(userId, TEXT, text)).update();
     }
 }

@@ -56,3 +56,10 @@ navi:
   connection:
     ping-interval-ms: 20000
     pong-timeout-ms: 60000
+
+---
+# 본문 필드 암호화(G8 ②). 마스터 키가 없으면 서버가 뜨지 않는다. ./gradlew bootRun은 .env의
+# NAVI_DATA_KEY를, 없으면 개발용 키를 넣어 준다(build.gradle).
+navi:
+  crypto:
+    master-key: ${NAVI_DATA_KEY:}
