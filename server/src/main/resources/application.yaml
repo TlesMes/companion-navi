@@ -42,3 +42,10 @@ navi:
   # 워커 API — Python 워커(python -m navi.worker)가 작업을 가져간다. 토큰이 비면 API가 닫힌다.
   worker:
     token: ${NAVI_WORKER_TOKEN:}
+
+---
+# 서비스 사용자에게 제공하는 페르소나(personas/<키>.yaml). 목록 밖의 카드는 모르는 페르소나다 —
+# 시험용(zz_*)·로컬 전용 카드가 서비스로 새지 않게.
+navi:
+  personas:
+    offered: ${NAVI_PERSONAS_OFFERED:navi,example_kr,example_jp}
