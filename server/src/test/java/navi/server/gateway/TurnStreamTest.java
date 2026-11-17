@@ -48,6 +48,7 @@ class TurnStreamTest {
     @Autowired JdbcClient jdbc;
     @Autowired ScriptedBrain brain;
     @Autowired BrainPort wired;
+    @Autowired navi.server.crypto.FieldCipher cipher;
 
     String token;
     long user;
@@ -77,8 +78,12 @@ class TurnStreamTest {
     }
 
     private List<String> stored() {
-        return jdbc.sql("SELECT role || ':' || text FROM turn_message WHERE user_id = ? ORDER BY message_id")
-                .param(user).query(String.class).list();
+        // 본문은 암호문이다 — 서버의 복호화를 거쳐 읽는다.
+        return jdbc.sql("SELECT role, text FROM turn_message WHERE user_id = ? ORDER BY message_id")
+                .param(user)
+                .query((rs, n) -> rs.getString(1) + ":"
+                        + cipher.decrypt(user, navi.server.turn.TurnStore.TEXT, rs.getString(2)))
+                .list();
     }
 
     private static <T> void await(Supplier<T> actual, T expected) throws InterruptedException {

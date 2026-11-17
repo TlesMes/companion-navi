@@ -102,5 +102,13 @@ tasks.named('bootRun') {
         // 워커 API 공유 비밀 — Python 워커(python -m navi.worker)도 같은 .env에서 읽는다.
         def workerToken = dotenv('NAVI_WORKER_TOKEN')
         if (workerToken) environment 'NAVI_WORKER_TOKEN', workerToken
+        // 본문 암호화 마스터 키. 없으면 **개발용 고정 키**를 넣는다 — 로컬 DB 전용이다.
+        // 이 키로 암호화한 DB를 운영에 쓰면 안 된다(키가 저장소에 공개돼 있다).
+        def dataKey = dotenv('NAVI_DATA_KEY')
+        if (!dataKey) {
+            dataKey = 'bmF2aS1sb2NhbC1kZXYta2V5LU5PVC1BLVNFQ1JFVCE='
+            logger.warn('NAVI_DATA_KEY가 없어 개발용 고정 키로 띄웁니다 — 로컬 전용')
+        }
+        environment 'NAVI_DATA_KEY', dataKey
     }
 }

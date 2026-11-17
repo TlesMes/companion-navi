@@ -4,6 +4,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import navi.server.crypto.FieldCipher;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -27,10 +28,15 @@ public class FactStore {
             user_id = ? AND status = 'active' AND (expires_at IS NULL OR expires_at > now())
             """;
 
-    private final JdbcClient jdbc;
+    /** 본문 칸 이름 — 암호문의 인증 데이터로 묶인다. */
+    public static final String TEXT = "fact.text";
 
-    public FactStore(JdbcClient jdbc) {
+    private final JdbcClient jdbc;
+    private final FieldCipher cipher;
+
+    public FactStore(JdbcClient jdbc, FieldCipher cipher) {
         this.jdbc = jdbc;
+        this.cipher = cipher;
     }
 
     /**
@@ -63,7 +69,8 @@ public class FactStore {
         List<Fact> newestFirst = jdbc.sql("SELECT fact_id, kind, text FROM fact WHERE " + ACTIVE
                         + " AND " + filter + " ORDER BY fact_id DESC LIMIT ?")
                 .params(userId, limit)
-                .query((rs, n) -> new Fact(rs.getLong(1), rs.getString(2), rs.getString(3)))
+                .query((rs, n) -> new Fact(
+                        rs.getLong(1), rs.getString(2), cipher.decrypt(userId, TEXT, rs.getString(3))))
                 .list();
         return newestFirst.reversed();
     }
@@ -74,7 +81,7 @@ public class FactStore {
                         INSERT INTO fact (user_id, kind, text, source_message_id, expires_at)
                         VALUES (?, ?, ?, ?, ?) RETURNING fact_id
                         """)
-                .params(userId, kind, text, sourceMessageId, expiresAt)
+                .params(userId, kind, cipher.encrypt(userId, TEXT, text), sourceMessageId, expiresAt)
                 .query(Long.class).single();
     }
 

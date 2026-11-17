@@ -1,0 +1,5 @@
+# 테스트 전용 — classpath:/config/application.yaml은 main의 application.yaml 위에 겹쳐 읽힌다.
+navi:
+  crypto:
+    # 테스트용 마스터 키(32바이트). 실제 키가 아니다.
+    master-key: dGVzdC1vbmx5LW5vdC1hLXJlYWwtbWFzdGVyLWtleSE=

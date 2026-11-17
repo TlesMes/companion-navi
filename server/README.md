@@ -66,7 +66,9 @@ python -m navi.worker --server http://localhost:8080 --vendor anthropic --once  
 | `NAVI_QUOTA_MAX_TEXT_CHARS` | `500` | 발화 길이 상한 |
 | `NAVI_QUOTA_TURNS_PER_MINUTE` | `20` | 분당 턴 |
 | `NAVI_QUOTA_DAILY_TOKENS` | `300000` | 일일 토큰 |
+| `NAVI_DATA_KEY` | — (**필수**) | 본문 암호화 마스터 키, base64 32바이트(`openssl rand -base64 32`). 없으면 서버가 뜨지 않는다. `bootRun`은 없을 때 개발용 고정 키를 넣는다 — 로컬 전용 |
 | `NAVI_WORKER_TOKEN` | — | 워커 API 공유 비밀. 비면 워커 API가 닫힌다 |
+| `NAVI_PERSONAS_OFFERED` | `navi,example_kr,example_jp` | 제공하는 페르소나 키. 목록 밖 카드는 모르는 페르소나다 |
 | `NAVI_FACTS_ENABLED` | `true` | 사실 주입·추출 작업 |
 
 한도 값은 임시다(D24). 그 밖의 설정은 `src/main/resources/application.yaml`.
@@ -77,7 +79,8 @@ python -m navi.worker --server http://localhost:8080 --vendor anthropic --once  
 | :-- | :-- | :-- |
 | `assembly` | 카드 → 시스템 프롬프트, 프레임, 사실 블록, 무드 태그 분리 | `conductor.py` · `persona/card.py` · `mouth/mood.py` |
 | `brain` | 두뇌 포트, Anthropic 스트리밍 어댑터, Echo | `brain/` |
-| `identity` | 기기 등록·토큰 인증 (`app_user` / `device`) | — |
+| `identity` | 기기 등록·토큰 인증 (`app_user` / `device`), 같은 주소 등록 제한 | — |
+| `crypto` | 본문 필드 암호화(봉투 — 마스터 키 → 사용자 키 → 본문) | — |
 | `turn` | 턴의 한살이와 저장 (`turn` / `turn_message` / `usage_daily`) | `memory/store.py`의 턴 부분 |
 | `quota` | 한도 확인 + 턴 열기(한 트랜잭션), 사용량 장부 | — |
 | `memory` | 사실 저장·인출, 추출 작업의 입력·결과 적재 | `memory/store.py`의 사실 부분 |
@@ -85,7 +88,12 @@ python -m navi.worker --server http://localhost:8080 --vendor anthropic --once  
 | `gateway` | WebSocket 턴 스트림 | — |
 | `persona` | 서버가 아는 카드(`personas/*.yaml`) | — |
 
+## 운영 메모
+
+- **마스터 키(`NAVI_DATA_KEY`)는 DB와 따로 보관한다.** 잃으면 모든 본문을 되돌릴 수 없고, DB와 함께 새면 전부 읽힌다.
+- 서버 한 대 전제가 남은 곳: 활성 연결 상태(메모리), 부팅 시 미완 턴 폐기, 등록 제한의 무작위 비밀값(여러 대면 `navi.registration.source-secret`을 같게).
+- 앞단 프록시 뒤에 둘 때만 `navi.registration.trust-forwarded-for=true`.
+
 ## 아직 없는 것
 
-피드·선제 턴·학습 큐·서버 TTS·OAuth·본문 필드 암호화·등록 IP 제한·
-다기기 활성권. 순서는 service.md §7.
+피드·선제 턴·학습 큐·서버 TTS·OAuth·삭제 API·마스터 키 교체·기본 기기와 단절 유예(계정 뒤). 순서는 service.md §7.
