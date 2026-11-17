@@ -1,11 +1,15 @@
 package navi.server.gateway;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import navi.server.brain.CancelToken;
 import navi.server.identity.DeviceIdentity;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PingMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
@@ -30,6 +34,8 @@ final class ClientConnection {
     private final JsonMapper json;
     private final AtomicReference<ActiveTurn> active = new AtomicReference<>();
     private volatile boolean closed;
+    /** 마지막으로 살아 있다는 신호(pong)를 받은 시각. 연결 직후는 연결 시각이다. */
+    private volatile Instant lastPong = Instant.now();
 
     ClientConnection(DeviceIdentity identity, WebSocketSession raw, JsonMapper json) {
         this.identity = identity;
@@ -65,6 +71,40 @@ final class ClientConnection {
         ActiveTurn turn = active.get();
         if (turn != null) {
             turn.cancel().cancel();
+        }
+    }
+
+    String sessionId() {
+        return session.getId();
+    }
+
+    void markPong(Instant at) {
+        lastPong = at;
+    }
+
+    Instant lastPong() {
+        return lastPong;
+    }
+
+    /** 살아 있는지 묻는다(WebSocket ping). 못 보냈으면 false. */
+    boolean ping() {
+        if (closed || !session.isOpen()) {
+            return false;
+        }
+        try {
+            session.sendMessage(new PingMessage(ByteBuffer.wrap(new byte[] {'n'})));
+            return true;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** 연결을 닫는다 — 닫힘 처리(턴 폐기 등)는 핸들러의 afterConnectionClosed가 한다. */
+    void close(CloseStatus status) {
+        try {
+            session.close(status);
+        } catch (IOException | RuntimeException e) {
+            // 이미 죽은 연결이다. 닫힘 처리는 전송 오류 경로가 맡는다.
         }
     }
 

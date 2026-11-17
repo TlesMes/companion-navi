@@ -49,3 +49,10 @@ navi:
 navi:
   personas:
     offered: ${NAVI_PERSONAS_OFFERED:navi,example_kr,example_jp}
+
+---
+# 연결 유지 — 서버가 ping을 보내고, 대답이 끊긴 연결은 닫는다(진행 중 턴은 폐기, D22).
+navi:
+  connection:
+    ping-interval-ms: 20000
+    pong-timeout-ms: 60000

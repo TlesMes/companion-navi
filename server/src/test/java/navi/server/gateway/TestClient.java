@@ -25,6 +25,14 @@ final class TestClient implements WebSocket.Listener, AutoCloseable {
     private final BlockingQueue<JsonNode> inbox = new LinkedBlockingQueue<>();
     private final StringBuilder partial = new StringBuilder();
     private WebSocket socket;
+    /** 서버가 보낸 ping 수. pong은 JDK가 알아서 돌려준다. */
+    final java.util.concurrent.atomic.AtomicInteger pings = new java.util.concurrent.atomic.AtomicInteger();
+
+    @Override
+    public CompletionStage<?> onPing(WebSocket webSocket, java.nio.ByteBuffer message) {
+        pings.incrementAndGet();
+        return WebSocket.Listener.super.onPing(webSocket, message);
+    }
 
     static TestClient connect(int port, String token) {
         TestClient client = new TestClient();

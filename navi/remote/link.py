@@ -99,10 +99,15 @@ class ServerLink:
         if self._ws is None:
             raise BrainUnavailable("서버와 연결돼 있지 않아요")
         try:
-            return json.loads(await self._ws.recv())
+            msg = json.loads(await self._ws.recv())
         except ConnectionClosed as exc:
             self._drop()
             raise BrainUnavailable("서버와의 연결이 끊겼어요") from exc
+        if msg.get("type") in ("session.standby", "session.active"):
+            # 활성권 변화(D20). 대기여도 끊지 않는다 — 이 기기에서 사용자가 말을 걸면 서버가
+            # 반응 턴을 받으면서 활성권을 돌려준다. 여기서는 알리기만 한다.
+            log.info("서버 활성권 — %s", "대기(다른 기기가 가져감)" if msg["type"] == "session.standby" else "활성")
+        return msg
 
     async def close(self) -> None:
         ws, self._ws = self._ws, None
