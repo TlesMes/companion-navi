@@ -49,6 +49,7 @@ class SupertonicMouth(MouthAdapter):
         self._style_cache: dict[str, Any] = {}
         self._playing = False
         self._stopped = False
+        self._played_chars = 0
 
     # --- 엔진 지연 로드 -------------------------------------------------
     def _ensure_engine(self) -> Any:
@@ -94,18 +95,22 @@ class SupertonicMouth(MouthAdapter):
         await asyncio.to_thread(self._ensure_engine)
         self._stopped = False
         self._playing = True
-        audio_q: asyncio.Queue["np.ndarray | None"] = asyncio.Queue()
+        self._played_chars = 0
+        # (오디오, 그 문장 끝까지의 본문 글자 수) — 재생이 끝나면 그 위치까지 들린 것이다.
+        audio_q: asyncio.Queue["tuple[np.ndarray, int] | None"] = asyncio.Queue()
         synth = asyncio.create_task(self._synth_worker(tokens, voice, audio_q))
         try:
             while True:
-                wav = await audio_q.get()
-                if wav is None:  # 합성 워커 종료 신호
+                item = await audio_q.get()
+                if item is None:  # 합성 워커 종료 신호
                     break
                 if self._stopped:
                     break
+                wav, end = item
                 await asyncio.to_thread(self._play, wav)
                 if self._stopped:
                     break
+                self._played_chars = end  # 끊기지 않고 끝까지 재생된 문장만 센다
         finally:
             synth.cancel()
             try:
@@ -118,10 +123,11 @@ class SupertonicMouth(MouthAdapter):
         self,
         tokens: AsyncIterator[str],
         voice: VoiceProfile,
-        audio_q: "asyncio.Queue[np.ndarray | None]",
+        audio_q: "asyncio.Queue[tuple[np.ndarray, int] | None]",
     ) -> None:
         """토큰을 모아 문장 경계마다 합성해 큐에 넣는다. 끝나면 None 센티넬."""
         buf = ""
+        consumed = 0  # 지금까지 문장으로 떼어 낸 본문 글자 수(공백 포함)
         try:
             async for token in tokens:
                 if self._stopped:
@@ -131,16 +137,17 @@ class SupertonicMouth(MouthAdapter):
                 while (m := SENTENCE_END.match(buf)) is not None:
                     sentence = m.group().strip()
                     buf = buf[m.end():]
+                    consumed += m.end()
                     if sentence:
                         wav = await asyncio.to_thread(self._synth, sentence, voice)
-                        await audio_q.put(wav)
+                        await audio_q.put((wav, consumed))
                     if self._stopped:
                         break
             # 종결 부호 없이 끝난 꼬리말도 합성한다
             tail = buf.strip()
             if tail and not self._stopped:
                 wav = await asyncio.to_thread(self._synth, tail, voice)
-                await audio_q.put(wav)
+                await audio_q.put((wav, consumed + len(buf)))
         finally:
             await audio_q.put(None)
 
@@ -156,3 +163,7 @@ class SupertonicMouth(MouthAdapter):
 
     def is_playing(self) -> bool:
         return self._playing
+
+    @property
+    def played_chars(self) -> int | None:
+        return self._played_chars

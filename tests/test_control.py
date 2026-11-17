@@ -96,7 +96,7 @@ class _StubConductor:
     def __init__(self, card):
         self._card = card
 
-    def set_card(self, card) -> None:
+    def set_card(self, card, persona_id=None) -> None:
         self._card = card
 
     @property

@@ -141,7 +141,7 @@ class SwapRuntime:
         vendor_voice = card.voice.vendor(self._vendor) if card.voice else None
         tone = card.voice.default_tone(self._vendor) if card.voice else None
 
-        self._conductor.set_card(card)
+        self._conductor.set_card(card, persona_id)
         self._persona_id = persona_id
 
         voice_swapped = False
@@ -267,6 +267,10 @@ class SwapRuntime:
             raise LookupError(f"알 수 없는 두뇌 벤더: {vendor!r}")
         if self._pipeline is None:
             raise RuntimeError("파이프라인 없음 — 두뇌를 갈아끼울 자리가 없다")
+        if config.server.enabled:
+            # 연결 모드의 두뇌는 서버 것이다. 여기서 로컬 두뇌로 갈아 끼우면 이 기기만 조용히
+            # 단독 모드가 돼 서버의 기억과 갈린다.
+            raise RuntimeError("연결 모드에서는 두뇌를 서버가 정해요 — 이 기기에서 바꿀 수 없어요")
         # 발화 중 교체 금지 — swap_persona와 같은 락(파이프라인 턴 락)을 공유한다.
         self._guard_not_playing()
 

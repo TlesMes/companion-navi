@@ -262,3 +262,29 @@ def test_facts_default_to_echo_extractor_which_means_off(tmp_path):
     from navi.config import _load_facts
 
     assert _load_facts({}).extractor_vendor == "echo"
+
+
+# ── 연결 모드(server:) — 기본은 단독, 오버레이·CLI로 켠다 ─────────────────────
+
+
+def test_server_section_absent_means_standalone(tmp_path):
+    config = load_config(_write_repo(tmp_path))
+
+    assert not config.server.enabled
+    assert config.server.token_path == tmp_path / "secrets" / "server_token"
+
+
+def test_server_url_from_local_overlay_turns_on_connected_mode(tmp_path):
+    root = _write_repo(tmp_path, local={"server": {"url": "http://localhost:8080"}})
+
+    config = load_config(root)
+
+    assert config.server.enabled and config.server.url == "http://localhost:8080"
+
+
+def test_cli_server_beats_config_and_empty_string_forces_standalone(tmp_path):
+    root = _write_repo(tmp_path, local={"server": {"url": "http://a:8080"}})
+
+    assert load_config(root, server_url="http://b:8080").server.url == "http://b:8080"
+    # --server "" — config에 서버가 적혀 있어도 이번 실행만 단독 모드로.
+    assert not load_config(root, server_url="").server.enabled

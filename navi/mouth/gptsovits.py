@@ -357,7 +357,9 @@ class GPTSoVITSMouth(MouthAdapter):
                 self._prompt_lang, self._text_lang, self._how_to_cut,
             )
 
-        async def _synth_and_queue(text: str) -> None:
+        self._played_chars = 0
+
+        async def _synth_and_queue(text: str, end: int) -> None:
             nonlocal first_sentence_done, first_synth_done
             if not first_sentence_done:
                 first_sentence_done = True
@@ -373,10 +375,12 @@ class GPTSoVITSMouth(MouthAdapter):
                         "첫 문장 합성 완료 +%.0fms (%.2fs 오디오)",
                         (time.perf_counter() - t0) * 1000, len(wav) / _OUTPUT_SR,
                     )
-                await audio_q.put(wav)
+                # (오디오, 그 문장 끝까지의 본문 글자 수) — 재생 보고용(base.played_chars)
+                await audio_q.put((wav, end))
 
         async def _synth_worker() -> None:
             buf = ""
+            consumed = 0  # 지금까지 문장으로 떼어 낸 본문 글자 수(공백 포함)
             async for tok in tokens:
                 if self._stopped:
                     break
@@ -387,12 +391,13 @@ class GPTSoVITSMouth(MouthAdapter):
                         break
                     chunk_text = m.group(0).strip()  # 문장 사이 공백 제거(supertonic과 일관)
                     buf = buf[m.end():]
+                    consumed += m.end()
                     if chunk_text:
-                        await _synth_and_queue(chunk_text)
+                        await _synth_and_queue(chunk_text, consumed)
                     if self._stopped:
                         break
             if buf.strip() and not self._stopped:
-                await _synth_and_queue(buf.strip())
+                await _synth_and_queue(buf.strip(), consumed + len(buf))
             await audio_q.put(_DONE)
 
         async def _play_loop() -> None:
@@ -408,7 +413,10 @@ class GPTSoVITSMouth(MouthAdapter):
                     logger.info(
                         "첫 오디오 재생 +%.0fms (TTFA)", (time.perf_counter() - t0) * 1000
                     )
-                await asyncio.to_thread(self._play, item)
+                wav, end = item
+                await asyncio.to_thread(self._play, wav)
+                if not self._stopped:
+                    self._played_chars = end  # 끝까지 재생된 문장만 센다
 
         try:
             await asyncio.gather(
@@ -453,6 +461,10 @@ class GPTSoVITSMouth(MouthAdapter):
             os.path.basename(self._gpt_ckpt), os.path.basename(self._sovits_ckpt),
             self._ref_lang, self._gen_lang,
         )
+
+    @property
+    def played_chars(self) -> int | None:
+        return getattr(self, "_played_chars", 0)
 
     def _play(self, wav: Any) -> None:
         import sounddevice as sd

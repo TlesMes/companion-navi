@@ -119,6 +119,14 @@ control:
   enabled: true
   port: 8765
 
+server:
+  # 연결 모드(docs/design/service.md §2.3) — 턴을 서버(server/)에 맡긴다.
+  # url이 비어 있으면 단독 모드다(지금까지와 같다: 이 기기가 조립하고 자기 키로 두뇌를 부른다).
+  # 채우면 발화 텍스트만 서버로 가고 조립·두뇌 호출·대화 저장은 서버가 한다.
+  # 마이크·STT·게이트·TTS는 어느 쪽이든 이 기기에 남는다. 이번 실행만 바꾸려면 --server URL.
+  url: ""                             # 예: http://localhost:8080
+  token_path: secrets/server_token    # 기기 토큰 — 이 기기의 정체. 지우면 서버 기억과 끊긴다
+
 db:
   path: navi.db
 

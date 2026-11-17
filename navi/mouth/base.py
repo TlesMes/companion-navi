@@ -33,6 +33,19 @@ class MouthAdapter(ABC):
     def is_playing(self) -> bool:
         """현재 재생 중인지 — 턴테이킹이 구독한다."""
 
+    @property
+    def played_chars(self) -> int | None:
+        """마지막 speak_stream에서 **끝까지 소리 낸** 본문 길이(글자). 모르면 None.
+
+        토큰 스트림을 이어 붙인 문자열에서의 위치다. 문장 하나의 재생이 끝날 때마다 그 문장의
+        끝(종결 부호 뒤)으로 올라간다 — 문장 사이 공백은 다음 문장 쪽이라 거기서 자르면 들린
+        문장이 정확히 남는다. 재생 도중 끊긴 문장은 안 센다.
+
+        연결 모드가 서버에 "어디까지 들렸는가"를 알릴 때 쓴다(design/protocol.md §4.1).
+        세지 않는 어댑터는 재정의하지 않는다 — 호출부가 None을 "모름"으로 다룬다.
+        """
+        return None
+
     def warmup(self) -> None:
         """엔진을 미리 로드한다. 기본: no-op. 지연 로드 어댑터에서 재정의."""
 

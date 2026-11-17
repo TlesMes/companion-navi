@@ -150,6 +150,22 @@ class ProactiveConfig:
 
 
 @dataclass(frozen=True)
+class ServerConfig:
+    """연결 모드(design/service.md §2.3) — 턴을 서버에 맡긴다. url이 비면 단독 모드다.
+
+    단독이 기본이다: 서버 없이 지금처럼 뜨는 것이 이 데몬의 최소 보증이다.
+    """
+
+    url: str  # 예: http://localhost:8080. 빈 문자열 = 단독 모드
+    # 기기 토큰 파일. 이 기기의 정체다 — 지우면 서버의 대화 기록과 끊긴다. 커밋 금지(secrets/).
+    token_path: Path
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.url)
+
+
+@dataclass(frozen=True)
 class ControlConfig:
     """컨트롤 플레인(Stage 15) — 데몬 안 HTTP/WS 서버. 섹션이 없어도 기본값으로 뜬다."""
 
@@ -249,6 +265,10 @@ class Config:
     # 새 사용자 발화 4개마다 도니 한 묶음이 약 8행이다. 그보다 작으면 방금 추출된
     # 대화가 창에서 통째로 사라져 말의 흐름이 끊긴다. 추정값이다.
     recent_turns_min: int = 8
+    # 연결 모드. 기본값(빈 url)은 단독 모드 — 필드 추가로 기존 생성부가 안 깨지게 한다.
+    server: ServerConfig = field(
+        default_factory=lambda: ServerConfig(url="", token_path=Path("secrets/server_token"))
+    )
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -366,6 +386,15 @@ def _load_wakeword(root: Path, raw: dict[str, Any]) -> WakeWordConfig:
         model_path=_resolve(root, pmodel) if pmodel else None,
         sensitivity=float(porc.get("sensitivity", 0.5)),
         active_timeout_ms=int(ww.get("active_timeout_ms", 30000)),
+    )
+
+
+def _load_server(root: Path, raw: dict[str, Any], url_override: str | None) -> ServerConfig:
+    s = raw.get("server") or {}
+    url = url_override if url_override is not None else str(s.get("url") or "")
+    return ServerConfig(
+        url=url.strip(),
+        token_path=root / str(s.get("token_path") or "secrets/server_token"),
     )
 
 
@@ -509,6 +538,7 @@ def load_config(
     persona_card: str | None = None,
     db_path: str | Path | None = None,
     brain_vendor: str | None = None,
+    server_url: str | None = None,
 ) -> Config:
     """config.yaml + .env + setting 테이블을 합쳐 불변 Config로.
 
@@ -546,6 +576,8 @@ def load_config(
         mode=_load_mode(raw),
         proactive=_load_proactive(raw),
         control=_load_control(raw),
+        # CLI --server가 있으면 그게 이긴다. 빈 문자열("")을 주면 이번 실행만 단독 모드다.
+        server=_load_server(root, raw, server_url),
         feed=_load_feed(raw),
         facts=_load_facts(raw),
         # ① CLI --db가 있으면 그게 db_path다 — DB 층이 읽을 대상이 여기서 확정된다.
