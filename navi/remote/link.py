@@ -123,6 +123,12 @@ class ServerLink:
         try:
             with urllib.request.urlopen(request, timeout=_CONNECT_TIMEOUT_S) as response:
                 device = json.load(response)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                # 같은 곳에서 등록이 너무 잦다(서버의 등록 제한). 기다리면 된다.
+                wait = exc.headers.get("Retry-After", "?")
+                raise BrainUnavailable(f"기기 등록이 너무 잦아요 — {wait}초 뒤에 다시 해 주세요") from exc
+            raise BrainUnavailable(f"서버가 기기 등록을 거절했어요(HTTP {exc.code})") from exc
         except (urllib.error.URLError, OSError) as exc:
             raise BrainUnavailable(f"서버에 기기를 등록하지 못했어요 — {self._http_base}") from exc
         self._token_path.parent.mkdir(parents=True, exist_ok=True)
