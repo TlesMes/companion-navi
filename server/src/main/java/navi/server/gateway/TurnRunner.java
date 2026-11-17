@@ -15,6 +15,8 @@ import navi.server.brain.BrainProperties;
 import navi.server.brain.BrainResult;
 import navi.server.brain.Usage;
 import navi.server.gateway.ClientConnection.ActiveTurn;
+import navi.server.quota.QuotaExceededException;
+import navi.server.quota.TurnGate;
 import navi.server.turn.DuplicateTurnException;
 import navi.server.turn.TurnStore;
 import org.slf4j.Logger;
@@ -34,12 +36,16 @@ class TurnRunner {
     private static final Logger log = LoggerFactory.getLogger(TurnRunner.class);
 
     private final TurnStore store;
+    private final TurnGate gate;
     private final BrainPort brain;
     private final String model;
     private final int recentRows;
 
-    TurnRunner(TurnStore store, BrainPort brain, BrainProperties brainProps, TurnProperties props) {
+    TurnRunner(
+            TurnStore store, TurnGate gate, BrainPort brain, BrainProperties brainProps,
+            TurnProperties props) {
         this.store = store;
+        this.gate = gate;
         this.brain = brain;
         this.model = brainProps.model();
         this.recentRows = props.recentRows();
@@ -57,7 +63,17 @@ class TurnRunner {
         try {
             // 이력을 먼저 읽는다 — 이번 발화는 이력이 아니라 트리거다.
             history = store.recallRecent(userId, personaKey, recentRows);
-            turnId = store.begin(userId, turn.clientTurnId(), personaKey, kind, text, model);
+            turnId = gate.open(userId, turn.clientTurnId(), personaKey, kind, text, model);
+        } catch (QuotaExceededException e) {
+            // 한도 초과 — 턴은 만들어지지 않았고 두뇌도 부르지 않았다.
+            conn.end(turn);
+            Map<String, Object> error = Protocol.error(id, e.code(), e.getMessage());
+            if (e.retryAfterSeconds() != null) {
+                error.put("retry_after_s", e.retryAfterSeconds());
+            }
+            conn.send(error);
+            log.info("턴 거절 user={} code={}", userId, e.code());
+            return;
         } catch (DuplicateTurnException e) {
             conn.end(turn);
             conn.send(Protocol.error(id, Protocol.DUPLICATE_TURN, "이미 받은 turn_id입니다"));

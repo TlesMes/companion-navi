@@ -22,3 +22,11 @@ spring:
   docker:
     compose:
       lifecycle-management: start-only   # bootRun이 띄우되, 끝날 때 내리지 않는다(데이터 유지)
+
+---
+# 반응 턴의 한도(service.md §10, G7). 값은 임시다(D24) — 사용 로그가 쌓이면 다시 정한다.
+navi:
+  quota:
+    max-text-chars: ${NAVI_QUOTA_MAX_TEXT_CHARS:500}
+    turns-per-minute: ${NAVI_QUOTA_TURNS_PER_MINUTE:20}
+    daily-tokens: ${NAVI_QUOTA_DAILY_TOKENS:300000}

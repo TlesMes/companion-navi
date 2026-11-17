@@ -11,6 +11,22 @@
 
 ---
 
+## G. 서비스화 — 서버 (2026.11.16 시작)
+
+순서는 [design/service.md](./design/service.md) §7. 서버는 `server/`, 실행법은 [server/README.md](../server/README.md).
+
+- [x] **G1. 턴 게이트웨이** — 완료(2026.11.16, PR #60~#65). 조립·두뇌 호출·기기 토큰·턴 저장·
+      WebSocket 스트림·쿼터. 실호출 확인(Haiku 2턴). 프로토콜 → [design/protocol.md](./design/protocol.md).
+- [ ] **G2. 클라이언트 연결 모드** — Python 데몬이 서버에 붙는다(단독/연결을 같은 포트 뒤에서 가른다,
+      service.md §2.3). protocol.md가 명세, `scripts/try/try_server_turn.py`가 참고 구현.
+      재생 보고(어디까지 소리 냈는가)를 TTS 쪽에서 세는 것이 새로 필요하다.
+- [ ] **G3. 서버 기억** — 사실 추출 워커(Python, `SKIP LOCKED` 큐 — D25)와 서버 조립의 사실 주입.
+      조립 코드는 사실을 받을 준비가 돼 있다(지금은 빈 목록). 창 축소(8~20행)도 이때 옮긴다.
+- [ ] **G4. 공개 전에 닫을 것** — 본문 필드 암호화(G8 ②), 등록 IP 제한, 활성 연결 하나(D20),
+      제공 페르소나 목록, 하트비트. 턴 게이트웨이에서 알고 남긴 것들이다(progress.md).
+- [ ] **G5. 서버 조립 지연 측정** — 같은 조건의 직접 호출과 서버 경유를 비교한다(service.md §2.2 "미측정").
+- [ ] 피드 공유 → 학습 작업 큐 → 서버 TTS 폴백 (service.md §7의 나머지)
+
 ## F. Phase 4 기억 → 서비스화 — 다음 작업 (2026.11.15 시작)
 
 방향은 [design/service.md](./design/service.md), 구현 계획은 [design/memory.md](./design/memory.md).

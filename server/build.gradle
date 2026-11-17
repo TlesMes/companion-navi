@@ -91,3 +91,13 @@ tasks.register('liveTest', Test) {
         environment 'ANTHROPIC_API_KEY', key
     }
 }
+
+// 로컬 실행. 저장소 루트 .env에 ANTHROPIC_API_KEY가 있으면 넘겨준다(Python 쪽과 같은 키).
+//   ./gradlew bootRun                                  # echo 두뇌 — 키 없이 배선 확인
+//   NAVI_BRAIN_VENDOR=anthropic ./gradlew bootRun      # 실제 모델
+tasks.named('bootRun') {
+    doFirst {
+        def key = dotenv('ANTHROPIC_API_KEY')
+        if (key) environment 'ANTHROPIC_API_KEY', key
+    }
+}

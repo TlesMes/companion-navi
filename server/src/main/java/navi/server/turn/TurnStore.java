@@ -101,6 +101,7 @@ public class TurnStore {
                 .params(mood, ttftMs, totalMs, usage.inputTokens(), usage.outputTokens(),
                         usage.cacheReadTokens(), usage.cacheWriteTokens(), turnId)
                 .update();
+        charge(row.userId(), usage);
     }
 
     /**
@@ -170,6 +171,7 @@ public class TurnStore {
                 .params(totalMs, usage.inputTokens(), usage.outputTokens(),
                         usage.cacheReadTokens(), usage.cacheWriteTokens(), turnId)
                 .update();
+        charge(row.userId(), usage);
     }
 
     /**
@@ -195,6 +197,26 @@ public class TurnStore {
                          WHERE user_id = ? AND client_turn_id = ?
                         """)
                 .params(metricsJson, userId, clientTurnId).update() > 0;
+    }
+
+    /**
+     * 오늘 장부에 쓴 토큰을 더한다. 턴 종료(완료든 폐기든)와 **같은 트랜잭션**이다 — 턴은 끝났는데
+     * 차감이 빠지거나, 차감은 됐는데 턴이 안 끝난 상태가 생기지 않는다(D25가 Redis 대신
+     * PostgreSQL을 고른 근거 ②와 같다).
+     *
+     * <p>더하기를 한 문장으로 한다. 읽고-더해-쓰지 않으므로 동시 요청에서 갱신을 잃지 않는다.
+     * 상태가 실제로 바뀔 때만 불린다(위의 status 확인) — 같은 턴을 두 번 차감하지 않는다.
+     */
+    private void charge(long userId, Usage usage) {
+        jdbc.sql("""
+                        INSERT INTO usage_daily (user_id, day, tokens, turns)
+                        SELECT user_id, (now() AT TIME ZONE timezone)::date, ?, 1
+                          FROM app_user WHERE user_id = ?
+                        ON CONFLICT (user_id, day)
+                        DO UPDATE SET tokens = usage_daily.tokens + EXCLUDED.tokens,
+                                      turns = usage_daily.turns + 1
+                        """)
+                .params(usage.totalTokens(), userId).update();
     }
 
     private record TurnRow(long userId, String personaKey, String status) {}

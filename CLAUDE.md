@@ -25,6 +25,7 @@
 | [docs/design/vendor_cost.md](./docs/design/vendor_cost.md) | 벤더 가격 비교·원가 시뮬레이션·안전 규제 조사 | 벤더 결정·원가 검토 시 |
 | [docs/design/gui.md](./docs/design/gui.md) | 최소 GUI 설계·구현 계획(PR 3분할)·목업([gui_mockup.html](./docs/design/gui_mockup.html)) | Stage 15 GUI 구현 시 |
 | [docs/design/service.md](./docs/design/service.md) | 서비스화 설계 — 서버 코어 + 엣지 음성, 결정 D18~D31, 공백·취약점 검토 | 서버·클라이언트 분리 작업 시 |
+| [docs/design/protocol.md](./docs/design/protocol.md) | 클라이언트-서버 프로토콜 v1 — 메시지·오류 코드·턴 확정·끊김(D22). 실행법은 [server/README.md](./server/README.md) | 서버 턴 스트림·클라이언트 연결 모드를 건드릴 때 |
 | [docs/design/memory.md](./docs/design/memory.md) | Phase 4 기억 계층 — 계약 변경·PR 분할, **구현된 형태와 실호출 결과(§4.1~§4.3)** | 기억·사실 추출·조립 주입을 건드릴 때 |
 | [docs/research/tts_pivot.md](./docs/research/tts_pivot.md) | Supertonic→Zero-shot 보이스 클로닝 전환 및 아키텍처 검토 | D3 배경 파악 시 |
 
@@ -50,6 +51,19 @@ type(scope): 제목 (한국어, 50자 내)
 - **PR 본문 섹션 헤딩:** `요약` `내용` `검증` `배경` `관련 결정` `다음 작업` 중 필요한 것만 사용. 없는 경우 같은 톤으로 명사형 제목 만들어도 무방. 구어체("무엇을" 등) 금지.
 
 ## 현재 상태 (2026.11.16)
+
+**서비스화의 첫 단계인 턴 게이트웨이가 생겼다(2026.11.16) — `server/`의 Java 서버.**
+기기 토큰으로 WebSocket을 열고 발화 텍스트를 보내면 서버가 조립해(`카드 → 사실 → 최근 대화`)
+서버 키로 두뇌를 부르고 응답을 스트리밍한다. 발화 길이·분당 턴·일일 토큰 한도를 서버가 건다.
+**클라이언트(Python 데몬)는 아직 서버에 붙지 않는다** — 단독 모드는 그대로이고 `navi/` 코드는
+바뀌지 않았다. **서버에는 사실 추출이 아직 없다**(사실 블록은 비어 간다, 최근 대화는 고정 20행).
+조립은 Python 원본이 뜬 공유 픽스처([tests/assembly_fixtures.py](./tests/assembly_fixtures.py))와
+문자 단위로 비교한다 — **조립이나 카드를 고치면 픽스처를 다시 떠야 한다**(안 뜨면 테스트가 깨진다).
+서버 작업에는 **JDK 25와 켜진 Docker Desktop**이 필요하다. 다음은 [checklist.md](./docs/checklist.md) G 묶음
+(클라이언트 연결 모드 → 서버 기억). 상세 → [progress.md](./docs/progress.md) 최상단,
+[server/README.md](./server/README.md), [protocol.md](./docs/design/protocol.md).
+
+**이하는 같은 날의 앞선 기록이다(Phase 4).**
 
 **Phase 4(기억)의 텍스트 계층이 구현됐다(2026.11.16) — 나비가 대화 창 밖의 일을 기억한다.**
 대화에서 사실을 뽑아 행으로 쌓고([navi/memory/facts.py](./navi/memory/facts.py)), 매 턴 요청에

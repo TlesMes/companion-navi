@@ -10,6 +10,7 @@ import navi.server.brain.CancelToken;
 import navi.server.gateway.ClientConnection.ActiveTurn;
 import navi.server.identity.DeviceIdentity;
 import navi.server.persona.PersonaRegistry;
+import navi.server.quota.TurnGate;
 import navi.server.turn.TurnStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,10 +44,12 @@ class TurnStreamHandler extends TextWebSocketHandler {
     private final TurnStore store;
     private final TurnRunner runner;
     private final TurnProperties props;
+    private final TurnGate gate;
 
     TurnStreamHandler(
             JsonMapper json, PersonaRegistry personas, TurnStore store, TurnRunner runner,
-            TurnProperties props) {
+            TurnProperties props, TurnGate gate) {
+        this.gate = gate;
         this.json = json;
         this.personas = personas;
         this.store = store;
@@ -65,6 +68,11 @@ class TurnStreamHandler extends TextWebSocketHandler {
         ready.put("protocol", Protocol.VERSION);
         ready.put("user_id", identity.userId());
         ready.put("personas", personas.keys());
+        // 한도를 알려 준다 — 클라이언트가 보내기 전에 걸러 낼 수 있게. 집행은 서버가 한다.
+        ready.put("limits", Map.of(
+                "max_text_chars", gate.limits().maxTextChars(),
+                "turns_per_minute", gate.limits().turnsPerMinute(),
+                "daily_tokens", gate.limits().dailyTokens()));
         conn.send(ready);
         log.info("연결 user={} device={}", identity.userId(), identity.deviceId());
     }
