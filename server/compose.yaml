@@ -1,0 +1,22 @@
+# 로컬 개발용 PostgreSQL. 운영 설정이 아니다 — 비밀번호가 평문이고 포트가 열려 있다.
+#   ./gradlew bootRun 이 알아서 띄운다(spring-boot-docker-compose). 직접 띄우려면: docker compose up -d
+# 호스트 포트를 5433으로 둔 건 이미 깔린 PostgreSQL(5432)과 부딪치지 않게 하려는 것이다.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: navi
+      POSTGRES_USER: navi
+      POSTGRES_PASSWORD: navi
+    ports:
+      - "5433:5432"
+    volumes:
+      - navi-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U navi -d navi"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+volumes:
+  navi-pg:
