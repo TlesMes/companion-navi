@@ -15,6 +15,9 @@ import navi.server.brain.BrainProperties;
 import navi.server.brain.BrainResult;
 import navi.server.brain.Usage;
 import navi.server.gateway.ClientConnection.ActiveTurn;
+import navi.server.memory.FactJobs;
+import navi.server.memory.FactStore;
+import navi.server.memory.FactsProperties;
 import navi.server.quota.QuotaExceededException;
 import navi.server.quota.TurnGate;
 import navi.server.turn.DuplicateTurnException;
@@ -37,15 +40,21 @@ class TurnRunner {
 
     private final TurnStore store;
     private final TurnGate gate;
+    private final FactStore facts;
+    private final FactJobs factJobs;
+    private final FactsProperties factsProps;
     private final BrainPort brain;
     private final String model;
     private final int recentRows;
 
     TurnRunner(
             TurnStore store, TurnGate gate, BrainPort brain, BrainProperties brainProps,
-            TurnProperties props) {
+            TurnProperties props, FactStore facts, FactJobs factJobs, FactsProperties factsProps) {
         this.store = store;
         this.gate = gate;
+        this.facts = facts;
+        this.factJobs = factJobs;
+        this.factsProps = factsProps;
         this.brain = brain;
         this.model = brainProps.model();
         this.recentRows = props.recentRows();
@@ -62,7 +71,7 @@ class TurnRunner {
         List<Message> history;
         try {
             // 이력을 먼저 읽는다 — 이번 발화는 이력이 아니라 트리거다.
-            history = store.recallRecent(userId, personaKey, recentRows);
+            history = recallHistory(userId, personaKey);
             turnId = gate.open(userId, turn.clientTurnId(), personaKey, kind, text, model);
         } catch (QuotaExceededException e) {
             // 한도 초과 — 턴은 만들어지지 않았고 두뇌도 부르지 않았다.
@@ -86,9 +95,9 @@ class TurnRunner {
         }
         conn.send(Protocol.of("turn.accepted", id));
 
-        // 서버에 사실 추출이 아직 없다 — 사실 블록은 비어 간다(조립 코드는 받을 준비가 돼 있다).
+        List<String> factTexts = recallFacts(userId);
         LlmRequest request =
-                RequestAssembler.assemble(card, history, List.of(), kind, text, model);
+                RequestAssembler.assemble(card, history, factTexts, kind, text, model);
         Stream stream = new Stream(conn, turn, id, started);
 
         BrainResult result;
@@ -143,10 +152,41 @@ class TurnRunner {
         if (!delivered || conn.isClosed()) {
             // 끝까지 생성했는데 재생 보고를 받을 연결이 없다 — 전문으로 확정한다(TurnStore 참고).
             store.confirmUnreported(userId);
+            factJobs.maybeEnqueue(userId);
         }
-        log.info("턴 완료 user={} turn={} persona={} kind={} in={} out={} cache_read={} ttft={} ms={}",
+        // 사실 수·글자 수·창 길이를 매 턴 남긴다 — 사실이 늘어 전부 넣을 수 없게 되는 시점
+        // (검색 도입)의 근거다(service.md §5 조건 ③).
+        log.info("턴 완료 user={} turn={} persona={} kind={} in={} out={} cache_read={} ttft={} ms={}"
+                        + " facts={}({}자) history={}",
                 userId, turnId, personaKey, kind.wire(), usage.totalInputTokens(),
-                usage.outputTokens(), usage.cacheReadTokens(), stream.ttftMs(), totalMs);
+                usage.outputTokens(), usage.cacheReadTokens(), stream.ttftMs(), totalMs,
+                factTexts.size(), request.context().length(), history.size());
+    }
+
+    /** 최근 대화. 사실을 주입하는 동안만 줄어드는 창을 쓴다(단독 모드 _recall_turns와 같다). */
+    private List<Message> recallHistory(long userId, String personaKey) {
+        if (!factsProps.injecting()) {
+            return store.recallRecent(userId, personaKey, recentRows);
+        }
+        return store.recallWorkingWindow(
+                userId, personaKey, factsProps.recentRowsMin(), recentRows, facts.cursor(userId));
+    }
+
+    /**
+     * 이번 턴에 넣을 사실. 꺼 두었거나 인출이 실패하면 빈 목록 — 사실은 있으면 좋은 것이지
+     * 턴의 전제가 아니다(단독 모드 _recall_facts와 같다). 최근 대화 인출은 삼키지 않는다.
+     */
+    private List<String> recallFacts(long userId) {
+        if (!factsProps.injecting()) {
+            return List.of();
+        }
+        try {
+            return facts.recall(userId, factsProps.maxInjected()).stream()
+                    .map(FactStore.Fact::text).toList();
+        } catch (RuntimeException e) {
+            log.warn("사실 인출 실패 — 이번 턴은 사실 없이 간다 user={}", userId, e);
+            return List.of();
+        }
     }
 
     private static int elapsedMs(long startedNanos) {
