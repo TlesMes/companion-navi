@@ -5,6 +5,7 @@ import java.util.UUID;
 import navi.server.assembly.Message;
 import navi.server.assembly.TurnKind;
 import navi.server.brain.Usage;
+import navi.server.quota.UsageLedger;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -30,9 +31,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class TurnStore {
 
     private final JdbcClient jdbc;
+    private final UsageLedger ledger;
 
-    public TurnStore(JdbcClient jdbc) {
+    public TurnStore(JdbcClient jdbc, UsageLedger ledger) {
         this.jdbc = jdbc;
+        this.ledger = ledger;
     }
 
     /**
@@ -78,6 +81,26 @@ public class TurnStore {
                 .query((rs, n) -> new Message(rs.getString("role"), rs.getString("text")))
                 .list();
         return newestFirst.reversed();
+    }
+
+    /**
+     * 조립에 넣을 최근 대화 — 사실과 합쳐 빈틈이 없도록 길이를 정한다(단독 모드
+     * recall_working_window와 같은 규칙).
+     *
+     * <p>커서 뒤(아직 추출기에 안 보인) 행이 n개면 창은 max(min, n)행이고 max를 넘지 않는다.
+     * 추출이 돌면 n이 줄어 창이 min으로 줄고, 대화가 쌓이면 다시 는다. 워커가 없어 커서가 안
+     * 움직이면 늘 max다 — 줄이면 그 대화는 사실에도 창에도 없게 된다.
+     */
+    public List<Message> recallWorkingWindow(
+            long userId, String personaKey, int minRows, int maxRows, long factCursor) {
+        long pending = jdbc.sql("""
+                        SELECT count(*) FROM turn_message m JOIN turn t USING (turn_id)
+                         WHERE m.user_id = ? AND m.persona_key = ? AND m.message_id > ?
+                           AND t.status IN ('provisional', 'confirmed')
+                        """)
+                .params(userId, personaKey, factCursor).query(Long.class).single();
+        int rows = (int) Math.min(maxRows, Math.max(minRows, pending));
+        return recallRecent(userId, personaKey, rows);
     }
 
     /** 생성이 끝났다. 응답을 임시로 적는다 — 확정은 재생 보고를 기다린다. */
@@ -200,23 +223,12 @@ public class TurnStore {
     }
 
     /**
-     * 오늘 장부에 쓴 토큰을 더한다. 턴 종료(완료든 폐기든)와 **같은 트랜잭션**이다 — 턴은 끝났는데
-     * 차감이 빠지거나, 차감은 됐는데 턴이 안 끝난 상태가 생기지 않는다(D25가 Redis 대신
-     * PostgreSQL을 고른 근거 ②와 같다).
-     *
-     * <p>더하기를 한 문장으로 한다. 읽고-더해-쓰지 않으므로 동시 요청에서 갱신을 잃지 않는다.
-     * 상태가 실제로 바뀔 때만 불린다(위의 status 확인) — 같은 턴을 두 번 차감하지 않는다.
+     * 쓴 토큰을 오늘 장부에 더한다. 턴 종료(완료든 폐기든)와 **같은 트랜잭션**이다 — 턴은 끝났는데
+     * 차감이 빠지거나 차감만 된 상태가 생기지 않는다. 상태가 실제로 바뀔 때만 불린다(위의
+     * status 확인) — 같은 턴을 두 번 차감하지 않는다.
      */
     private void charge(long userId, Usage usage) {
-        jdbc.sql("""
-                        INSERT INTO usage_daily (user_id, day, tokens, turns)
-                        SELECT user_id, (now() AT TIME ZONE timezone)::date, ?, 1
-                          FROM app_user WHERE user_id = ?
-                        ON CONFLICT (user_id, day)
-                        DO UPDATE SET tokens = usage_daily.tokens + EXCLUDED.tokens,
-                                      turns = usage_daily.turns + 1
-                        """)
-                .params(usage.totalTokens(), userId).update();
+        ledger.charge(userId, usage.totalTokens(), 1);
     }
 
     private record TurnRow(long userId, String personaKey, String status) {}

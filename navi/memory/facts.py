@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 from navi.brain.base import BrainAdapter
 from navi.feed.summarize import clean_summary, drain
@@ -160,21 +160,22 @@ def normalize_fact_text(text: str) -> str:
     return _WHITESPACE.sub("", text).casefold().rstrip(".!。")
 
 
-def _local_date(moment: datetime) -> date:
-    return moment.astimezone().date()
+def _local_date(moment: datetime, tz: tzinfo | None = None) -> date:
+    """말한 날 — tz가 없으면 이 기기의 시간대(단독 모드), 있으면 그 사용자의 시간대(서버 워커)."""
+    return moment.astimezone(tz).date()
 
 
 _WEEKDAYS = "월화수목금토일"
 
 
-def _dated(moment: datetime) -> str:
+def _dated(moment: datetime, tz: tzinfo | None = None) -> str:
     """`2026-11-12 목` — 요일을 코드가 적어 준다.
 
     "다음 주 금요일"을 날짜로 바꾸려면 말한 날의 요일이 필요한데, 날짜만 주면 모델이
     요일을 암산한다. 실측(2026.11.15)에서 그 암산이 이틀 틀렸다. 달력 계산은 결정론이
     할 수 있는 일이라 모델에 맡기지 않는다.
     """
-    day = _local_date(moment)
+    day = _local_date(moment, tz)
     return f"{day.isoformat()} {_WEEKDAYS[day.weekday()]}"
 
 
@@ -199,7 +200,9 @@ def _calendar(first: date, last: date) -> list[str]:
     return lines
 
 
-def build_fact_prompt(turns: list[Turn], known: list[Fact], now: datetime) -> str:
+def build_fact_prompt(
+    turns: list[Turn], known: list[Fact], now: datetime, tz: tzinfo | None = None
+) -> str:
     """추출기에 보일 한 덩어리 — 오늘 날짜, 이미 아는 사실, 새 대화.
 
     나비의 말도 넣는다(콜백 추출과 다른 점). "동생 이름이 뭐야?" → "민준"처럼 사용자의
@@ -208,30 +211,79 @@ def build_fact_prompt(turns: list[Turn], known: list[Fact], now: datetime) -> st
     번호에 T·F를 붙이는 건 두 번호 공간이 한 프롬프트에 같이 있어서다 — `#18`만 쓰면
     턴인지 사실인지 모델이 헷갈린다.
     """
-    lines = [f"오늘: {_dated(now)}", "", "[이미 아는 사실]"]
+    lines = [f"오늘: {_dated(now, tz)}", "", "[이미 아는 사실]"]
     if known:
         lines += [f"F{f.fact_id} ({f.kind}) {f.text}" for f in known]
     else:
         lines.append("(없음)")
     if turns:
-        days = [_local_date(t.created_at) for t in turns]
+        days = [_local_date(t.created_at, tz) for t in turns]
         lines += ["", "[달력]", *_calendar(min(days), max(days))]
     lines += ["", "[새 대화]"]
     for turn in turns:
         speaker = "사용자" if turn.role == "user" else "나비"
-        day = _dated(turn.created_at)
+        day = _dated(turn.created_at, tz)
         lines.append(f"T{turn.turn_id} ({day}) {speaker}: {turn.text[:_MAX_TURN_CHARS]}")
     return "\n".join(lines)
 
 
-def _expires_at(fact: ParsedFact, now: datetime) -> datetime | None:
+def _expires_at(fact: ParsedFact, now: datetime, tz: tzinfo | None = None) -> datetime | None:
     """만료 시각 — 추출기가 준 끝 날짜가 우선, 없으면 종류별 기본 수명, 그것도 없으면 None."""
     if fact.until is not None:
-        # 그 날이 **끝날 때까지** 유효하다. tz 없는 자정은 로컬로 읽힌다(astimezone 기본).
+        # 그 날이 **끝날 때까지** 유효하다. 자정은 사용자 시간대(tz), 없으면 이 기기 시간대.
         end_of_day = datetime.combine(fact.until + timedelta(days=1), time.min)
+        end_of_day = end_of_day.replace(tzinfo=tz) if tz is not None else end_of_day.astimezone()
         return end_of_day.astimezone(UTC)
     days = _DEFAULT_TTL_DAYS.get(fact.kind)
     return now + timedelta(days=days) if days is not None else None
+
+
+@dataclass(frozen=True)
+class NewFact:
+    """검증을 마친, 적재할 사실 하나."""
+
+    kind: str
+    text: str
+    source_turn_id: int
+    expires_at: datetime | None
+    replaces: int | None  # 이미 아는 사실 중 대체할 것. 모델이 지어낸 번호는 여기 오지 않는다
+
+
+def select_facts(
+    parsed: list[ParsedFact],
+    *,
+    batch_ids: set[int],
+    fallback_src: int,
+    known: list[Fact],
+    now: datetime,
+    tz: tzinfo | None = None,
+) -> list[NewFact]:
+    """추출기의 답을 검증해 적재할 것만 고른다 — 모델이 준 번호는 그대로 믿지 않는다.
+
+    단독 모드(FactExtractor)와 서버 워커(navi/worker)가 같이 쓴다. 규칙이 한 벌이어야
+    두 모드의 기억이 같은 모양으로 쌓인다.
+    """
+    known_ids = {f.fact_id for f in known}
+    known_texts = {normalize_fact_text(f.text) for f in known}
+    selected: list[NewFact] = []
+    for fact in parsed:
+        key = normalize_fact_text(fact.text)
+        if key in known_texts:
+            continue  # 이미 아는 사실 — 규칙 ⑧이 샌 경우
+        expires_at = _expires_at(fact, now, tz)
+        if expires_at is not None and expires_at <= now:
+            continue  # 이미 지난 예정 — 넣자마자 주입에서 빠질 사실이다
+        selected.append(
+            NewFact(
+                kind=fact.kind,
+                text=fact.text,
+                source_turn_id=fact.src if fact.src in batch_ids else fallback_src,
+                expires_at=expires_at,
+                replaces=fact.replaces if fact.replaces in known_ids else None,
+            )
+        )
+        known_texts.add(key)
+    return selected
 
 
 class FactExtractor:
@@ -332,28 +384,22 @@ class FactExtractor:
         now: datetime,
     ) -> int:
         """추출기의 답을 검증해 적재한다 — 모델이 준 번호는 그대로 믿지 않는다."""
-        batch_ids = {t.turn_id for t in turns}
-        fallback_src = user_turns[-1].turn_id  # 출처를 못 읽으면 이 묶음의 마지막 사용자 말
-        known_ids = {f.fact_id for f in known}
-        known_texts = {normalize_fact_text(f.text) for f in known}
-
-        stored = 0
-        for fact in parsed:
-            key = normalize_fact_text(fact.text)
-            if key in known_texts:
-                continue  # 이미 아는 사실 — 규칙 ⑧이 샌 경우
-            expires_at = _expires_at(fact, now)
-            if expires_at is not None and expires_at <= now:
-                continue  # 이미 지난 예정 — 넣자마자 주입에서 빠질 사실이다
+        selected = select_facts(
+            parsed,
+            batch_ids={t.turn_id for t in turns},
+            # 출처를 못 읽으면 이 묶음의 마지막 사용자 말
+            fallback_src=user_turns[-1].turn_id,
+            known=known,
+            now=now,
+        )
+        for fact in selected:
             new_id = self._store.insert_fact(
                 self._user_id,
                 fact.kind,
                 fact.text,
-                source_turn_id=fact.src if fact.src in batch_ids else fallback_src,
-                expires_at=expires_at.isoformat() if expires_at else None,
+                source_turn_id=fact.source_turn_id,
+                expires_at=fact.expires_at.isoformat() if fact.expires_at else None,
             )
-            if fact.replaces in known_ids:
+            if fact.replaces is not None:
                 self._store.supersede_fact(self._user_id, fact.replaces, new_id)
-            known_texts.add(key)
-            stored += 1
-        return stored
+        return len(selected)

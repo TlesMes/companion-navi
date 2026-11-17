@@ -23,6 +23,7 @@ import sys
 import time
 import urllib.request
 import uuid
+from pathlib import Path
 
 import websockets
 
@@ -98,10 +99,18 @@ async def main(args: argparse.Namespace) -> int:
     http_base = args.url.rstrip("/")
     ws_url = http_base.replace("http", "ws", 1) + "/v1/turn-stream"
 
-    device = register(http_base)
-    print(f"기기 등록 — user_id={device['user_id']} device_id={device['device_id']} (토큰은 출력하지 않음)")
+    token_file = Path(args.token_file) if args.token_file else None
+    if token_file is not None and token_file.exists():
+        token = token_file.read_text(encoding="utf-8").strip()
+        print(f"기존 기기로 접속 — 토큰 파일 {token_file}")
+    else:
+        device = register(http_base)
+        token = device["device_token"]
+        print(f"기기 등록 — user_id={device['user_id']} device_id={device['device_id']} (토큰은 출력하지 않음)")
+        if token_file is not None:
+            token_file.write_text(token, encoding="utf-8")
 
-    headers = {"Authorization": f"Bearer {device['device_token']}"}
+    headers = {"Authorization": f"Bearer {token}"}
     async with websockets.connect(ws_url, additional_headers=headers) as ws:
         ready = json.loads(await ws.recv())
         print(f"연결 — 프로토콜 v{ready['protocol']}, 페르소나 {ready['personas']}, 한도 {ready['limits']}")
@@ -125,6 +134,7 @@ if __name__ == "__main__":
     parser.add_argument("text", nargs="*", default=["나 방금 퇴근했어."], help="보낼 발화(여러 개 가능)")
     parser.add_argument("--url", default="http://localhost:8080")
     parser.add_argument("--persona", default="navi")
+    parser.add_argument("--token-file", help="기기 토큰을 여기 두고 다음 실행에서 다시 쓴다(같은 사용자로 이어 말하기)")
     parser.add_argument("--played", type=float, default=1.0, help="재생 보고 비율(0~1). 끼어들기 흉내")
     parser.add_argument("--overlong", action="store_true", help="한도 초과 발화를 보내 거절을 확인")
     sys.exit(asyncio.run(main(parser.parse_args())))

@@ -30,3 +30,15 @@ navi:
     max-text-chars: ${NAVI_QUOTA_MAX_TEXT_CHARS:500}
     turns-per-minute: ${NAVI_QUOTA_TURNS_PER_MINUTE:20}
     daily-tokens: ${NAVI_QUOTA_DAILY_TOKENS:300000}
+
+---
+# 서버 기억(checklist G3). 값은 단독 모드 config.yaml memory.facts와 같다.
+navi:
+  facts:
+    enabled: ${NAVI_FACTS_ENABLED:true}
+    max-injected: 50
+    min-new-user-turns: 4
+    recent-rows-min: 8
+  # 워커 API — Python 워커(python -m navi.worker)가 작업을 가져간다. 토큰이 비면 API가 닫힌다.
+  worker:
+    token: ${NAVI_WORKER_TOKEN:}

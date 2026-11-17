@@ -9,6 +9,7 @@ import navi.server.assembly.TurnKind;
 import navi.server.brain.CancelToken;
 import navi.server.gateway.ClientConnection.ActiveTurn;
 import navi.server.identity.DeviceIdentity;
+import navi.server.memory.FactJobs;
 import navi.server.persona.PersonaRegistry;
 import navi.server.quota.TurnGate;
 import navi.server.turn.TurnStore;
@@ -45,11 +46,13 @@ class TurnStreamHandler extends TextWebSocketHandler {
     private final TurnRunner runner;
     private final TurnProperties props;
     private final TurnGate gate;
+    private final FactJobs factJobs;
 
     TurnStreamHandler(
             JsonMapper json, PersonaRegistry personas, TurnStore store, TurnRunner runner,
-            TurnProperties props, TurnGate gate) {
+            TurnProperties props, TurnGate gate, FactJobs factJobs) {
         this.gate = gate;
+        this.factJobs = factJobs;
         this.json = json;
         this.personas = personas;
         this.store = store;
@@ -160,6 +163,9 @@ class TurnStreamHandler extends TextWebSocketHandler {
         boolean confirmed = store.confirm(
                 conn.identity().userId(), turnId.get(), played.asInt(),
                 msg.path("interrupted").asBoolean(false));
+        if (confirmed) {
+            factJobs.maybeEnqueue(conn.identity().userId()); // 확정된 대화가 쌓였으면 추출 작업
+        }
         Map<String, Object> reply = Protocol.of("turn.confirmed", rawId);
         // false: 임시 상태의 턴이 아니다(이미 확정됐거나 폐기됐다). 클라이언트는 다시 보내지 않는다.
         reply.put("ok", confirmed);
@@ -188,6 +194,9 @@ class TurnStreamHandler extends TextWebSocketHandler {
         // 전문으로 확정한다.
         conn.markClosed();
         int confirmed = store.confirmUnreported(conn.identity().userId());
+        if (confirmed > 0) {
+            factJobs.maybeEnqueue(conn.identity().userId());
+        }
         log.info("연결 종료 user={} code={} 보고 없이 확정={}",
                 conn.identity().userId(), status.getCode(), confirmed);
     }

@@ -99,5 +99,8 @@ tasks.named('bootRun') {
     doFirst {
         def key = dotenv('ANTHROPIC_API_KEY')
         if (key) environment 'ANTHROPIC_API_KEY', key
+        // 워커 API 공유 비밀 — Python 워커(python -m navi.worker)도 같은 .env에서 읽는다.
+        def workerToken = dotenv('NAVI_WORKER_TOKEN')
+        if (workerToken) environment 'NAVI_WORKER_TOKEN', workerToken
     }
 }
