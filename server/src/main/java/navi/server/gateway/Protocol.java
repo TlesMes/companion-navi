@@ -14,6 +14,7 @@ final class Protocol {
     static final String UNSUPPORTED_KIND = "unsupported_kind";
     static final String UNKNOWN_PERSONA = "unknown_persona";
     static final String BUSY = "busy";
+    static final String NOT_ACTIVE = "not_active";
     static final String DUPLICATE_TURN = "duplicate_turn";
     static final String BRAIN_UNAVAILABLE = "brain_unavailable";
     static final String INTERNAL = "internal";

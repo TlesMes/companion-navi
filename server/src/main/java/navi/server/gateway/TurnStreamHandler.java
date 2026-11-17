@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -47,10 +48,12 @@ class TurnStreamHandler extends TextWebSocketHandler {
     private final TurnProperties props;
     private final TurnGate gate;
     private final FactJobs factJobs;
+    private final ActiveConnections active;
 
     TurnStreamHandler(
             JsonMapper json, PersonaRegistry personas, TurnStore store, TurnRunner runner,
-            TurnProperties props, TurnGate gate, FactJobs factJobs) {
+            TurnProperties props, TurnGate gate, FactJobs factJobs, ActiveConnections active) {
+        this.active = active;
         this.gate = gate;
         this.factJobs = factJobs;
         this.json = json;
@@ -67,8 +70,11 @@ class TurnStreamHandler extends TextWebSocketHandler {
         session.setTextMessageSizeLimit(MAX_MESSAGE_BYTES);
         ClientConnection conn = new ClientConnection(identity, session, json);
         connections.put(session.getId(), conn);
+        // 접속한 연결이 활성권을 가져간다(D20). 밀린 연결은 끊지 않고 대기로 알린다.
+        ClientConnection previous = active.connect(conn);
         Map<String, Object> ready = Protocol.of("session.ready", null);
         ready.put("protocol", Protocol.VERSION);
+        ready.put("role", "active");
         ready.put("user_id", identity.userId());
         ready.put("personas", personas.keys());
         // 한도를 알려 준다 — 클라이언트가 보내기 전에 걸러 낼 수 있게. 집행은 서버가 한다.
@@ -77,7 +83,11 @@ class TurnStreamHandler extends TextWebSocketHandler {
                 "turns_per_minute", gate.limits().turnsPerMinute(),
                 "daily_tokens", gate.limits().dailyTokens()));
         conn.send(ready);
-        log.info("연결 user={} device={}", identity.userId(), identity.deviceId());
+        if (previous != null) {
+            previous.send(Protocol.of("session.standby", null));
+        }
+        log.info("연결 user={} device={} 밀린 연결={}",
+                identity.userId(), identity.deviceId(), previous != null);
     }
 
     @Override
@@ -99,6 +109,7 @@ class TurnStreamHandler extends TextWebSocketHandler {
             case "turn.cancel" -> onCancel(conn, msg);
             case "turn.played" -> onPlayed(conn, msg);
             case "turn.metrics" -> onMetrics(conn, msg);
+            case "session.activate" -> takeOver(conn);
             default -> conn.send(Protocol.error(
                     textOrNull(msg, "turn_id"), Protocol.BAD_REQUEST, "알 수 없는 type"));
         }
@@ -131,6 +142,15 @@ class TurnStreamHandler extends TextWebSocketHandler {
         if (card.isEmpty()) {
             conn.send(Protocol.error(rawId, Protocol.UNKNOWN_PERSONA, "모르는 persona"));
             return;
+        }
+        if (!active.isActive(conn)) {
+            if (kind.get() != TurnKind.REACTIVE) {
+                // 대기 기기는 먼저 말을 걸 수 없다 — 선제 발화는 활성 기기 하나에서만(D20).
+                conn.send(Protocol.error(rawId, Protocol.NOT_ACTIVE, "이 연결은 대기 중입니다"));
+                return;
+            }
+            // 사용자가 이 기기에 말을 걸었다 — 말을 거는 쪽이 활성권을 가져간다(D20).
+            takeOver(conn);
         }
         ActiveTurn turn = new ActiveTurn(turnId.get(), new CancelToken());
         if (!conn.tryBegin(turn)) {
@@ -184,11 +204,34 @@ class TurnStreamHandler extends TextWebSocketHandler {
         }
     }
 
+    /** 이 연결이 활성권을 가져간다. 밀린 연결에는 대기를, 이 연결에는 활성을 알린다. */
+    private void takeOver(ClientConnection conn) {
+        ClientConnection previous = active.activate(conn);
+        if (previous != null) {
+            previous.send(Protocol.of("session.standby", null));
+            conn.send(Protocol.of("session.active", null));
+            log.info("활성권 이동 user={}", conn.identity().userId());
+        }
+    }
+
+    @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        ClientConnection conn = connections.get(session.getId());
+        if (conn != null) {
+            conn.markPong(active.now());
+        }
+    }
+
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         ClientConnection conn = connections.remove(session.getId());
         if (conn == null) {
             return;
+        }
+        ClientConnection promoted = active.disconnect(conn);
+        if (promoted != null) {
+            // 활성 연결이 사라졌다 — 가장 최근에 활성이었던 대기 연결이 이어받는다(D20).
+            promoted.send(Protocol.of("session.active", null));
         }
         // 도는 턴은 멈추고(실행 스레드가 폐기한다), 생성이 끝났는데 재생 보고가 안 온 턴은
         // 전문으로 확정한다.
