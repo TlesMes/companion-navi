@@ -1,0 +1,187 @@
+{
+  "_comment": "생성 파일 — 손으로 고치지 않는다. python -m tests.assembly_fixtures --write",
+  "peel": [
+    {
+      "name": "tag_single_token",
+      "tokens": [
+        "[mood:bright] 오, 자랑해 봐."
+      ],
+      "mood": "bright",
+      "body": "오, 자랑해 봐."
+    },
+    {
+      "name": "tag_split_mid_literal",
+      "tokens": [
+        "[mo",
+        "od:ca",
+        "lm]",
+        " 괜찮아.",
+        " 천천히 해."
+      ],
+      "mood": "calm",
+      "body": " 괜찮아. 천천히 해."
+    },
+    {
+      "name": "tag_split_per_char",
+      "tokens": [
+        "[",
+        "m",
+        "o",
+        "o",
+        "d",
+        ":",
+        "n",
+        "e",
+        "u",
+        "t",
+        "r",
+        "a",
+        "l",
+        "]",
+        " 응."
+      ],
+      "mood": "neutral",
+      "body": " 응."
+    },
+    {
+      "name": "tag_then_body_same_token",
+      "tokens": [
+        "[mood:bright]",
+        "오",
+        " 좋네."
+      ],
+      "mood": "bright",
+      "body": "오 좋네."
+    },
+    {
+      "name": "tag_leading_whitespace",
+      "tokens": [
+        "  [mood:calm]  그랬구나."
+      ],
+      "mood": "calm",
+      "body": "그랬구나."
+    },
+    {
+      "name": "tag_uppercase_key",
+      "tokens": [
+        "[mood:BRIGHT] 와."
+      ],
+      "mood": "bright",
+      "body": "와."
+    },
+    {
+      "name": "tag_spaces_inside",
+      "tokens": [
+        "[mood: calm ] 응."
+      ],
+      "mood": "calm",
+      "body": "응."
+    },
+    {
+      "name": "tag_unknown_key",
+      "tokens": [
+        "[mood:angry] 뭐라고?"
+      ],
+      "mood": "neutral",
+      "body": "뭐라고?"
+    },
+    {
+      "name": "tag_only",
+      "tokens": [
+        "[mood:calm]"
+      ],
+      "mood": "calm",
+      "body": ""
+    },
+    {
+      "name": "no_tag",
+      "tokens": [
+        "그냥 ",
+        "말하는 ",
+        "거야."
+      ],
+      "mood": "neutral",
+      "body": "그냥 말하는 거야."
+    },
+    {
+      "name": "no_tag_bracket_other",
+      "tokens": [
+        "[웃음] 하하."
+      ],
+      "mood": "neutral",
+      "body": "[웃음] 하하."
+    },
+    {
+      "name": "no_tag_prefix_then_diverge",
+      "tokens": [
+        "[mo",
+        "ve] 가자."
+      ],
+      "mood": "neutral",
+      "body": "[move] 가자."
+    },
+    {
+      "name": "unclosed_tag_hits_limit",
+      "tokens": [
+        "[mood:",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        " 뒤"
+      ],
+      "mood": "neutral",
+      "body": "[mood:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 뒤"
+    },
+    {
+      "name": "tag_not_at_start",
+      "tokens": [
+        "음 [mood:bright] 그래."
+      ],
+      "mood": "neutral",
+      "body": "음 [mood:bright] 그래."
+    },
+    {
+      "name": "empty_stream",
+      "tokens": [],
+      "mood": "neutral",
+      "body": ""
+    },
+    {
+      "name": "empty_tokens_then_tag",
+      "tokens": [
+        "",
+        "[mood:bright] 응."
+      ],
+      "mood": "bright",
+      "body": "응."
+    }
+  ],
+  "strip": [
+    {
+      "text": "[mood:bright] 오, 자랑해 봐.",
+      "expected": "오, 자랑해 봐."
+    },
+    {
+      "text": "  [mood:calm]\n그랬구나.",
+      "expected": "그랬구나."
+    },
+    {
+      "text": "[mood:angry] 뭐라고?",
+      "expected": "뭐라고?"
+    },
+    {
+      "text": "태그 없음.",
+      "expected": "태그 없음."
+    },
+    {
+      "text": "음 [mood:bright] 그래.",
+      "expected": "음 [mood:bright] 그래."
+    },
+    {
+      "text": "[mood:bright] [mood:calm] 두 개.",
+      "expected": "[mood:calm] 두 개."
+    },
+    {
+      "text": "",
+      "expected": ""
+    }
+  ]
+}
