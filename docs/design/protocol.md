@@ -166,7 +166,36 @@
 - **서버에 못 닿으면** 그 턴은 실패로 끝나고 기억에 남지 않는다. 다음 턴에 다시 연결한다.
   사전 합성 안내 문구(G5)는 아직 없다 — 지금은 화면에 오류가 찍힌다.
 
-## 6. 정하지 않은 것
+## 6. 워커 API (서버 ↔ Python 워커)
+
+LLM을 부르는 배치(지금은 사실 추출)는 Python 워커가 한다(service.md §11 R1). 워커는 DB에 붙지
+않고 이 API로 작업을 pull한다. 구현: [WorkerController](../../server/src/main/java/navi/server/jobs/WorkerController.java),
+[navi/worker](../../navi/worker/).
+
+- **인증:** `Authorization: Bearer <NAVI_WORKER_TOKEN>`. 서버에 토큰이 비어 있으면 API가 닫힌다(503).
+- `POST /v1/worker/jobs/claim` `{"kinds": ["extract_facts"]}` → `204`(없음) 또는
+  `200 {"job_id", "kind", "attempt", "payload"}`.
+- `POST /v1/worker/jobs/{id}/complete` `{"attempt", "facts": [...], "cursor", "usage"}` → `200` /
+  `409`(그 시도는 무효 — 결과를 버린다).
+- `POST /v1/worker/jobs/{id}/fail` `{"attempt", "error"}` → 백오프 뒤 다시 내준다. 한도를 넘으면 버린다.
+- **`attempt`는 펜싱 토큰이다.** 가져갈 때마다 오르고, 완료·실패는 그 값을 내밀어야 받아들여진다.
+  임대(기본 300초)가 끝나 다른 워커가 다시 가져간 작업을 늦게 깨어난 워커가 덮어쓰지 못한다.
+
+`extract_facts`의 payload:
+
+| 필드 | 뜻 |
+| :-- | :-- |
+| `user_id`, `now` | 대상 사용자, 서버 시각(UTC) |
+| `utc_offset_minutes` | 그 사용자 시간대의 지금 오프셋 — 워커는 이걸로 "말한 날"과 만료 자정을 센다 |
+| `turns` | `{id, role, text, created_at}` — 커서 뒤의 **확정된** 발화, 아직 안 끝난 턴의 앞까지, 최대 40행 |
+| `known_facts` | `{id, kind, text}` — 지금 유효한 사실 최신 80건 |
+| `max_facts` | 한 번에 받아들일 사실 수 |
+
+결과의 `facts[]`는 `{kind, text, source_id, expires_at, replaces}`, `cursor`는 이번에 읽은 마지막 발화 ID다.
+서버는 `source_id`·`replaces`가 그 사용자의 것일 때만 받고, 적재·커서 이동·토큰 차감·완료 표시를 한
+트랜잭션으로 한다.
+
+## 7. 정하지 않은 것
 
 - **재연결 뒤의 재생 보고** — 연결이 끊긴 사이의 보고를 나중에 올리는 길(이벤트 발신함,
   service.md §5 R2). 지금은 연결이 닫히면 전문으로 확정한다.

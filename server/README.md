@@ -33,6 +33,18 @@ NAVI_BRAIN_VENDOR=anthropic ./gradlew bootRun
 python scripts/try/try_server_turn.py "나 방금 퇴근했어." "저녁 뭐 먹지?" --overlong
 ```
 
+## 워커 (서버 기억)
+
+사실 추출은 Python 워커가 한다. 서버와 워커가 같은 공유 토큰을 써야 한다(`.env`의
+`NAVI_WORKER_TOKEN` — `bootRun`도 거기서 읽는다). 토큰이 비면 워커 API가 닫힌다.
+
+```bash
+python -m navi.worker --server http://localhost:8080 --vendor anthropic   # 상주
+python -m navi.worker --server http://localhost:8080 --vendor anthropic --once   # 큐가 빌 때까지
+```
+
+워커가 없으면 사실이 쌓이지 않고, 최근 대화 창은 상한(20행)에 머문다 — 대화는 그대로 된다.
+
 ## 테스트
 
 ```bash
@@ -54,6 +66,8 @@ python scripts/try/try_server_turn.py "나 방금 퇴근했어." "저녁 뭐 먹
 | `NAVI_QUOTA_MAX_TEXT_CHARS` | `500` | 발화 길이 상한 |
 | `NAVI_QUOTA_TURNS_PER_MINUTE` | `20` | 분당 턴 |
 | `NAVI_QUOTA_DAILY_TOKENS` | `300000` | 일일 토큰 |
+| `NAVI_WORKER_TOKEN` | — | 워커 API 공유 비밀. 비면 워커 API가 닫힌다 |
+| `NAVI_FACTS_ENABLED` | `true` | 사실 주입·추출 작업 |
 
 한도 값은 임시다(D24). 그 밖의 설정은 `src/main/resources/application.yaml`.
 
@@ -65,11 +79,13 @@ python scripts/try/try_server_turn.py "나 방금 퇴근했어." "저녁 뭐 먹
 | `brain` | 두뇌 포트, Anthropic 스트리밍 어댑터, Echo | `brain/` |
 | `identity` | 기기 등록·토큰 인증 (`app_user` / `device`) | — |
 | `turn` | 턴의 한살이와 저장 (`turn` / `turn_message` / `usage_daily`) | `memory/store.py`의 턴 부분 |
-| `quota` | 한도 확인 + 턴 열기(한 트랜잭션) | — |
+| `quota` | 한도 확인 + 턴 열기(한 트랜잭션), 사용량 장부 | — |
+| `memory` | 사실 저장·인출, 추출 작업의 입력·결과 적재 | `memory/store.py`의 사실 부분 |
+| `jobs` | 작업 큐(`SKIP LOCKED`)와 워커 API | — |
 | `gateway` | WebSocket 턴 스트림 | — |
 | `persona` | 서버가 아는 카드(`personas/*.yaml`) | — |
 
 ## 아직 없는 것
 
-서버 기억(사실 추출 워커)·피드·선제 턴·학습 큐·서버 TTS·OAuth·본문 필드 암호화·등록 IP 제한·
+피드·선제 턴·학습 큐·서버 TTS·OAuth·본문 필드 암호화·등록 IP 제한·
 다기기 활성권. 순서는 service.md §7.
