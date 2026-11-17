@@ -610,8 +610,7 @@ def _build_facts(config, store, user_id: int):
 
 
 async def _run(config, args) -> None:
-    from navi.brain import create_brain
-    from navi.conductor import Conductor
+    from navi.backend import build_backend
     from navi.memory import MemoryStore
     from navi.persona import CharacterCard, mouth_options
     from navi.persona import missing_assets as mouth_missing_assets
@@ -622,12 +621,20 @@ async def _run(config, args) -> None:
     # root= 로 voice 섹션의 상대경로(wav·ckpt)를 지금 절대화 — gptsovits 웜업이
     # os.chdir를 하므로 지연 해석은 깨진다(persona/voice.py).
     card = CharacterCard.load(config.persona_card_path, root=config.root)
-    brain = create_brain(config)
-    conductor = Conductor(card=card, memory=store, config=config)
+    # 단독/연결 모드가 갈리는 자리(navi/backend.py). 아래는 어느 모드인지 묻지 않는다 —
+    # 예외는 서버가 아직 안 하는 것들(피드·사실 추출·선제 발화)을 끄는 곳뿐이다.
+    backend = build_backend(config, card, store)
+    brain, conductor = backend.brain, backend.conductor
     user_id = store.ensure_user(display_name="친구")
-    # user_id 확보 뒤에 지어야 한다 — 콜백 클로저가 그걸 닫아 잡는다.
-    feed = _build_feed(config, store, user_id)
-    facts = _build_facts(config, store, user_id)
+    if backend.connected:
+        # 연결 모드에서는 대화가 서버에 있다. 로컬 DB에는 턴이 쌓이지 않으므로 거기서 사실을
+        # 뽑거나 콜백 소재를 찾을 수 없다. 서버 쪽 사실 추출·피드가 그 자리를 맡는다.
+        feed, facts = None, None
+        log.info("연결 모드 — 로컬 피드·사실 추출·선제 발화는 끈다(서버 몫)")
+    else:
+        # user_id 확보 뒤에 지어야 한다 — 콜백 클로저가 그걸 닫아 잡는다.
+        feed = _build_feed(config, store, user_id)
+        facts = _build_facts(config, store, user_id)
     session_id = uuid.uuid4().hex
     bus = EventBus()
 
@@ -654,7 +661,10 @@ async def _run(config, args) -> None:
     if saved is not None:
         machine.restore_state(*saved)
     log.info("능동축 모드 — %s (복원=%s)", machine.tick().value, saved is not None)
-    log.info("데몬 시작 — session=%s, vendor=%s, pid=%d", session_id, config.brain.vendor, os.getpid())
+    log.info(
+        "데몬 시작 — session=%s, 두뇌=%s, pid=%d", session_id,
+        f"서버({config.server.url})" if backend.connected else config.brain.vendor, os.getpid(),
+    )
 
     # 페르소나 번들(gui.md PR ②) — 활성 벤더의 목소리 섹션. 부팅도 번들 우선:
     # 카드에 섹션이 있으면 가중치·초기 톤을 카드에서, 없으면 config mouth 폴백(하위호환).
@@ -745,9 +755,9 @@ async def _run(config, args) -> None:
             return
         if result is None:
             return
-        store.append_turn(session_id, user_id, role="user", text=text)
-        store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
-        store.log_usage("llm", result.usage)
+        await backend.record(
+            store, session_id, user_id, user_text=text, result=result, mouth=mouth
+        )
         log.info("응답 완료 — %d자, 총 %.0fms", len(result.full_text), (time.perf_counter() - started) * 1000)
 
     async def run_initiation(topic: str, kind: TurnKind = TurnKind.PROACTIVE) -> None:
@@ -776,11 +786,10 @@ async def _run(config, args) -> None:
             return
         if result is None:
             return
-        store.append_turn(
-            session_id, user_id, role="assistant",
-            text=result.full_text, trigger_type="proactive",
+        await backend.record(
+            store, session_id, user_id, user_text=None, result=result, mouth=mouth,
+            trigger_type="proactive",
         )
-        store.log_usage("llm", result.usage)
         log.info("능동 발화 완료 — %d자", len(result.full_text))
 
     from datetime import UTC
@@ -866,7 +875,9 @@ async def _run(config, args) -> None:
         mode_machine=machine,
         persist_mode=lambda mode, until: store.set_mode_state(user_id, mode, until),
         # 능동성 2·3층 (Phase 3 순서 4)
-        run_initiation=run_initiation,
+        # 연결 모드에서는 먼저 말을 걸지 않는다. 선제 발화의 3층(무엇을 말할까)은 서버 몫인데
+        # 서버 피드가 아직 없고, 서버는 클라이언트가 보낸 소재를 받지 않는다(protocol.md §3.1).
+        run_initiation=None if backend.connected else run_initiation,
         proactive=config.proactive,
         log_interaction=lambda ev, mode, note: store.log_interaction(ev, mode, note),
         count_initiations_today=count_initiations_today,
@@ -928,6 +939,7 @@ async def _run(config, args) -> None:
         pipeline.interrupt()
         if wakeword is not None:
             wakeword.close()
+        await backend.close()
         store.close()
         log.info("데몬 종료 — session=%s, %s", session_id, core.state.snapshot())
 
@@ -959,6 +971,9 @@ def main() -> None:
     parser.add_argument("--tick-interval", type=float, default=10.0, metavar="SEC",
                         help="TICK 발행 주기 (기본 10초)")
     parser.add_argument("--db", help="기억 DB 경로 덮어쓰기(테스트용)")
+    parser.add_argument("--server", metavar="URL",
+                        help="연결 모드 — 턴을 이 서버에 맡긴다(예: http://localhost:8080). "
+                             "빈 문자열이면 config의 server.url을 무시하고 단독 모드")
     parser.add_argument("-v", "--verbose", action="count", default=0)
     args = parser.parse_args()
 
@@ -982,6 +997,7 @@ def main() -> None:
         persona_card=persona_card,
         db_path=args.db,
         brain_vendor=args.brain,
+        server_url=args.server,
     )
 
     if not acquire_pidfile():

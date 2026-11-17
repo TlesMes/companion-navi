@@ -16,8 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
-from navi.brain import create_brain
-from navi.conductor import Conductor
+from navi.backend import build_backend
 from navi.config import Config, load_config
 from navi.gatekeeper import GateResult, check_gate
 from navi.memory import MemoryStore
@@ -99,11 +98,15 @@ async def chat(
 ) -> None:
     store = MemoryStore(config.db_path)
     card = CharacterCard.load(config.persona_card_path)
-    brain = create_brain(config)
-    conductor = Conductor(card=card, memory=store, config=config)
+    backend = build_backend(config, card, store)  # 단독/연결 모드가 갈리는 자리
+    brain, conductor = backend.brain, backend.conductor
     user_id = store.ensure_user(display_name="친구")
     session_id = uuid.uuid4().hex
-    log.info("세션 시작 — session=%s, vendor=%s", session_id, config.brain.vendor)
+    brain_label = (
+        f"서버({config.server.url})" if backend.connected
+        else f"{config.brain.vendor}({config.brain.model})"
+    )
+    log.info("세션 시작 — session=%s, 두뇌=%s", session_id, brain_label)
 
     # 웨이크워드를 켜려면 엔진 설정이 갖춰져야 한다 — 없으면 일찍 안내하고 끝낸다(데몬은 정상).
     if wakeword and not config.wakeword.ready:
@@ -131,7 +134,7 @@ async def chat(
 
     voice_note = f" 목소리: {config.mouth.vendor}." if use_voice else ""
     print(
-        f"{card.character} 깨어남 — 두뇌: {config.brain.vendor}({config.brain.model})."
+        f"{card.character} 깨어남 — 두뇌: {brain_label}."
         f"{voice_note} /quit 으로 종료."
     )
     wav_mode = input_wav is not None  # WAV 모드면 1턴 후 종료
@@ -161,9 +164,9 @@ async def chat(
             return
         if result is None:
             return
-        store.append_turn(session_id, user_id, role="user", text=text)
-        store.append_turn(session_id, user_id, role="assistant", text=result.full_text)
-        store.log_usage("llm", result.usage)
+        await backend.record(
+            store, session_id, user_id, user_text=text, result=result, mouth=mouth
+        )
         log.info(
             "응답 완료 — %d자, 총 %.0fms, 토큰 in=%d out=%d",
             len(result.full_text),
@@ -203,6 +206,7 @@ async def chat(
                 vad_threshold=vad_threshold,
             )
     finally:
+        await backend.close()
         store.close()
         log.info("세션 종료 — session=%s", session_id)
 
@@ -412,6 +416,12 @@ def main() -> None:
         help="-v: 진행 로그(INFO), -vv: 프롬프트 전문까지(DEBUG)",
     )
     parser.add_argument(
+        "--server",
+        metavar="URL",
+        help="연결 모드 — 턴을 이 서버에 맡긴다(예: http://localhost:8080). "
+        "빈 문자열이면 config의 server.url을 무시하고 단독 모드",
+    )
+    parser.add_argument(
         "--db",
         help="기억 DB 경로 덮어쓰기 — 본 기억을 오염시키지 않는 임시 DB 테스트용",
     )
@@ -480,6 +490,7 @@ def main() -> None:
         persona_card=persona_card,
         db_path=args.db,
         brain_vendor=args.brain,
+        server_url=args.server,
     )
     input_wav = Path(args.input) if args.input else None
     active_timeout_ms = (

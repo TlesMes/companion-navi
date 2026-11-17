@@ -137,10 +137,12 @@ class Conductor:
         self._memory = memory
         self._config = config
 
-    def set_card(self, card: CharacterCard) -> None:
+    def set_card(self, card: CharacterCard, persona_id: str | None = None) -> None:
         """페르소나 카드 교체 — 다음 build_request부터 적용.
 
         system_prompt는 매 턴 재조립(캐시 없음)이라 재할당만으로 충분하다.
+        persona_id는 여기선 안 쓴다 — 연결 모드의 짝(remote.RemoteConductor)이 서버에 보낼
+        키로 쓴다. 호출부(SwapRuntime)가 모드를 몰라도 되게 같은 모양으로 받는다.
         """
         log.info("카드 교체: %s → %s", self._card.character, card.character)
         self._card = card

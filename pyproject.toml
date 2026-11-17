@@ -13,6 +13,7 @@ dependencies = [
     "uvicorn",
     "pywebview",       # GUI 창 (Stage 15 PR ③) — 오디오 스택 불필요, 기본 venv 소속
     "feedparser",      # RSS 파싱 (Feed, D13) — 관심사 피드 수집
+    "websockets",      # 연결 모드(navi/remote) — 서버 턴 스트림. uvicorn이 이미 끌고 오지만 직접 쓴다
 ]
 
 [project.optional-dependencies]

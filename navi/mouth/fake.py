@@ -19,6 +19,11 @@ class FakeMouth(MouthAdapter):
         self.last_voice: VoiceProfile | None = None
         self._playing = False
         self._stopped = False
+        self._played_chars = 0
+
+    @property
+    def played_chars(self) -> int | None:
+        return self._played_chars
 
     async def speak_stream(
         self, tokens: AsyncIterator[str], voice: VoiceProfile
@@ -26,11 +31,13 @@ class FakeMouth(MouthAdapter):
         self.last_voice = voice
         self._playing = True
         self._stopped = False
+        self._played_chars = 0
         buf: list[str] = []
         async for token in tokens:
             if self._stopped:  # barge-in — 다음 토큰 경계에서 중단
                 break
             buf.append(token)
+            self._played_chars += len(token)
             await asyncio.sleep(0)  # 재생 시간을 흉내 내며 협조적으로 양보
         self.spoken.append("".join(buf))
         self._playing = False
