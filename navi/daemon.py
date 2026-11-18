@@ -894,7 +894,11 @@ async def _run(config, args) -> None:
         from navi.control import create_app, create_server
 
         control_server = create_server(
-            create_app(core=core, bus=bus, swap=swap), config.control.port
+            create_app(
+                core=core, bus=bus, swap=swap,
+                server_url=config.server.url if backend.connected else None,
+            ),
+            config.control.port,
         )
 
         async def serve_control() -> None:
