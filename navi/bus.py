@@ -32,6 +32,10 @@ class EventKind(Enum):
     STAGE = auto()         # 턴 파이프라인 단계 계측 (payload=(stage, phase, detail)) — Stage 15
     #   stage ∈ {stt, gate, brain, tts}, phase ∈ {start, done}, detail=소요 ms·게이트 결과 등.
     #   GUI 노드 점등 재료이자 구간별 지연의 상시 기록(D8 재측정 재료).
+    # ── 대화 텍스트 (D17) — GUI 대화 목록의 재료. 토큰 단위가 아니라 턴당 1건(버스 범람 방지) ──
+    TEXT_INPUT = auto()    # 타이핑 입력 1건 (payload=텍스트) — POST /say가 core 큐에 넣는다
+    HEARD = auto()         # 사용자 말이 텍스트로 확정 (payload={text, source: voice|text}) — 검문① 전
+    RESPONSE = auto()      # 나비가 한 말 완성본 (payload={text, kind: reply|proactive, ms})
     SHUTDOWN = auto()      # 데몬 종료 — 전 구독자에게 마지막 인사
 
 

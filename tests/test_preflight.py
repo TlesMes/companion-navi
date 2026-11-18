@@ -225,7 +225,7 @@ def test_broken_card_is_isolated_not_fatal(tmp_path):
 
 
 def test_text_only_ignores_voice_assets(tmp_path):
-    """목소리 없이(점검용)는 엔진을 안 쓰므로 음색 자산 부재와 무관하게 선다(D17)."""
+    """목소리 없이(글로 대화)는 엔진을 안 쓰므로 음색 자산 부재와 무관하게 선다(D17)."""
     _write_root(tmp_path, {
         "aris": _card("아리스", {"name": "aris", "gptsovits": {
             "gpt_ckpt": "voice_ref/none.ckpt", "sovits_ckpt": "voice_ref/none.pth",
