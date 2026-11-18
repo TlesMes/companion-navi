@@ -670,3 +670,178 @@ async def test_fact_extraction_failure_does_not_kill_the_daemon():
     await _wait(lambda: len(inits) == 1)
     assert not task.done()
     await _drain(bus, task)
+
+
+# ── D17 텍스트 대화 경로 — 타이핑 입력·HEARD·RESPONSE ──
+
+from navi.daemon import SAY_MAX_CHARS  # noqa: E402
+from navi.models import BrainResult, Usage  # noqa: E402
+
+
+def _answer(text: str) -> BrainResult:
+    return BrainResult(full_text=text, usage=Usage(input_tokens=1, output_tokens=1))
+
+
+def _text_core(bus, *, reply="응 반가워", machine_clock=None, persisted=None):
+    turns: list[str] = []
+
+    async def run_turn(text: str):
+        turns.append(text)
+        return _answer(reply) if reply is not None else None
+
+    if machine_clock is not None:
+        core, _ = _mode_core(machine_clock, bus, persisted if persisted is not None else [],
+                             run_turn=run_turn)
+    else:
+        core = DaemonCore(bus=bus, transcribe=None, run_turn=run_turn,
+                          tick_interval=999, stop_poll=999)
+    return core, turns
+
+
+def _drain_observer(queue) -> list:
+    out = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
+
+
+@pytest.mark.asyncio
+async def test_typed_input_runs_the_same_turn_path_and_publishes_text_events():
+    # 입력 → HEARD(text) → 턴 → RESPONSE(reply) 순서. 음성과 같은 core 큐를 지난다.
+    bus = EventBus()
+    core, turns = _text_core(bus)
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    core.say("  안녕 나비야  ")
+    await _wait(lambda: core.state.turns_count == 1)
+    await _drain(bus, task)
+
+    assert turns == ["안녕 나비야"]  # 앞뒤 공백은 줄 세우기 전에 정리
+    kinds = [e.kind for e in _drain_observer(observer)]
+    order = [k for k in kinds if k in (EventKind.HEARD, EventKind.TURN_STARTED,
+                                       EventKind.RESPONSE, EventKind.TURN_ENDED)]
+    assert order == [EventKind.HEARD, EventKind.TURN_STARTED, EventKind.RESPONSE, EventKind.TURN_ENDED]
+
+
+@pytest.mark.asyncio
+async def test_heard_and_response_payloads():
+    bus = EventBus()
+    core, _ = _text_core(bus, reply="오늘 바람이 차요")
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    core.say("날씨 어때")
+    await _wait(lambda: core.state.turns_count == 1)
+    await _drain(bus, task)
+
+    events = _drain_observer(observer)
+    heard = next(e.payload for e in events if e.kind == EventKind.HEARD)
+    response = next(e.payload for e in events if e.kind == EventKind.RESPONSE)
+    assert heard == {"text": "날씨 어때", "source": "text"}
+    assert response["text"] == "오늘 바람이 차요" and response["kind"] == "reply"
+    assert isinstance(response["ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_typed_gate_command_is_heard_but_never_reaches_the_brain():
+    # 게이트를 우회하지 않는 것이 D17의 핵심 — 타이핑한 "더 잘래"도 검문①이 가로챈다
+    bus = EventBus()
+    persisted: list = []
+    core, turns = _text_core(bus, machine_clock=_Clock(datetime(2026, 7, 10, 7, 5)),
+                             persisted=persisted)
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    core.say("나 조금만 더 잘래")
+    await _wait(lambda: core.state.proactive_mode == "snooze")
+    await _drain(bus, task)
+
+    assert turns == []
+    kinds = [e.kind for e in _drain_observer(observer)]
+    assert EventKind.HEARD in kinds  # 사용자가 한 말이니 대화 목록엔 남는다
+    assert EventKind.TURN_STARTED not in kinds and EventKind.RESPONSE not in kinds
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_publishes_no_response():
+    # run_turn이 None(두뇌 실패) — RESPONSE는 없고 TURN_ENDED만. GUI가 "대답 없음"으로 그린다
+    bus = EventBus()
+    core, _ = _text_core(bus, reply=None)
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    core.say("들려?")
+    await _wait(lambda: core.state.turns_count == 1)
+    await _drain(bus, task)
+
+    kinds = [e.kind for e in _drain_observer(observer)]
+    assert EventKind.TURN_ENDED in kinds and EventKind.RESPONSE not in kinds
+
+
+@pytest.mark.parametrize("text", ["", "   \n ", "가" * (SAY_MAX_CHARS + 1)])
+def test_say_rejects_blank_and_too_long_without_queueing(text):
+    bus = EventBus()
+    core, _ = _text_core(bus)
+    observer = bus.subscribe("observer", maxsize=16)
+    with pytest.raises(ValueError):
+        core.say(text)
+    assert observer.empty()
+
+
+def test_say_accepts_exactly_the_limit():
+    bus = EventBus()
+    core, _ = _text_core(bus)
+    observer = bus.subscribe("observer", maxsize=16)
+    core.say("가" * SAY_MAX_CHARS)
+    assert observer.get_nowait().kind == EventKind.TEXT_INPUT
+
+
+@pytest.mark.asyncio
+async def test_voice_utterance_is_heard_with_voice_source():
+    bus = EventBus()
+    frame_q: asyncio.Queue = asyncio.Queue()
+    turns: list[str] = []
+    core = _make_core(["안녕 나비야"], turns, frame_q, bus)
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+
+    frame_q.put_nowait(SPEECH)
+    await _wait(lambda: core.state.listening_mode == "active")
+    for f in [SPEECH, SPEECH, SILENCE, SILENCE]:
+        frame_q.put_nowait(f)
+    await _wait(lambda: turns == ["안녕 나비야"])
+    await _drain(bus, task)
+
+    heard = [e.payload for e in _drain_observer(observer) if e.kind == EventKind.HEARD]
+    assert heard == [{"text": "안녕 나비야", "source": "voice"}]
+
+
+@pytest.mark.asyncio
+async def test_proactive_turn_response_is_marked_proactive():
+    bus = EventBus()
+    clock = _Clock(datetime(2026, 7, 12, 10, 0))
+    inits: list = []
+    events: list = []
+    core, _ = _proactive_core(clock, bus, inits=inits, events=events)
+
+    async def run_initiation(topic, kind=TurnKind.PROACTIVE):
+        inits.append((topic, kind))
+        return _answer("오늘 바람이 꽤 차대요")
+
+    core._run_initiation = run_initiation  # noqa: SLF001 — 결과를 돌려주는 대역으로 교체
+    observer = bus.subscribe("observer", maxsize=256)
+    task = asyncio.create_task(core.run())
+    await _wait(lambda: "core" in bus._queues)
+
+    bus.publish(Event(EventKind.TICK, time.monotonic()))
+    await _wait(lambda: core.state.turns_count == 1)
+    await _drain(bus, task)
+
+    response = [e.payload for e in _drain_observer(observer) if e.kind == EventKind.RESPONSE]
+    assert len(response) == 1 and response[0]["kind"] == "proactive"
+    assert response[0]["text"] == "오늘 바람이 꽤 차대요"

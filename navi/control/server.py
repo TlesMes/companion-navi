@@ -48,6 +48,10 @@ class WindowBody(BaseModel):
     end: str
 
 
+class SayBody(BaseModel):
+    text: str  # 타이핑 입력 1건 — 길이·공백 판정은 DaemonCore.say
+
+
 class PersonaBody(BaseModel):
     id: str  # personas/<id>.yaml 파일명 stem
 
@@ -228,6 +232,18 @@ def create_app(
             raise HTTPException(422, str(exc)) from exc
         except RuntimeError as exc:  # 키 부재·런타임 미구성
             raise HTTPException(422, str(exc)) from exc
+
+    # --- 타이핑 입력 (D17 2단계) — STT만 건너뛰고 음성과 같은 경로를 탄다 ---
+
+    @app.post("/say", status_code=202)
+    async def say(body: SayBody) -> dict:
+        """줄만 세운다(202). 턴 결과는 /events의 HEARD·RESPONSE로 온다 — 응답을 여기서
+        기다리면 음성 턴 뒤에 줄 선 입력이 HTTP 타임아웃까지 매달린다."""
+        try:
+            core.say(body.text)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"queued": True}
 
     @app.post("/shutdown")
     async def shutdown() -> dict:

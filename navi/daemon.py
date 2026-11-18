@@ -48,7 +48,7 @@ from navi.heartbeat import (
     should_initiate,
     time_of_day,
 )
-from navi.models import AudioChunk, TurnKind
+from navi.models import AudioChunk, BrainResult, TurnKind
 
 if TYPE_CHECKING:
     from navi.config import ProactiveConfig
@@ -67,6 +67,10 @@ _KIND_BY_SOURCE = {
 # warmup이 os.chdir(repo)를 하므로(gptsovits.py) 상대경로면 tick의 STOP_FILE.exists·
 # release_pidfile이 chdir된 엉뚱한 디렉토리를 가리켜 stop 무효·orphan을 낳았다. cmd_stop은
 # 별도 프로세스(chdir 없음)라 같은 import resolve로 동일 절대경로를 얻는다.
+# 타이핑 입력 상한(D17) — 서버의 발화 길이 한도(protocol.md, 500 코드 포인트)와 같다.
+# 단독 모드에도 거는 이유: 음성으로는 나올 수 없는 길이가 프롬프트를 부풀리지 않게.
+SAY_MAX_CHARS = 500
+
 PID_FILE = (Path("logs") / "navi.pid").resolve()
 STOP_FILE = (Path("logs") / "navi.stop").resolve()
 
@@ -133,7 +137,8 @@ class DaemonCore:
         *,
         bus: EventBus,
         transcribe: Callable[..., Awaitable[str]],  # (Utterance) -> 텍스트
-        run_turn: Callable[[str], Awaitable[None]],
+        # 반환한 결과의 전문이 RESPONSE 이벤트로 나간다(D17). None = 실패·무응답
+        run_turn: Callable[[str], Awaitable[BrainResult | None]],
         session: ListenSession | None = None,
         frames: AsyncIterator[AudioChunk] | None = None,
         tick_interval: float = 10.0,
@@ -143,7 +148,7 @@ class DaemonCore:
         mode_machine: ModeMachine | None = None,
         persist_mode: Callable[[str, str | None], None] | None = None,
         # ── 능동성 2·3층 (Phase 3 순서 4) — 전부 주입, 미주입이면 선제 발화 비활성 ──
-        run_initiation: Callable[[str, TurnKind], Awaitable[None]] | None = None,
+        run_initiation: Callable[[str, TurnKind], Awaitable[BrainResult | None]] | None = None,
         proactive: ProactiveConfig | None = None,
         wall_now: Callable[[], datetime] = datetime.now,
         log_interaction: Callable[[str, str | None, str | None], None] | None = None,
@@ -235,6 +240,10 @@ class DaemonCore:
                 return
             if event.kind == EventKind.UTTERANCE:
                 await self._handle_utterance(event.payload)
+            elif event.kind == EventKind.TEXT_INPUT:
+                # 타이핑 입력(D17) — STT만 건너뛰고 음성과 같은 경로(검문① 포함)를 탄다.
+                # 같은 core 큐를 지나므로 음성 턴과 겹쳐 돌지 않는다.
+                await self._handle_text(event.payload, source="text")
             elif event.kind == EventKind.TICK:
                 if self._machine is not None:
                     self._apply_mode(self._machine.tick())  # 시간 전이(창 진입·만료)
@@ -390,9 +399,11 @@ class DaemonCore:
             # 발화 **직전에** 표시한다 — 실패해도 같은 후보를 무한 재시도하지 않게.
             self._feed.mark_used(chosen.candidate_id, now)
         self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), topic))
+        started = time.perf_counter()
         try:
-            await self._run_initiation(topic, kind)
+            result = await self._run_initiation(topic, kind)
             self.state.turns_count += 1
+            self._publish_response(result, "proactive", started)
         finally:
             self._bus.publish(Event(EventKind.TURN_ENDED, self._now(), topic))
 
@@ -426,7 +437,29 @@ class DaemonCore:
         if not text:
             print("[인식 결과 없음 — 다시 말하세요]")
             return
+        await self._handle_text(text, source="voice")
+
+    def say(self, text: str) -> None:
+        """타이핑 입력을 core 큐에 넣는다(POST /say). 판정·턴은 디스패처가 한다 — 여긴 줄 세우기만."""
+        text = text.strip()
+        if not text:
+            raise ValueError("빈 입력")
+        if len(text) > SAY_MAX_CHARS:
+            raise ValueError(f"입력이 너무 길어요({len(text)}자, 최대 {SAY_MAX_CHARS}자)")
+        self._bus.publish(Event(EventKind.TEXT_INPUT, self._now(), text))
+
+    def _publish_response(self, result: BrainResult | None, kind: str, started: float) -> None:
+        if result is None or not result.full_text:
+            return  # 실패·빈 응답 — GUI는 TURN_ENDED만 보고 "대답 없음"으로 그린다
+        ms = round((time.perf_counter() - started) * 1000)
+        payload = {"text": result.full_text, "kind": kind, "ms": ms}
+        self._bus.publish(Event(EventKind.RESPONSE, self._now(), payload))
+
+    async def _handle_text(self, text: str, *, source: str) -> None:
+        """확정된 사용자 텍스트 → 검문①(결정론) → 통과 시 한 턴. 음성·타이핑 공통 경로."""
         print(f"나> {text}")
+        # 검문① 전에 알린다 — "잘게"처럼 턴이 안 되는 말도 사용자가 한 말이다
+        self._bus.publish(Event(EventKind.HEARD, self._now(), {"text": text, "source": source}))
         # 사용자가 말했다 = 상호작용 — 타이밍 기준을 지금으로 리셋(연달아 안 건다).
         self._last_interaction_at = self._wall_now()
         gate = check_gate(text)
@@ -455,9 +488,11 @@ class DaemonCore:
         # 실제 대화로 응답 — 방금 먼저 건 말에 사용자가 대꾸했다
         self._resolve_pending("user_responded")
         self._bus.publish(Event(EventKind.TURN_STARTED, self._now(), text))
+        started = time.perf_counter()
         try:
-            await self._run_turn(text)
+            result = await self._run_turn(text)
             self.state.turns_count += 1
+            self._publish_response(result, "reply", started)
         finally:
             self._bus.publish(Event(EventKind.TURN_ENDED, self._now(), text))
 
@@ -735,7 +770,7 @@ async def _run(config, args) -> None:
         ),
     )
 
-    async def run_turn(text: str) -> None:
+    async def run_turn(text: str) -> BrainResult | None:
         started = time.perf_counter()
         # 캐릭터명은 파사드에서 동적으로 — 페르소나 교체 후에도 새 이름으로 찍힌다
         print(f"{swap.character}> ", end="", flush=True)
@@ -752,15 +787,18 @@ async def _run(config, args) -> None:
             print()
             log.exception("두뇌 호출 실패 — 이 턴은 기억에 남기지 않는다")
             print("(…말이 끊겼다. logs/navi.log 참고)")
-            return
+            return None
         if result is None:
-            return
+            return None
         await backend.record(
             store, session_id, user_id, user_text=text, result=result, mouth=mouth
         )
         log.info("응답 완료 — %d자, 총 %.0fms", len(result.full_text), (time.perf_counter() - started) * 1000)
+        return result
 
-    async def run_initiation(topic: str, kind: TurnKind = TurnKind.PROACTIVE) -> None:
+    async def run_initiation(
+        topic: str, kind: TurnKind = TurnKind.PROACTIVE
+    ) -> BrainResult | None:
         """능동 발화 — 나비가 먼저 건다. run_turn과 달리 사용자 발화가 없다:
 
         topic 힌트는 트리거(LLM 프롬프트)일 뿐 사용자 말이 아니므로 기억엔 나비의
@@ -783,14 +821,15 @@ async def _run(config, args) -> None:
         except Exception:
             print()
             log.exception("능동 발화 실패 — 이 턴은 기억에 남기지 않는다")
-            return
+            return None
         if result is None:
-            return
+            return None
         await backend.record(
             store, session_id, user_id, user_text=None, result=result, mouth=mouth,
             trigger_type="proactive",
         )
         log.info("능동 발화 완료 — %d자", len(result.full_text))
+        return result
 
     from datetime import UTC
 

@@ -115,7 +115,7 @@ class PreflightReport:
 
 def _engine_label(engine: str) -> str:
     if engine == TEXT_ONLY:
-        return "목소리 없이(점검용)"
+        return "목소리 없이(글로 대화)"
     return engine
 
 
@@ -256,7 +256,7 @@ def evaluate(root: Path | None = None) -> PreflightReport:
             )
         )
 
-    # 목소리 없이 — 엔진을 안 쓰므로 음성 자산·venv가 무관하다(D17: 대화가 아니라 점검용 골격).
+    # 목소리 없이 — 엔진을 안 쓰므로 음성 자산·venv가 무관하다(D17 — GUI 입력창으로 글로 대화한다).
     text_blockers = []
     if not pre.base_venv:
         text_blockers.append(f"기본 venv가 없어요({_BASE_VENV})")

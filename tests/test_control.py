@@ -1104,3 +1104,34 @@ async def test_swap_brain_updates_reported_vendor(tmp_path, monkeypatch):
     result = await swap.swap_brain("gemini")
     assert result["vendor"] == "gemini"
     assert swap.brain_state()["current"] == "gemini"
+
+
+# --- POST /say: 타이핑 입력 (D17 2단계) — 줄만 세우고 202 ---
+
+
+def test_say_queues_text_input_and_returns_202():
+    client, core, bus, _p = _make()
+    observer = bus.subscribe("observer", maxsize=16)
+    res = client.post("/say", json={"text": "안녕"})
+    assert res.status_code == 202 and res.json() == {"queued": True}
+    ev = observer.get_nowait()
+    assert ev.kind.name == "TEXT_INPUT" and ev.payload == "안녕"
+
+
+def test_say_rejects_blank_and_too_long_with_422():
+    from navi.daemon import SAY_MAX_CHARS
+
+    client, _core, bus, _p = _make()
+    observer = bus.subscribe("observer", maxsize=16)
+    assert client.post("/say", json={"text": "  "}).status_code == 422
+    res = client.post("/say", json={"text": "가" * (SAY_MAX_CHARS + 1)})
+    assert res.status_code == 422 and "너무 길어요" in res.json()["detail"]
+    assert observer.empty()  # 거절된 입력은 큐에 들어가지 않는다
+
+
+def test_index_has_chat_and_compose():
+    """GUI 대화 목록·입력창 자리 — 마크업이 빠지면 D17 화면이 조용히 사라진다."""
+    client, *_ = _make()
+    html = client.get("/").text
+    for marker in ('id="chat"', 'id="compose"', 'id="say-input"', '"/say"', '"HEARD"', '"RESPONSE"'):
+        assert marker in html, marker

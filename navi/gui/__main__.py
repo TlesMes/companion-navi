@@ -219,7 +219,9 @@ def main() -> None:
         html=None if up else _waiting_html(),
         js_api=api,
         width=360,
-        height=460,  # 런처 칩 3개 + 상태 캡션 여유. 실제 GUI로 전환되면 그쪽 높이를 따른다.
+        # 위 블록(파이프라인~취침창)이 ~460px, 그 아래가 대화 목록·입력창(D17) 자리다.
+        # 런처는 세로 가운데 정렬이라 같은 창 높이를 그대로 쓴다.
+        height=680,
         resizable=False,
         frameless=True,
         easy_drag=False,

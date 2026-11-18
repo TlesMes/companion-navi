@@ -200,6 +200,51 @@
   }
   #window-edit button { font-size: 11px; padding: 5px 8px; white-space: nowrap; flex-shrink: 0; }
   .footer-stats { display: flex; gap: 14px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+
+  /* ── 대화 (D17) — 남는 세로 공간 전부. 위 블록은 그대로 두고 아래로만 자란다 ── */
+  main { height: 100%; display: flex; flex-direction: column; }
+  .chat-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 0.5px solid var(--border); }
+  #chat {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px 6px;
+    display: flex; flex-direction: column; gap: 7px; overscroll-behavior: contain;
+  }
+  #chat::-webkit-scrollbar { width: 8px; }
+  #chat::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+  .chat-empty { margin: auto; font-size: 11.5px; color: var(--text-muted); text-align: center; line-height: 1.7; }
+  .msg {
+    max-width: 84%; padding: 7px 11px; border-radius: 12px; font-size: 12.5px; line-height: 1.55;
+    user-select: text; overflow-wrap: anywhere; white-space: pre-wrap;
+  }
+  .msg.me { align-self: flex-end; background: var(--surface-3); border-bottom-right-radius: 4px; }
+  .msg.me.queued { opacity: .55; }
+  .msg.navi { align-self: flex-start; background: var(--bg-accent); border-bottom-left-radius: 4px; }
+  .msg.navi.pro { border: 1px dashed var(--border-accent); }
+  .msg .meta { display: block; font-size: 10px; color: var(--text-muted); margin-top: 3px; white-space: nowrap; }
+  .msg.me .meta { text-align: right; }
+  .msg .tag {
+    display: inline-block; font-size: 9.5px; padding: 0 6px; border-radius: 999px; margin-right: 5px;
+    background: var(--surface-1); color: var(--text-secondary); vertical-align: 1px;
+  }
+  .chat-note { align-self: center; font-size: 10.5px; color: var(--text-muted); }
+  .typing span {
+    display: inline-block; width: 5px; height: 5px; border-radius: 50%; margin-right: 3px;
+    background: var(--text-accent); animation: breathe 1.2s ease-in-out infinite;
+  }
+  .typing span:nth-child(2) { animation-delay: .2s; }
+  .typing span:nth-child(3) { animation-delay: .4s; }
+  #compose { display: flex; gap: 6px; padding: 8px 12px 12px; }
+  #say-input {
+    flex: 1; min-width: 0; border: 0.5px solid var(--border-strong); border-radius: 18px;
+    padding: 7px 13px; font: inherit; font-size: 12.5px; color: var(--text-primary);
+    background: var(--surface-1); outline: none;
+  }
+  #say-input:focus { border-color: var(--border-accent); }
+  #say-input:disabled { opacity: .5; }
+  #say-send {
+    width: 32px; height: 32px; border-radius: 50%; border: none; flex-shrink: 0;
+    background: var(--fill-accent); color: #fff; display: flex; align-items: center; justify-content: center;
+  }
+  #say-send:hover { background: var(--border-accent); }
   .footer-stats span { display: inline-flex; align-items: center; gap: 4px; }
   #conn { margin-left: auto; }
   #conn.on svg { color: var(--text-success); }
@@ -413,6 +458,15 @@
       <span id="conn" class="off"></span>
     </div>
   </div>
+
+  <!-- 대화 (D17) — 음성·타이핑 턴이 모두 여기 쌓인다. 입력은 STT만 건너뛰고 검문①을 그대로 지난다 -->
+  <div class="chat-wrap">
+    <div id="chat"><p class="chat-empty" id="chat-empty">아직 대화가 없어요<br>"나비야"라고 부르거나 아래에 적어 보세요</p></div>
+    <form id="compose" autocomplete="off">
+      <input id="say-input" maxlength="500" placeholder="나비에게 말 걸기…" spellcheck="false">
+      <button type="submit" id="say-send" title="보내기"></button>
+    </form>
+  </div>
 </main>
 
 <!-- 목소리 톤 시트 (페르소나 전환은 헤더 드롭다운으로 이동) -->
@@ -531,6 +585,7 @@ const ICONS = {
   ear: '<path d="M6 10a6 6 0 1 1 12 0c0 4.5-2.9 5.3-4 7-.8 1.2-1 2.5-3 2.5"/><path d="M10 10a2 2 0 1 1 4 0c0 1.4-.9 1.9-.9 3.3"/>',
   abc: '<text x="12" y="16.5" text-anchor="middle" font-size="12.5" fill="currentColor" stroke="none">가</text>',
   shield: '<path d="M12 3l7.5 3v5.2c0 4.6-3.2 7.9-7.5 9.8-4.3-1.9-7.5-5.2-7.5-9.8V6z"/>',
+  send: '<path d="M5 12h13M13 6l6 6-6 6"/>',
   cloud: '<path d="M7 18.5h10a4 4 0 0 0 .6-8A5.5 5.5 0 0 0 7 9.5a4.5 4.5 0 0 0 0 9z"/>',
   brain: '<path d="M11 6.5a2.5 2.5 0 0 0-4.9.7 2.5 2.5 0 0 0-1.3 4 2.5 2.5 0 0 0 .8 4.2 2.6 2.6 0 0 0 5.4.1z"/><path d="M13 6.5a2.5 2.5 0 0 1 4.9.7 2.5 2.5 0 0 1 1.3 4 2.5 2.5 0 0 1-.8 4.2 2.6 2.6 0 0 1-5.4.1z"/>',
   volume: '<path d="M11 5 6.5 9H3.5v6h3L11 19z"/><path d="M14.8 9.2a4 4 0 0 1 0 5.6"/><path d="M17.3 6.9a7.4 7.4 0 0 1 0 10.2"/>',
@@ -589,7 +644,9 @@ function initTheme() {
 const S = {
   mode: "active", listening: "sleep",
   window: null,            // {start, end} — /status sleep_window
-  server: null,            // 연결 모드 서버 주소 — /status server (null = 단독 모드)
+  server: null,
+  mood: null,              // 이번 턴 무드(STAGE mood) — 다음 RESPONSE 말풍선에 붙인다
+  turnOpen: false,         // TURN_STARTED 뒤 RESPONSE 전 — 대답 없이 끝나면 안내를 남긴다            // 연결 모드 서버 주소 — /status server (null = 단독 모드)
   uptimeS: 0, uptimeAt: 0, // 마지막 /status 시점의 uptime (로컬 시계로 보간)
   turns: 0, connected: false,
   trigger: "",             // 현재 턴 트리거 텍스트 (TURN_STARTED)
@@ -850,6 +907,95 @@ async function openVoiceSheet() {
   $("persona-panel").classList.add("open");
 }
 
+/* ═══ 대화 (D17) ═══ */
+// 재료는 HEARD(사용자 말 확정)·RESPONSE(나비 말 완성본) 두 이벤트뿐 — 토큰 스트림은 받지 않는다.
+// 재접속 백필이 같은 이벤트를 다시 보내므로 (kind, ts)로 중복을 거른다.
+const CHAT_MAX = 200;
+const chatSeen = new Set();
+const MOOD_LABEL = { bright: "신남", calm: "차분", comfort: "위로" };  // navi/mouth/mood.py MOODS
+
+function hhmm(wall) { return new Date(wall * 1000).toTimeString().slice(0, 5); }
+function chatAppend(el) {
+  const box = $("chat");
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;  // 위를 읽는 중이면 끌어내리지 않는다
+  $("chat-empty").style.display = "none";
+  box.appendChild(el);
+  while (box.querySelectorAll(".msg, .chat-note").length > CHAT_MAX) {
+    box.querySelector(".msg, .chat-note").remove();
+  }
+  if (stick) box.scrollTop = box.scrollHeight;
+  return el;
+}
+function bubble(cls, html, meta) {
+  const el = document.createElement("div");
+  el.className = "msg " + cls;
+  el.innerHTML = html + (meta ? `<span class="meta">${esc(meta)}</span>` : "");
+  return el;
+}
+// 검문①이 대화 대신 모드 명령으로 받은 말 — 대답이 없는 이유를 남긴다(daemon.py _GATE_ACK와 같은 말)
+const GATE_NOTE = {
+  SLEEP: "잘 자요 — 부르면 다시 깨어나요",
+  WAKE: "좋은 아침 — 이제 먼저 말 걸 수 있어요",
+  SNOOZE: "알았어요 — 조금 있다 다시 올게요",
+  DND: "방해하지 않을게요 — 「이제 말 걸어도 돼」로 해제",
+  DND_CLEAR: "해제했어요 — 다시 말 걸 수 있어요",
+};
+function chatNote(text) {
+  const n = document.createElement("p");
+  n.className = "chat-note"; n.textContent = text;
+  chatAppend(n);
+}
+function dropTyping() { const t = $("chat").querySelector(".typing"); if (t) t.remove(); }
+function showTyping() {
+  if ($("chat").querySelector(".typing")) return;
+  chatAppend(bubble("navi typing", "<span></span><span></span><span></span>"));
+}
+function applyChat(ev) {
+  const key = ev.kind + ":" + ev.ts;
+  if (chatSeen.has(key)) return;
+  chatSeen.add(key);
+  const p = ev.payload || {};
+  if (ev.kind === "HEARD") {
+    const src = p.source === "voice" ? "음성" : "입력";
+    // 내가 보낸 입력이면 대기 말풍선을 확정으로 바꾼다(같은 문장의 가장 오래된 것)
+    const queued = p.source === "text"
+      ? [...$("chat").querySelectorAll(".msg.me.queued")].find((el) => el.dataset.text === p.text)
+      : null;
+    if (queued) { queued.classList.remove("queued"); queued.querySelector(".meta").textContent = `${hhmm(ev.wall_ts)} · ${src}`; return; }
+    chatAppend(bubble("me", esc(p.text), `${hhmm(ev.wall_ts)} · ${src}`));
+  } else if (ev.kind === "RESPONSE") {
+    dropTyping();
+    S.turnOpen = false;
+    const pro = p.kind === "proactive";
+    const meta = [hhmm(ev.wall_ts), S.mood && S.mood !== "neutral" ? (MOOD_LABEL[S.mood] || S.mood) : null,
+      p.ms ? `${(p.ms / 1000).toFixed(1)}s` : null].filter(Boolean).join(" · ");
+    chatAppend(bubble(pro ? "navi pro" : "navi", (pro ? '<span class="tag">먼저 말함</span>' : "") + esc(p.text), meta));
+    S.mood = null;
+  }
+}
+async function sendSay(e) {
+  e.preventDefault();
+  const input = $("say-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const el = chatAppend(bubble("me queued", esc(text), "보내는 중…"));
+  el.dataset.text = text;
+  try {
+    await api("POST", "/say", { text });
+    if (el.classList.contains("queued")) el.querySelector(".meta").textContent = "차례를 기다리는 중…";
+  } catch (err) {
+    el.remove();
+    input.value = text;  // 잃지 않게 되돌린다
+    toast(err.status === 422 ? err.message : "보내지 못했어요 — 데몬 연결을 확인해 주세요");
+  }
+}
+function renderCompose() {
+  $("say-input").disabled = !S.connected;
+  $("say-send").disabled = !S.connected;
+  $("say-input").placeholder = S.connected ? "나비에게 말 걸기…" : "데몬이 내려가 있어요";
+}
+
 /* ═══ 로그 ═══ */
 function payloadSummary(kind, p) {
   if (p == null) return "";
@@ -894,11 +1040,18 @@ function applyEvent(ev) {
       break;
     case "TURN_STARTED":
       S.trigger = ev.payload || "";
+      S.turnOpen = true;
+      showTyping();
       // 텍스트 모드(brain STAGE 없음)에서도 뭔가 점등되도록 두뇌를 켠다
       if (!$("node-brain").classList.contains("active")) setNode("brain", "active");
       setCaption(`<span class="dim">"${esc(S.trigger)}"</span>`);
       break;
     case "TURN_ENDED":
+      dropTyping();
+      if (S.turnOpen) {  // RESPONSE 없이 끝났다 — 두뇌 실패·빈 응답
+        S.turnOpen = false;
+        chatNote("대답이 없었어요 — 이벤트 로그를 확인해 주세요");
+      }
       S.turns += 1;
       renderStats();
       resetSoon(1500);
@@ -912,7 +1065,7 @@ function applyEvent(ev) {
       break;
     case "SHUTDOWN":
       S.connected = false;
-      renderStats();
+      renderStats(); renderCompose(); dropTyping(); S.turnOpen = false;
       setCaption('<span class="dim">데몬이 내려갔어요</span>');
       break;
   }
@@ -921,6 +1074,7 @@ function applyStage(stage, phase, detail) {
   if (stage === "mood") {
     // 두뇌가 고른 이번 턴 톤 — 노드가 아니라 톤 칩을 점등한다(gui.md Phase 3-5 자동 점등).
     S.activeTone = (detail && detail.voice_id) || null;
+    S.mood = (detail && detail.mood) || null;
     renderToneChips();
     if ($("persona-panel").classList.contains("open")) renderTonePanel();
     return;
@@ -931,7 +1085,10 @@ function applyStage(stage, phase, detail) {
     else { setNode("stt", "done"); if (detail && detail.ms) setCaption(`받아쓰기 ${(detail.ms / 1000).toFixed(1)}s`); }
   } else if (stage === "gate") {
     setNode("gate", detail && detail.result === "PASS" ? "done" : "active");
-    if (detail && detail.result !== "PASS") { setCaption(`검문①: ${esc(detail.result)}`); resetSoon(2000); }
+    if (detail && detail.result !== "PASS") {
+      setCaption(`검문①: ${esc(detail.result)}`); resetSoon(2000);
+      chatNote(GATE_NOTE[detail.result] || `검문①이 ${detail.result}로 처리했어요`);
+    }
   } else if (stage === "brain") {
     if (phase === "start") {
       setNode("gate", "done"); setNode("brain", "active"); S.brainDone = false;
@@ -957,18 +1114,21 @@ function connectWS() {
   ws = new WebSocket(`ws://${location.host}/events`);
   ws.onopen = () => {
     S.connected = true;
-    renderStats();
+    renderStats(); renderCompose();
     // 재연결이면 "데몬이 내려갔어요" 캡션을 유휴 상태로 되돌린다
     refreshStatus().then(resetPipeline).catch(() => {});
   };
   ws.onmessage = (m) => {
     const ev = JSON.parse(m.data);
     pushLog(ev);
+    // 대화는 백필도 그린다(재접속 후 최근 대화 복원 — 링버퍼 50건 한도) — 중복은 applyChat이 거른다
+    if (ev.kind === "HEARD" || ev.kind === "RESPONSE") applyChat(ev);
     // 접속 직후 링버퍼 백필(과거 50건)은 로그로만 — 점등 애니메이션은 최근 3초만
     if (Date.now() / 1000 - ev.wall_ts < 3) applyEvent(ev);
   };
   ws.onclose = () => {
-    if (S.connected) { S.connected = false; renderStats(); }
+    if (S.connected) { S.connected = false; renderStats(); renderCompose(); }
+    dropTyping(); S.turnOpen = false;
     setTimeout(connectWS, 1500); // 데몬 재기동을 기다린다 — GUI는 계속 산다
   };
   ws.onerror = () => ws.close();
@@ -1192,6 +1352,10 @@ function init() {
   });
   $("edit-cancel").onclick = () => $("window-edit").classList.remove("open");
   $("edit-save").onclick = () => putWindow($("edit-start").value, $("edit-end").value);
+
+  $("say-send").innerHTML = icon("send", 15);
+  $("compose").addEventListener("submit", sendSay);
+  renderCompose();
 
   refreshStatus().catch(() => {});
   refreshPersonas();
