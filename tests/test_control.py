@@ -33,7 +33,9 @@ class _Clock:
         return self.at
 
 
-def _make(at: datetime = DAYTIME, *, with_machine: bool = True, swap=None):
+def _make(
+    at: datetime = DAYTIME, *, with_machine: bool = True, swap=None, server_url=None
+):
     bus = EventBus()
     persisted: list = []
     machine = ModeMachine(WINDOW, 30, now=_Clock(at)) if with_machine else None
@@ -46,7 +48,7 @@ def _make(at: datetime = DAYTIME, *, with_machine: bool = True, swap=None):
         mode_machine=machine,
         persist_mode=lambda mode, until: persisted.append((mode, until)),
     )
-    client = TestClient(create_app(core=core, bus=bus, swap=swap))
+    client = TestClient(create_app(core=core, bus=bus, swap=swap, server_url=server_url))
     return client, core, bus, persisted
 
 
@@ -337,6 +339,14 @@ def test_status_includes_sleep_window_for_gui_strip():
     client, _core, _bus, _p = _make()
     body = client.get("/status").json()
     assert body["sleep_window"] == {"start": "23:00", "end": "07:00"}
+
+
+def test_status_reports_connection_mode_for_header_pill():
+    """GUI 헤더의 "서버" 표시 재료 — 단독 모드면 null, 연결 모드면 서버 주소."""
+    alone, *_ = _make()
+    assert alone.get("/status").json()["server"] is None
+    connected, *_ = _make(server_url="http://localhost:8080")
+    assert connected.get("/status").json()["server"] == "http://localhost:8080"
 
 
 def test_status_sleep_window_null_without_machine():
@@ -895,6 +905,30 @@ def test_brain_state_never_leaks_the_key(tmp_path, monkeypatch):
     assert anthropic["has_key"] is False and anthropic["masked"] == ""
     echo = next(v for v in state["vendors"] if v["id"] == "echo")
     assert echo["needs_key"] is False
+
+
+def _connected(swap) -> None:
+    from dataclasses import replace
+
+    swap._config = replace(
+        swap._config, server=replace(swap._config.server, url="http://localhost:8080")
+    )
+
+
+async def test_brain_state_marks_connected_mode_and_swap_is_refused(tmp_path, monkeypatch):
+    """연결 모드 — GUI가 선택 UI를 숨길 재료(server)가 실리고, 그래도 들어온 교체는 거부한다."""
+    swap, pipeline, store, made = _brain_swap(tmp_path, monkeypatch)
+    assert swap.brain_state()["server"] is None  # 단독 모드
+    _connected(swap)
+    before = pipeline._brain
+
+    assert swap.brain_state()["server"] == "http://localhost:8080"
+    with pytest.raises(RuntimeError, match="연결 모드"):
+        await swap.swap_brain("anthropic", api_key="sk-ant-should-not-land")
+
+    assert pipeline._brain is before and made.validated is False
+    assert store.get_setting("brain.vendor") is None
+    assert "sk-ant-should-not-land" not in (tmp_path / ".env").read_text(encoding="utf-8")
 
 
 async def test_swap_brain_commits_after_validation(tmp_path, monkeypatch):

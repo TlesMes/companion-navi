@@ -93,9 +93,17 @@ _INDEX_HTML = Path(__file__).resolve().parents[1] / "gui" / "static" / "index.ht
 
 
 def create_app(
-    *, core: DaemonCore, bus: EventBus, swap: SwapRuntime | None = None
+    *,
+    core: DaemonCore,
+    bus: EventBus,
+    swap: SwapRuntime | None = None,
+    server_url: str | None = None,
 ) -> FastAPI:
-    """DaemonCore·버스를 주입받아 FastAPI 앱 구성 — 테스트는 가짜 부품으로 같은 앱을 만든다."""
+    """DaemonCore·버스를 주입받아 FastAPI 앱 구성 — 테스트는 가짜 부품으로 같은 앱을 만든다.
+
+    server_url: 연결 모드면 서버 주소, 단독 모드면 None. GUI가 지금 어느 모드인지 그리는
+    재료일 뿐이다 — 연결 모드의 금지(두뇌 교체 등)는 SwapRuntime이 따로 건다.
+    """
     # 엔드포인트는 전부 async — FastAPI는 동기 def를 스레드풀로 돌려서 SQLite 영속화
     # (persist_mode)의 단일 스레드 규약이 깨진다. 호출은 전부 논블로킹이라 루프 실행이 맞다.
     app = FastAPI(title="navi-control", docs_url=None, redoc_url=None)
@@ -115,6 +123,7 @@ def create_app(
             if window is not None
             else None
         )
+        body["server"] = server_url  # None = 단독 모드
         return body
 
     @app.post("/mode/{cmd}")

@@ -235,6 +235,9 @@ class SwapRuntime:
         """
         config = self._require_config()
         return {
+            # 연결 모드면 두뇌는 서버 것이라 아래 목록은 고를 수 없다(swap_brain이 거부한다).
+            # GUI는 이 값으로 선택 UI를 숨긴다 — None = 단독 모드.
+            "server": config.server.url if config.server.enabled else None,
             "current": config.brain.vendor,
             "vendors": [
                 {
