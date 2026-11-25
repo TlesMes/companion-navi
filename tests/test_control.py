@@ -1135,3 +1135,12 @@ def test_index_has_chat_and_compose():
     html = client.get("/").text
     for marker in ('id="chat"', 'id="compose"', 'id="say-input"', '"/say"', '"HEARD"', '"RESPONSE"'):
         assert marker in html, marker
+
+
+def test_index_has_persona_swap_indicator():
+    """페르소나 전환 표시 자리 — 음색 교체(1~1.7초) 동안 화면이 멈춘 듯 보이지 않게."""
+    client, *_ = _make()
+    html = client.get("/").text
+    for marker in ('id="swap-bar"', 'id="pipe-wrap"', "setSwapping", "SWAP_SHOW_DELAY_MS",
+                   "postPersona(p.id, p.character)"):
+        assert marker in html, marker
