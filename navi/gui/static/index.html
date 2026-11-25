@@ -103,6 +103,25 @@
     min-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #caption .dim { color: var(--text-muted); }
+  /* 페르소나 전환 중(음색 가중치 교체 1~1.7초) — 자리는 늘 잡아 두고 보이기만 바꾼다(레이아웃 출렁임 방지) */
+  #swap-bar {
+    height: 2px; margin-bottom: 10px; background: var(--border); border-radius: 2px;
+    overflow: hidden; visibility: hidden;
+  }
+  #swap-bar i {
+    display: block; width: 40%; height: 100%; background: var(--fill-accent);
+    animation: slide 1.3s ease-in-out infinite;
+  }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  .pipe-wrap.swapping #swap-bar { visibility: visible; }
+  .pipe-wrap.swapping .pipeline { opacity: 0.45; transition: opacity .2s; }
+  .avatar.loading { color: transparent; position: relative; }
+  .avatar.loading::after {
+    content: ""; position: absolute; inset: 5px; border-radius: 50%;
+    border: 2px solid var(--text-accent); border-top-color: transparent;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── 헤더 프로필 = 페르소나 전환 드롭다운 ── */
   #profile-btn {
@@ -111,6 +130,8 @@
     padding: 3px 6px 3px 3px;
   }
   #profile-btn:hover { background: var(--bg-accent); }
+  #profile-btn:disabled { opacity: 1; cursor: progress; } /* 전환 중엔 흐리지 않고 스피너로만 */
+  #profile-btn:disabled:hover { background: transparent; }
   #profile-chev { color: var(--text-muted); display: flex; flex-shrink: 0; transition: transform .18s; }
   #persona-menu {
     position: fixed; top: 50px; left: 10px; z-index: 30; min-width: 172px; max-width: 260px;
@@ -405,7 +426,8 @@
   <!-- 페르소나 전환 드롭다운 (프로필 클릭 시) — 중단 전환 필을 대체 -->
   <div id="persona-menu"></div>
 
-  <div class="pipe-wrap">
+  <div class="pipe-wrap" id="pipe-wrap">
+    <div id="swap-bar"><i></i></div>
     <div class="pipeline">
       <div class="node" id="node-ear"></div><div class="link"></div>
       <div class="node" id="node-stt"></div><div class="link"></div>
@@ -821,16 +843,45 @@ async function postVoice(name) {
     renderTonePanel();
   } catch (e) { toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message); }
 }
-async function postPersona(id) {
+// 전환 표시를 늦게 켜는 이유: 카드만 바뀌거나 ckpt가 같으면 응답이 수십 ms라
+// 바로 켜면 진행 줄이 깜빡이기만 한다. 음색 가중치 교체(실측 1~1.7초)만 보이게 한다.
+const SWAP_SHOW_DELAY_MS = 150;
+function setSwapping(on, character) {
+  const wrap = $("pipe-wrap");
+  if (on) {
+    S.captionBeforeSwap = $("caption").innerHTML;
+    $("char-name").textContent = character;
+    $("char-avatar").classList.add("loading");
+    wrap.classList.add("swapping");
+    setCaption(`<span class="dim">${S.voices.length
+      ? "목소리 바꾸는 중… 끝나면 바로 들을 수 있어요" : "페르소나 바꾸는 중…"}</span>`);
+    return;
+  }
+  $("char-avatar").classList.remove("loading");
+  if (wrap.classList.contains("swapping")) {
+    wrap.classList.remove("swapping");
+    setCaption(S.captionBeforeSwap || "");
+  }
+  renderCharacter(); // 실패면 이전 이름·머리글자로 되돌아간다
+}
+async function postPersona(id, character) {
+  // 전환 중 재선택 금지 — 데몬도 턴 락으로 막지만 GUI가 먼저 닫아 409 토스트를 피한다
+  $("profile-btn").disabled = true;
+  const timer = setTimeout(() => setSwapping(true, character || id), SWAP_SHOW_DELAY_MS);
   try {
     const r = await api("POST", "/persona", { id });
     S.personaId = r.id; S.character = r.character;
-    renderCharacter();
     // "카드만 교체" 안내는 사라졌다 — 목소리가 못 따라가는 조합은 데몬이 422로 막는다
     // (핫스왑 미지원 엔진만 voice_swapped=false로 남고, 그건 프리셋 기반이라 정상)
     toast(`페르소나 「${r.character}」`);
-    await refreshVoices();
-  } catch (e) { toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message); }
+  } catch (e) {
+    toast(e.status === 409 ? "재생 중 — 발화가 끝난 뒤 다시" : e.message);
+  } finally {
+    clearTimeout(timer);
+    setSwapping(false);
+    $("profile-btn").disabled = false;
+  }
+  await refreshVoices();
 }
 
 /* ═══ 페르소나 전환 드롭다운 (헤더 프로필) ═══ */
@@ -855,7 +906,7 @@ function renderPersonaMenu(list) {
     item.onclick = () => {
       closePersonaMenu();
       if (blocked) { toast(p.reason); return; }  // 툴팁을 못 본 채 누르는 경로의 보완
-      if (!p.current) postPersona(p.id);
+      if (!p.current) postPersona(p.id, p.character);
     };
     menu.appendChild(item);
   }
